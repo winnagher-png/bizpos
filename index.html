@@ -3258,9 +3258,26 @@ function completeSale() {
   });
   DB.set('products', products);
 
+  const paymentMethod  = document.getElementById('sale-payment').value;
+  const deliveryFee    = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
+  const deliveryAddress= _isDelivery ? (document.getElementById('sale-delivery-address')?.value||'') : '';
+
+  // Validate split payment
+  if (paymentMethod === 'split') {
+    const sc = parseFloat(document.getElementById('split-cash').value)||0;
+    const sk = parseFloat(document.getElementById('split-card').value)||0;
+    const se = parseFloat(document.getElementById('split-eft').value)||0;
+    const splitSum = sc + sk + se;
+    const cartTotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0) + deliveryFee;
+    if (Math.abs(splitSum - cartTotal) > 0.05) {
+      showToast('Split amounts must add up to R' + cartTotal.toFixed(2), 'error');
+      return;
+    }
+  }
+
   const subtotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
   const discountAmt = getDiscountAmount(subtotal);
-  const total = Math.max(0, subtotal - discountAmt);
+  const total = Math.max(0, subtotal - discountAmt + deliveryFee);
   const staffId = document.getElementById('sale-staff').value;
   const staffMember = DB.get('staff').find(s=>s.id===staffId);
 
@@ -6384,1550 +6401,302 @@ function changeDeviceMode() {
 
 
 // ============================================================
-// AUTO SYNC — Firebase Realtime Database (free, no CORS issues)
+// BIZPOS SYNC ENGINE — Firebase, bulletproof, never loses data
 // ============================================================
 var JJ = {
-  url: 'https://bizpos-jj-default-rtdb.firebaseio.com/bizpos.json',
-  timer: null,
+  url:     'https://bizpos-jj-default-rtdb.firebaseio.com/bizpos.json',
+  timer:   null,
   pushing: false,
+  retryTimer: null,
+  lastPushAt: 0,
+  lastPullAt: 0,
+  connected: false,
   keys: ['products','members','sales','staff','suppliers','expenses',
          'purchaseOrders','writeoffs','stockTransfers','grvRecords',
          'cashups','rollingRecords','stocktakeReports']
 };
 
+// ── Collect ALL local data into one object ──
 function jjCollect() {
-  var d = { _at: new Date().toISOString() };
+  var d = { _at: new Date().toISOString(), _v: 3 };
   JJ.keys.forEach(function(k) {
+    try {
+      var raw = localStorage.getItem(k);
+      if (raw) d[k] = JSON.parse(raw);
+    } catch(e) { console.warn('jjCollect error for', k, e); }
+  });
+  ['pettyCash','emailSettings','bizSettings','stocktakeSession'].forEach(function(k){
     try { var raw = localStorage.getItem(k); if (raw) d[k] = JSON.parse(raw); } catch(e) {}
   });
-  try { var pc = localStorage.getItem('pettyCash'); if(pc) d.pettyCash = JSON.parse(pc); } catch(e) {}
-  try { var es = localStorage.getItem('emailSettings'); if(es) d.emailSettings = JSON.parse(es); } catch(e) {}
   return d;
 }
 
-function jjWrite(record) {
-  if (!record || !record._at) return false;
+// ── Write Firebase data to localStorage ──
+// Smart merge: never wipe data, always take the most recent per-item
+function jjWrite(remote) {
+  if (!remote || !remote._at) return false;
+
   JJ.keys.forEach(function(k) {
-    if (record[k] === undefined) return;
-    // For staff: merge clock-in state from local to preserve live sessions
-    if (k === 'staff') {
-      try {
-        var localStaff = JSON.parse(localStorage.getItem('staff') || '[]');
-        var remoteStaff = record[k];
-        // Merge: use remote data but keep local clockedIn state
+    if (remote[k] === undefined) return;
+
+    try {
+      var local = JSON.parse(localStorage.getItem(k) || 'null');
+
+      if (k === 'staff') {
+        // Staff: merge to preserve clock-in state and locally added staff
+        var remoteStaff = remote[k] || [];
+        var localStaff  = local || [];
         var merged = remoteStaff.map(function(rs) {
-          var local = localStaff.find(function(ls){ return ls.id === rs.id; });
-          if (local && local.clockedIn) {
-            rs.clockedIn   = local.clockedIn;
-            rs.clockedInAt = local.clockedInAt;
+          var ls = localStaff.find(function(x){ return x.id === rs.id; });
+          if (ls) {
+            // Keep remote data but preserve live clock-in state from local
+            rs.clockedIn   = ls.clockedIn   || rs.clockedIn   || false;
+            rs.clockedInAt = ls.clockedInAt || rs.clockedInAt || null;
+            rs.shifts      = ls.shifts      || rs.shifts      || [];
           }
           return rs;
         });
-        // Keep any local staff not in remote (added this session)
+        // Keep local staff not yet in remote
         localStaff.forEach(function(ls) {
           if (!merged.find(function(ms){ return ms.id === ls.id; })) {
             merged.push(ls);
           }
         });
         localStorage.setItem('staff', JSON.stringify(merged));
-      } catch(e) { localStorage.setItem('staff', JSON.stringify(record[k])); }
-      return;
-    }
-    try { localStorage.setItem(k, JSON.stringify(record[k])); } catch(e) {}
+        return;
+      }
+
+      if (k === 'sales') {
+        // Sales: merge — never lose a sale from either side
+        var remoteSales = remote[k] || [];
+        var localSales  = local || [];
+        if (!localSales.length) {
+          localStorage.setItem('sales', JSON.stringify(remoteSales));
+          return;
+        }
+        // Add any remote sales not in local
+        var merged2 = localSales.slice();
+        remoteSales.forEach(function(rs) {
+          if (!merged2.find(function(ls){ return ls.id === rs.id; })) {
+            merged2.push(rs);
+          }
+        });
+        // Sort by date
+        merged2.sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+        localStorage.setItem('sales', JSON.stringify(merged2));
+        return;
+      }
+
+      if (k === 'expenses' || k === 'cashups' || k === 'writeoffs' || k === 'grvRecords') {
+        // Append-only arrays: merge, never lose entries
+        var remoteArr = remote[k] || [];
+        var localArr  = local || [];
+        var mergedArr = localArr.slice();
+        remoteArr.forEach(function(ri) {
+          if (!mergedArr.find(function(li){ return li.id === ri.id; })) {
+            mergedArr.push(ri);
+          }
+        });
+        localStorage.setItem(k, JSON.stringify(mergedArr));
+        return;
+      }
+
+      if (k === 'products') {
+        // Products: use remote unless stocktake is active
+        if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
+        localStorage.setItem('products', JSON.stringify(remote[k]));
+        return;
+      }
+
+      // Array types: merge by id so nothing is ever lost
+      var mergeByIdKeys = ['members','suppliers','purchaseOrders','stockTransfers',
+                           'rollingRecords','stocktakeReports'];
+      if (mergeByIdKeys.indexOf(k) > -1 && Array.isArray(remote[k])) {
+        var remArr = remote[k] || [];
+        var locArr = local || [];
+        var mergedIds = locArr.slice();
+        remArr.forEach(function(ri) {
+          var existIdx = mergedIds.findIndex(function(li){ return li.id === ri.id; });
+          if (existIdx === -1) {
+            mergedIds.push(ri); // new item from remote
+          } else {
+            // Keep whichever was updated more recently
+            var remDate = ri.updatedAt || ri.date || ri.createdAt || 0;
+            var locDate = mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
+            if (new Date(remDate) > new Date(locDate)) {
+              mergedIds[existIdx] = ri; // remote is newer
+            }
+          }
+        });
+        localStorage.setItem(k, JSON.stringify(mergedIds));
+        return;
+      }
+
+      // Default: use remote value
+      localStorage.setItem(k, JSON.stringify(remote[k]));
+
+    } catch(e) { console.warn('jjWrite error for', k, e); }
   });
-  if (record.pettyCash)     try { localStorage.setItem('pettyCash',     JSON.stringify(record.pettyCash));     } catch(e) {}
-  if (record.emailSettings) try { localStorage.setItem('emailSettings', JSON.stringify(record.emailSettings)); } catch(e) {}
+
+  // Non-key objects
+  ['pettyCash','emailSettings'].forEach(function(k){
+    if (remote[k] !== undefined) {
+      try { localStorage.setItem(k, JSON.stringify(remote[k])); } catch(e) {}
+    }
+  });
+
   return true;
 }
 
+// ── Push to Firebase ──
 function jjPush(silent) {
-  if (JJ.pushing) return;
+  if (JJ.pushing) {
+    // Queue a push for after current one finishes
+    clearTimeout(JJ.timer);
+    JJ.timer = setTimeout(function(){ jjPush(silent); }, 2000);
+    return;
+  }
   JJ.pushing = true;
   if (!silent) updateSyncIndicator('syncing', 'Saving...');
+
+  var data = jjCollect();
   fetch(JJ.url, {
-    method: 'PUT',
+    method:  'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(jjCollect())
+    body:    JSON.stringify(data)
   })
   .then(function(r) {
-    JJ.pushing = false;
+    JJ.pushing   = false;
+    JJ.lastPushAt = Date.now();
+    JJ.connected = r.ok;
     if (r.ok) {
-      updateSyncIndicator('ok', 'Sync on');
+      updateSyncIndicator('ok', 'Saved ' + new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}));
+      setTimeout(function(){ updateSyncIndicator('ok','Sync on'); }, 3000);
     } else {
-      console.warn('BizPOS push failed:', r.status);
-      setTimeout(function(){ jjPush(true); }, 10000);
+      console.warn('BizPOS push HTTP', r.status);
+      updateSyncIndicator('warn', 'Retry...');
+      JJ.retryTimer = setTimeout(function(){ jjPush(silent); }, 8000);
     }
   })
   .catch(function(e) {
     JJ.pushing = false;
-    console.warn('BizPOS push error:', e.message);
-    updateSyncIndicator('off', 'Offline');
-    setTimeout(function(){ jjPush(true); }, 15000);
+    console.warn('BizPOS push failed:', e.message);
+    updateSyncIndicator('off', 'Offline — will retry');
+    JJ.retryTimer = setTimeout(function(){ jjPush(silent); }, 15000);
   });
 }
 
+// ── Pull from Firebase ──
 function jjPull(silent, cb) {
-  // Don't pull if we just committed a stocktake (give push time to complete)
   if (window._blockPullUntil && Date.now() < window._blockPullUntil) {
-    if (cb) cb();
+    if (cb) cb(false);
     return;
   }
   if (!silent) updateSyncIndicator('syncing', 'Updating...');
+
   fetch(JJ.url + '?t=' + Date.now(), { cache: 'no-store' })
   .then(function(r) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   })
   .then(function(data) {
-    if (data) {
-      // Don't overwrite products during an active stocktake session
-      var activeStocktake = Object.keys(stocktakeCounts||{}).length > 0;
-      if (activeStocktake && data.products) {
-        delete data.products; // preserve local stocktake in progress
-      }
-      if (jjWrite(data)) {
-        try { renderInventory(); }     catch(e) {}
-        try { renderMembers(); }       catch(e) {}
-        try { renderSales(); }         catch(e) {}
-        try { renderExpenses(); }      catch(e) {}
-        try { renderCashupHistory(); } catch(e) {}
-      }
-    }
+    JJ.connected = true;
+    JJ.lastPullAt = Date.now();
+    var hadData = data && data._at;
+    if (hadData) jjWrite(data);
+
+    // Refresh UI
+    try { renderInventory(); }     catch(e) {}
+    try { renderMembers(); }       catch(e) {}
+    try { renderSales(); }         catch(e) {}
+    try { renderExpenses(); }      catch(e) {}
+    try { renderCashupHistory(); } catch(e) {}
+    try {
+      if (!document.getElementById('pin-screen').classList.contains('hidden'))
+        renderPinScreen();
+    } catch(e) {}
+
     var ts = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'});
     updateSyncIndicator('ok', 'Synced ' + ts);
-    if (cb) cb();
+    if (cb) cb(hadData);
   })
   .catch(function(e) {
+    JJ.connected = false;
     console.warn('BizPOS pull failed:', e.message);
     updateSyncIndicator('off', 'Offline');
-    if (cb) cb();
+    if (cb) cb(false);
   });
 }
 
+// ── Auto-push on every DB write ──
+function jjHookDB() {
+  if (DB._jjHooked) return;
+  DB._jjHooked = true;
+  var _origSet = DB.set.bind(DB);
+  DB.set = function(k, v) {
+    _origSet(k, v);
+    if (JJ.keys.indexOf(k) > -1) {
+      clearTimeout(JJ.timer);
+      JJ.timer = setTimeout(function(){ jjPush(true); }, 800);
+    }
+  };
+  var _origSetObj = DB.setObj.bind(DB);
+  DB.setObj = function(k, v) {
+    _origSetObj(k, v);
+    clearTimeout(JJ.timer);
+    JJ.timer = setTimeout(function(){ jjPush(true); }, 800);
+  };
+}
+
+// ── Startup: pull first, then seed if empty, then start auto-pull ──
 function jjInitWithSeed() {
-  // Hook DB writes first
-  if (!DB._jjHooked) {
-    DB._jjHooked = true;
-    var _origSet = DB.set.bind(DB);
-    DB.set = function(k, v) {
-      _origSet(k, v);
-      if (JJ.keys.indexOf(k) > -1) {
-        clearTimeout(JJ.timer);
-        JJ.timer = setTimeout(function(){ jjPush(true); }, 1500);
-      }
-    };
-  }
+  jjHookDB();
+  updateSyncIndicator('syncing', 'Connecting...');
 
-  updateSyncIndicator('syncing', 'Loading...');
-
-  // Pull from Firebase first — seed only if Firebase returns nothing
-  fetch(JJ.url + '?t=' + Date.now(), { cache: 'no-store' })
-  .then(function(r) { return r.ok ? r.json() : null; })
-  .then(function(data) {
-    if (data && data._at) {
-      // Firebase has real data — apply it, skip seedData
-      jjWrite(data);
+  jjPull(true, function(hadData) {
+    if (hadData) {
       window._jjHasCloudData = true;
       updateSyncIndicator('ok', 'Sync on');
-      try { renderInventory(); } catch(e) {}
-      try { renderMembers(); }   catch(e) {}
-      try { renderSales(); }     catch(e) {}
-      try { renderStaff(); }     catch(e) {}
-      // Also re-render pin screen so staff show up for login
-      try { renderPinScreen(); } catch(e) {}
     } else {
-      // Firebase is empty — seed defaults then push
+      // Nothing in Firebase yet — seed defaults and push them up
       seedData();
-      setTimeout(function(){ jjPush(true); }, 2000);
+      setTimeout(function(){ jjPush(true); }, 1000);
     }
+
     checkReorderPoints();
     updatePOBadge();
-    renderInventory();
-    // Start auto-pull every 10s
+    try { renderInventory(); }  catch(e) {}
+    try { renderPinScreen(); }  catch(e) {}
+
+    // Auto-pull every 10 seconds
     setInterval(function(){ jjPull(true); }, 10000);
-  })
-  .catch(function() {
-    // Offline — use whatever is in localStorage
-    updateSyncIndicator('off', 'Offline');
-    seedData();
-    checkReorderPoints();
-    updatePOBadge();
-    renderInventory();
-    // Keep trying
-    setTimeout(function(){ jjInit(); }, 15000);
+
+    // Push any unsaved local changes immediately on startup
+    // (in case last session went offline before pushing)
+    setTimeout(function(){ jjPush(true); }, 3000);
   });
 }
 
-function jjInit() {
-  if (!DB._jjHooked) {
-    DB._jjHooked = true;
-    var _origSet = DB.set.bind(DB);
-    DB.set = function(k, v) {
-      _origSet(k, v);
-      if (JJ.keys.indexOf(k) > -1) {
-        clearTimeout(JJ.timer);
-        JJ.timer = setTimeout(function(){ jjPush(true); }, 1000);
-      }
-    };
-  }
-  updateSyncIndicator('syncing', 'Syncing...');
-  jjPull(true, function() {
-    updateSyncIndicator('ok', 'Sync on');
-    setInterval(function(){ jjPull(true); }, 10000);
-  });
-}
+// Keep jjInit for backward compatibility
+function jjInit() { jjInitWithSeed(); }
 
+// ── Manual force push/pull ──
 function forcePushSync() {
   showSyncActionStatus('Pushing all data...', '#d97706', '#fff9c4');
+  JJ.pushing = false;
   jjPush(false);
   setTimeout(function(){
-    showSyncActionStatus('Pushed! Other devices update within 10 seconds.', '#16a34a', '#dcfce7');
-  }, 2000);
+    showSyncActionStatus('Pushed! Other devices update within 30s.', '#16a34a', '#dcfce7');
+  }, 3000);
 }
 
 function forcePullSync() {
-  showSyncActionStatus('Pulling latest...', '#d97706', '#fff9c4');
+  showSyncActionStatus('Pulling latest data...', '#d97706', '#fff9c4');
+  window._blockPullUntil = 0; // force pull even if blocked
   jjPull(false, function(){
     showSyncActionStatus('Updated!', '#16a34a', '#dcfce7');
+    try { renderPinScreen(); } catch(e) {}
   });
-}
-
-
-// ============================================================
-// QUICK ADD PRODUCT (from sales screen)
-// ============================================================
-function openQuickAddProduct() {
-  ['qap-name','qap-price','qap-cost','qap-qty'].forEach(function(id){
-    var el = document.getElementById(id); if(el) el.value = '';
-  });
-  document.getElementById('qap-qty').value = '0';
-  openModal('modal-quick-add-product');
-}
-
-function saveQuickAddProduct() {
-  var name  = (document.getElementById('qap-name').value||'').trim();
-  var price = parseFloat(document.getElementById('qap-price').value)||0;
-  var cost  = parseFloat(document.getElementById('qap-cost').value)||0;
-  var cat   = document.getElementById('qap-category').value;
-  var qty   = parseInt(document.getElementById('qap-qty').value)||0;
-  if (!name)  { showToast('Enter a product name', 'error'); return; }
-  if (!price) { showToast('Enter a price', 'error'); return; }
-
-  var products = DB.get('products');
-  var newProd = {
-    id: uid(), name: name, price: price, cost: cost,
-    category: cat, qty: qty, qtyWh: 0,
-    sku: '', lowAt: 2, reorderAt: 0, supplierId: '', notes: ''
-  };
-  products.push(newProd);
-  DB.set('products', products);
-  closeModal('modal-quick-add-product');
-
-  // Auto-add to cart
-  addToCart(newProd.id);
-  showToast(name + ' added to inventory and cart', 'success');
-}
-
-// ============================================================
-// WHATSAPP MEMBER PORTAL
-// ============================================================
-var waPortalMember = null;
-
-function openWAPortal() {
-  waPortalMember = null;
-  document.getElementById('wa-portal-lock').style.display = 'block';
-  document.getElementById('wa-portal-content').style.display = 'none';
-  document.getElementById('wa-portal-error').style.display = 'none';
-  document.getElementById('wa-portal-memnum').value = '';
-  document.getElementById('wa-portal-idnum').value = '';
-  openModal('modal-wa-portal');
-}
-
-function unlockWAPortal() {
-  var memNum = (document.getElementById('wa-portal-memnum').value||'').trim().toUpperCase();
-  var idNum  = (document.getElementById('wa-portal-idnum').value||'').trim();
-  var errEl  = document.getElementById('wa-portal-error');
-
-  if (!memNum || !idNum) {
-    errEl.textContent = 'Enter both your member number and ID number';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  // Find member by member number and ID
-  var members = DB.get('members');
-  var found = members.find(function(m) {
-    var mNum = (m.memberNo||'').trim().toUpperCase();
-    var mId  = (m.idNumber||'').trim();
-    return mNum === memNum && mId === idNum;
-  });
-
-  if (!found) {
-    errEl.textContent = 'Member not found. Check your member number and ID number.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  waPortalMember = found;
-  errEl.style.display = 'none';
-  document.getElementById('wa-portal-lock').style.display = 'none';
-  document.getElementById('wa-portal-content').style.display = 'block';
-  document.getElementById('wa-portal-welcome').textContent =
-    'Welcome, ' + found.name.split(' ')[0] + '! (' + found.memberNo + ')';
-}
-
-function lockWAPortal() {
-  waPortalMember = null;
-  document.getElementById('wa-portal-lock').style.display = 'block';
-  document.getElementById('wa-portal-content').style.display = 'none';
-}
-
-function sendWAPortalMessage(type) {
-  if (!waPortalMember || !waPortalMember.phone) {
-    showToast('No phone number on file for this member', 'error');
-    return;
-  }
-
-  var products = DB.get('products').filter(function(p){ return (p.qty||0) > 0; });
-  var name = waPortalMember.name.split(' ')[0];
-  var phone = waPortalMember.phone.replace(/[^0-9]/g,'');
-  var waPhone = phone.startsWith('0') ? '27' + phone.slice(1) : phone;
-
-  var msg = '';
-
-  if (type === 'pricelist') {
-    var lines = ['Hi ' + name + '! Here is todays pricelist from Jack & Jill\'s Adventure Club:', ''];
-    // Group by category
-    var cats = {};
-    products.forEach(function(p) {
-      var cat = p.category||'Other';
-      if (!cats[cat]) cats[cat] = [];
-      cats[cat].push(p);
-    });
-    Object.keys(cats).sort().forEach(function(cat) {
-      lines.push('*' + cat + '*');
-      cats[cat].forEach(function(p) {
-        lines.push('  ' + p.name + ' — R' + (p.price||0).toFixed(2));
-      });
-      lines.push('');
-    });
-    lines.push('Contact us to place an order. Members only.');
-    msg = lines.join('\n');
-
-  } else if (type === 'specials') {
-    msg = 'Hi ' + name + '! Current specials at Jack and Jills Adventure Club:\n\nCheck with us in-store for member specials and deals!\n\nYour member number: ' + waPortalMember.memberNo;
-
-  } else if (type === 'menu') {
-    var cats2 = {};
-    products.forEach(function(p) {
-      var cat = p.category||'Other';
-      if (!cats2[cat]) cats2[cat] = [];
-      cats2[cat].push(p.name);
-    });
-    var lines2 = ['Hi ' + name + '! Our current menu at Jack and Jills:', ''];
-    Object.keys(cats2).sort().forEach(function(cat) {
-      lines2.push('*' + cat + '*');
-      cats2[cat].forEach(function(n){ lines2.push('  • ' + n); });
-      lines2.push('');
-    });
-    msg = lines2.join('\n');
-  }
-
-  window.open('https://wa.me/' + waPhone + '?text=' + encodeURIComponent(msg));
-}
-
-// ============================================================
-// MANAGER AI COMMAND CENTRE
-// ============================================================
-var CMD_HISTORY = [];
-
-function openCommandCentre() {
-  openModal('modal-command');
-  var msgs = document.getElementById('cmd-msgs');
-  if (msgs && msgs.children.length === 0) {
-    addCmdMsg('ai', 'Manager Command Centre ready. I can answer questions and make changes to your data. What do you need?');
-  }
-}
-
-function addCmdMsg(role, text) {
-  var msgs = document.getElementById('cmd-msgs');
-  if (!msgs) return null;
-  var div = document.createElement('div');
-  div.className = role === 'user' ? 'cmd-msg-user' : 'cmd-msg-ai';
-  div.innerHTML = text.replace(/\n/g,'<br>').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-  msgs.appendChild(div);
-  msgs.scrollTop = 9999;
-  return div;
-}
-
-function sendCommand() {
-  var input = document.getElementById('cmd-input-field');
-  var q = (input ? input.value : '').trim();
-  if (!q) return;
-  if (input) { input.value = ''; input.style.height = 'auto'; }
-
-  addCmdMsg('user', q);
-  CMD_HISTORY.push({ role: 'user', content: q });
-
-  // Try to handle locally first
-  var handled = handleCommandLocally(q);
-  if (handled) {
-    addCmdMsg('ai', handled);
-    CMD_HISTORY.push({ role: 'assistant', content: handled });
-    return;
-  }
-
-  // Use Claude API
-  var key = localStorage.getItem('bizpos_ai_key');
-  if (!key) {
-    addCmdMsg('ai', 'I need a Claude API key to handle complex commands. Get one free at <strong>console.anthropic.com</strong> then tap the key icon above.');
-    return;
-  }
-
-  var thinking = addCmdMsg('ai', '<em style="color:var(--text3)">Thinking...</em>');
-
-  fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 600,
-      system: buildCommandContext(),
-      messages: CMD_HISTORY.slice(-6)
-    })
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(data){
-    var reply = data.content && data.content[0] && data.content[0].text || 'No response';
-    // Check if Claude wants to execute a command
-    executeCommandFromReply(reply);
-    if (thinking) {
-      thinking.innerHTML = reply.replace(/\n/g,'<br>').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-    }
-    CMD_HISTORY.push({ role: 'assistant', content: reply });
-  })
-  .catch(function(e){
-    if (thinking) thinking.innerHTML = '<span style="color:var(--red)">Error: ' + e.message + '</span>';
-  });
-}
-
-function handleCommandLocally(q) {
-  var ql = q.toLowerCase();
-  var products = DB.get('products');
-  var sales    = DB.get('sales');
-  var today    = new Date().toDateString();
-  var pc       = DB.getObj('pettyCash',{balance:0});
-
-  // ADD STOCK: "add 10 critical cheese prerolls"
-  var addMatch = q.match(/add\s+(\d+)\s*(?:x\s*)?(.+?)(?:\s+to\s+stock)?$/i);
-  if (addMatch && !ql.includes('expense') && !ql.includes('member')) {
-    var qty  = parseInt(addMatch[1]);
-    var name = addMatch[2].trim();
-    var found = products.filter(function(p){
-      return p.name.toLowerCase().includes(name.toLowerCase());
-    });
-    if (found.length === 1) {
-      found[0].qty = (found[0].qty||0) + qty;
-      DB.set('products', products);
-      return 'Done! Added ' + qty + ' units to **' + found[0].name + '**. New stock: ' + found[0].qty;
-    } else if (found.length > 1) {
-      return 'Found multiple matches: ' + found.map(function(p){return p.name;}).join(', ') + '. Be more specific.';
-    } else {
-      return 'Product not found: "' + name + '". Check the name and try again.';
-    }
-  }
-
-  // ADD EXPENSE: "add expense R500 petty cash for delivery"
-  var expMatch = q.match(/(?:add\s+)?expense\s+(?:R|r)?(\d+(?:\.\d+)?)\s+(?:petty cash\s+)?(?:for\s+)?(.+)/i);
-  if (expMatch) {
-    var amount = parseFloat(expMatch[1]);
-    var desc   = expMatch[2].trim();
-    var exps   = DB.get('expenses');
-    exps.push({
-      id: uid(), desc: desc, amount: amount,
-      category: 'General', payMethod: 'Petty Cash',
-      date: new Date().toISOString().slice(0,10),
-      notes: 'Added via command'
-    });
-    DB.set('expenses', exps);
-    if (typeof updatePettyCash === 'function') updatePettyCash(-amount, desc);
-    return 'Done! Expense added: **' + desc + '** — R' + amount.toFixed(2) + ' from petty cash.';
-  }
-
-  // STOCK CHECK
-  if (/low stock|out of stock|what.*low|running low/i.test(q)) {
-    var low = products.filter(function(p){return (p.qty||0)>0 && (p.qty||0)<=(p.lowAt||2);});
-    var out = products.filter(function(p){return (p.qty||0)<=0;});
-    var lines = [];
-    if (out.length) { lines.push('Out of stock (' + out.length + '):'); out.slice(0,8).forEach(function(p){lines.push('- '+p.name);}); lines.push(''); }
-    if (low.length) { lines.push('Low stock (' + low.length + '):'); low.slice(0,8).forEach(function(p){lines.push('- '+p.name+' ('+p.qty+' left)');}); }
-    return lines.length ? lines.join('\n') : 'All products have healthy stock levels.';
-  }
-
-  // TODAY SALES
-  if (/today.*sale|sale.*today|how much.*today|today.*revenue/i.test(q)) {
-    var todaySales = sales.filter(function(s){return !s.voided && localDateStr(s.date)===today;});
-    var total = todaySales.reduce(function(a,s){return a+s.total;},0);
-    return 'Today so far:\nSales: R' + total.toFixed(2) + '\nTransactions: ' + todaySales.length;
-  }
-
-  // PETTY CASH
-  if (/petty cash|cash balance/i.test(q)) {
-    return 'Petty cash balance: R' + (pc.balance||0).toFixed(2);
-  }
-
-  return null; // not handled locally
-}
-
-function buildCommandContext() {
-  var products = DB.get('products');
-  var sales    = DB.get('sales');
-  var members  = DB.get('members');
-  var today    = new Date().toDateString();
-  var todaySales = sales.filter(function(s){return !s.voided && localDateStr(s.date)===today;});
-  var todayRev   = todaySales.reduce(function(a,s){return a+s.total;},0);
-  var out = products.filter(function(p){return (p.qty||0)<=0;}).length;
-  var low = products.filter(function(p){return (p.qty||0)>0&&(p.qty||0)<=(p.lowAt||2);}).length;
-  var pc  = DB.getObj('pettyCash',{balance:0});
-
-    return 'You are the AI assistant for Jack and Jills Adventure Club POS in Port Elizabeth SA. Be brief and practical. LIVE DATA: Products: ' + products.length + ' total, ' + out + ' out of stock, ' + low + ' low. Today sales: R' + todayRev.toFixed(2) + ' (' + todaySales.length + ' transactions). Members: ' + members.length + '. Petty cash: R' + (pc.balance||0).toFixed(2) + '. Date: ' + new Date().toLocaleDateString('en-ZA');
-}
-
-function executeCommandFromReply(reply) {
-  // Reserved for future: parse structured commands from Claude response
-}
-
-function saveCmdKey() {
-  var key = (document.getElementById('cmd-key-input-field').value||'').trim();
-  if (!key.startsWith('sk-ant-')) { showToast('Invalid key — must start with sk-ant-', 'error'); return; }
-  localStorage.setItem('bizpos_ai_key', key);
-  document.getElementById('cmd-key-banner').style.display = 'none';
-  showToast('API key saved!', 'success');
-  addCmdMsg('ai', 'API key saved! I can now handle complex commands.');
-}
-
-
-// ============================================================
-// SPLIT PAYMENT + DELIVERY
-// ============================================================
-var _isDelivery = false;
-
-function onPaymentMethodChange() {
-  var method = document.getElementById('sale-payment').value;
-  var splitSec = document.getElementById('split-section');
-  if (splitSec) splitSec.style.display = method === 'split' ? 'block' : 'none';
-  if (method === 'split') {
-    // Pre-fill with total
-    updateSplitTotal();
-    document.getElementById('split-cash').focus();
-  }
-  updateSaleTotal();
-}
-
-function updateSplitTotal() {
-  var cash  = parseFloat(document.getElementById('split-cash').value)  || 0;
-  var card  = parseFloat(document.getElementById('split-card').value)  || 0;
-  var eft   = parseFloat(document.getElementById('split-eft').value)   || 0;
-  var total = getSaleCartTotal() + getDeliveryFee();
-  var splitTotal = cash + card + eft;
-  var diff  = splitTotal - total;
-  var el    = document.getElementById('split-status');
-  if (!el) return;
-  if (Math.abs(diff) < 0.01) {
-    el.style.background = 'var(--green-bg)';
-    el.style.color      = 'var(--green)';
-    el.textContent      = 'Balanced ✓  Total: R' + total.toFixed(2);
-  } else if (splitTotal < total) {
-    el.style.background = 'var(--red-bg)';
-    el.style.color      = 'var(--red)';
-    el.textContent      = 'Short by R' + Math.abs(diff).toFixed(2) + '  (Total: R' + total.toFixed(2) + ')';
-  } else {
-    el.style.background = 'var(--amber-bg)';
-    el.style.color      = 'var(--amber)';
-    el.textContent      = 'Over by R' + diff.toFixed(2) + '  (Total: R' + total.toFixed(2) + ')';
-  }
-}
-
-function getSaleCartTotal() {
-  // Cart total before delivery
-  var total = 0;
-  cart.forEach(function(item) { total += item.price * item.qty; });
-  var disc = parseFloat(document.getElementById('sale-discount') && document.getElementById('sale-discount').value) || 0;
-  if (disc > 0) total = total * (1 - disc/100);
-  return Math.max(0, total);
-}
-
-function getDeliveryFee() {
-  if (!_isDelivery) return 0;
-  return parseFloat(document.getElementById('sale-delivery-fee') && document.getElementById('sale-delivery-fee').value) || 0;
-}
-
-function setDelivery(isDelivery) {
-  _isDelivery = isDelivery;
-  var fields  = document.getElementById('delivery-fields');
-  var noBtn   = document.getElementById('del-no-btn');
-  var yesBtn  = document.getElementById('del-yes-btn');
-  var feeRow  = document.getElementById('delivery-fee-row');
-  if (fields)  fields.style.display = isDelivery ? 'block' : 'none';
-  if (feeRow)  feeRow.style.display = isDelivery ? 'flex' : 'none';
-  if (noBtn)  { noBtn.style.background  = isDelivery ? 'transparent' : 'var(--accent)'; noBtn.style.color  = isDelivery ? 'var(--text3)' : '#fff'; }
-  if (yesBtn) { yesBtn.style.background = isDelivery ? 'var(--accent)' : 'transparent'; yesBtn.style.color = isDelivery ? '#fff' : 'var(--text3)'; }
-  updateSaleTotal();
-  if (method === 'split') updateSplitTotal();
-}
-
-function updateSaleTotal() {
-  var base = getSaleCartTotal();
-  var fee  = getDeliveryFee();
-  var total = base + fee;
-  var totalEl = document.getElementById('sale-total-display');
-  if (totalEl) totalEl.textContent = 'R' + total.toFixed(2);
-  var feeDisp = document.getElementById('delivery-fee-display');
-  if (feeDisp) feeDisp.textContent = 'R' + fee.toFixed(2);
-  var feeRow = document.getElementById('delivery-fee-row');
-  if (feeRow) feeRow.style.display = fee > 0 ? 'flex' : 'none';
-  if (document.getElementById('sale-payment') && document.getElementById('sale-payment').value === 'split') {
-    updateSplitTotal();
-  }
-}
-
-// One-time product migration — adds new products if not already present
-(function addNewProducts() {
-  var existing = DB.get('products') || [];
-  if (!existing.length) return; // seedData will handle it
-  var newProds = [{"id": "94od3tfr", "name": "80mg Coconut Ice", "sku": "GT-COCO-80", "category": "Goblin Treatz", "price": 100.0, "cost": 55.0, "qty": 5, "qtyWh": 0, "lowAt": 2, "reorderAt": 5, "supplierId": "jledwwj2", "notes": "80mg edible - Coconut Ice"}];
-  var changed = false;
-  newProds.forEach(function(np) {
-    if (!existing.find(function(p){ return p.id === np.id || p.name === np.name; })) {
-      existing.push(np);
-      changed = true;
-    }
-  });
-  // Also add supplier if missing
-  var sups = DB.get('suppliers') || [];
-  var dynSup = {"id": "jledwwj2", "name": "Mike G - Dynamic", "contact": "", "phone": "", "email": "", "leadTime": 7, "notes": ""};
-  if (!sups.find(function(s){ return s.name === dynSup.name; })) {
-    sups.push(dynSup);
-    DB.set('suppliers', sups);
-  }
-  if (changed) {
-    DB.set('products', existing);
-    console.log('BizPOS: Added new products to live DB');
-  }
-})();
-
-(function addNewProducts(){
-  var existing = DB.get('products')||[];
-  if(!existing.length) return;
-  var np = {"id": "rtu3ukyy", "name": "80mg Coconut Ice", "sku": "GT-COCO-80", "category": "Goblin Treatz", "price": 100.0, "cost": 55.0, "qty": 5, "qtyWh": 0, "lowAt": 2, "reorderAt": 5, "supplierId": "jledwwj2", "notes": "80mg edible - Coconut Ice"};
-  if(!existing.find(function(p){return p.id===np.id||p.name===np.name;})){
-    existing.push(np);
-    DB.set('products',existing);
-  }
-})();
-
-
-// ============================================================
-// PURCHASE ORDER — payment status, print, download
-// ============================================================
-function setPOPayStatus(id, status) {
-  var pos = DB.get('purchaseOrders');
-  var po  = pos.find(function(p){return p.id===id;});
-  if (!po) return;
-  po.payStatus = status;
-  DB.set('purchaseOrders', pos);
-  renderPO();
-  // Re-open detail to refresh buttons
-  openPODetail(id);
-  showToast('Payment status: ' + status.replace('_',' '), 'success');
-}
-
-function togglePOCredit() {
-  var status = document.getElementById('poe-pay-status');
-  var section = document.getElementById('poe-credit-section');
-  if (status && section) {
-    section.style.display = status.value === 'credit' ? 'block' : 'none';
-  }
-}
-
-function printPO(id) {
-  var po = DB.get('purchaseOrders').find(function(p){return p.id===id;});
-  if (!po) return;
-  var win = window.open('','_blank','width=700,height=900');
-  win.document.write(buildPOHTML(po));
-  win.document.close();
-  win.focus();
-  setTimeout(function(){ win.print(); }, 500);
-}
-
-function downloadPO(id) {
-  var po = DB.get('purchaseOrders').find(function(p){return p.id===id;});
-  if (!po) return;
-  var content = buildPOHTML(po);
-  var blob = new Blob([content], {type:'text/html'});
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
-  a.href     = url;
-  a.download = (po.poNumber||'PO') + '.html';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast('PO downloaded as ' + a.download, 'success');
-}
-
-function buildPOHTML(po) {
-  var payLabels = {paid:'Paid',unpaid:'Unpaid',on_account:'On account',consignment:'Consignment',credit:'Credit loaded'};
-  var rows = po.items.map(function(i){
-    return '<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">' + i.productName + '</td>'
-      + '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">' + i.qty + '</td>'
-      + '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">R' + (i.unitCost||0).toFixed(2) + '</td>'
-      + '<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:700">R' + ((i.qty||0)*(i.unitCost||0)).toFixed(2) + '</td></tr>';
-  }).join('');
-
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + (po.poNumber||'PO') + '</title>'
-    + '<style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#1a1a1a;font-size:14px}'
-    + 'h1{font-size:22px;margin:0}table{width:100%;border-collapse:collapse;margin:20px 0}'
-    + 'th{background:#1f7a6e;color:#fff;padding:10px 12px;text-align:left}'
-    + '.total-row td{font-size:16px;font-weight:700;border-top:2px solid #1f7a6e}'
-    + '.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700}'
-    + '.paid{background:#dcfce7;color:#16a34a}.unpaid{background:#fee2e2;color:#dc2626}'
-    + '.on_account,.consignment{background:#dbeafe;color:#2563eb}'
-    + '@media print{button{display:none}}</style></head><body>'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #1f7a6e">'
-    + '<div><h1>Jack &amp; Jill&#39;s Adventure Club</h1><div style="color:#666;margin-top:4px">Purchase Order</div></div>'
-    + '<div style="text-align:right"><div style="font-size:20px;font-weight:800;color:#1f7a6e">' + (po.poNumber||'PO') + '</div>'
-    + '<div style="color:#666;font-size:13px">' + (po.date||new Date().toLocaleDateString('en-ZA')) + '</div></div></div>'
-    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">'
-    + '<div><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Supplier</div>'
-    + '<div style="font-weight:700;font-size:16px">' + po.supplierName + '</div></div>'
-    + '<div style="text-align:right">'
-    + (po.payStatus ? '<div><span class="badge ' + po.payStatus + '">' + (payLabels[po.payStatus]||po.payStatus) + '</span></div>' : '')
-    + (po.payment ? '<div style="color:#666;font-size:13px;margin-top:4px">' + po.payment + '</div>' : '')
-    + '</div></div>'
-    + '<table><thead><tr><th>Product</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit cost</th><th style="text-align:right">Total</th></tr></thead>'
-    + '<tbody>' + rows + '</tbody>'
-    + '<tfoot><tr class="total-row"><td colspan="3" style="padding:12px">Order total</td>'
-    + '<td style="padding:12px;text-align:right;font-size:18px;color:#1f7a6e">R' + (po.total||0).toFixed(2) + '</td></tr></tfoot></table>'
-    + (po.notes ? '<div style="background:#f5f5f5;padding:12px;border-radius:6px;margin-top:12px"><strong>Notes:</strong> ' + po.notes + '</div>' : '')
-    + (po.creditAmount ? '<div style="background:#dbeafe;padding:12px;border-radius:6px;margin-top:8px;color:#2563eb"><strong>Credit loaded:</strong> R' + (po.creditAmount||0).toFixed(2) + '</div>' : '')
-    + '<div style="margin-top:40px;font-size:12px;color:#999;text-align:center">Generated by BizPOS</div>'
-    + '<button onclick="window.print()" style="position:fixed;bottom:20px;right:20px;background:#1f7a6e;color:#fff;border:none;border-radius:8px;padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer">Print</button>'
-    + '</body></html>';
-}
-
-(function addNewMembers(){
-  var existing = DB.get('members') || [];
-  if (!existing.length) return;
-  var newMembers = [
-  {
-    "id": "53jsmn48",
-    "name": "Malcolm Kroon",
-    "memberNo": "J&J1353",
-    "phone": "0842071353",
-    "email": "malcoat69@gmail.com",
-    "address": "Lorraine",
-    "idNumber": "9010145223087",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "hlmwdg9x",
-    "name": "Micaila Phelan",
-    "memberNo": "J&J7373",
-    "phone": "0769547373",
-    "email": "",
-    "address": "Kragga kamma",
-    "idNumber": "9911260462089",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "nxeu565e",
-    "name": "Andy",
-    "memberNo": "J&J7456",
-    "phone": "0787777456",
-    "email": "andrewwhyles46@gmail.com",
-    "address": "",
-    "idNumber": "8105265254088",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "likp17z7",
-    "name": "Jason Venter",
-    "memberNo": "J&J2280",
-    "phone": "0609762280",
-    "email": "jasonventer780@gmail.com",
-    "address": "132 Luneville Rd, Lorraine",
-    "idNumber": "9201155027084",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "9qwq8asj",
-    "name": "Dale Warren",
-    "memberNo": "J&J9915",
-    "phone": "0813879915",
-    "email": "dalewarren32@icloud.com",
-    "address": "Rowallan Park, 31 Deon Street",
-    "idNumber": "312285058086",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "ybet0r0p",
-    "name": "Ettienne",
-    "memberNo": "J&J2652",
-    "phone": "8607265110084",
-    "email": "",
-    "address": "Macon Rd, Lorraine",
-    "idNumber": "8607265110084",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "33iayeav",
-    "name": "Ryan Mould",
-    "memberNo": "J&J4028",
-    "phone": "0782594028",
-    "email": "ryanmould1997@gmail.com",
-    "address": "22 Deon Street, Rowallan Park",
-    "idNumber": "9707065404083",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "3e3qlqfp",
-    "name": "JC Stessen",
-    "memberNo": "J&J5829",
-    "phone": "0743275829",
-    "email": "stessenjuanclaude@gmail.com",
-    "address": "87 Luneville Rd, Lorraine",
-    "idNumber": "9003115007085",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "hhe12mb8",
-    "name": "Ricardo Dinis",
-    "memberNo": "J&J1793",
-    "phone": "0729461793",
-    "email": "dinisricardo9@gmail.com",
-    "address": "53 Venter Ave, Theescombe",
-    "idNumber": "9195127080",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "0ebw4mpm",
-    "name": "Mihle",
-    "memberNo": "J&J3058",
-    "phone": "0749203058",
-    "email": "mihlekili@gmail.com",
-    "address": "Pinelands",
-    "idNumber": "9085071083",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "h0gtsdpl",
-    "name": "Regard Stimlie",
-    "memberNo": "J&J691",
-    "phone": "0828990691",
-    "email": "r.stimlie@icloud.com",
-    "address": "18 Burny Weg",
-    "idNumber": "5082452511085",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "vr7dnrgv",
-    "name": "Waseem Seale",
-    "memberNo": "J&J7088",
-    "phone": "0795055215",
-    "email": "",
-    "address": "Shelly Crescent, Kensington",
-    "idNumber": "107195087088",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "zsygs6u7",
-    "name": "Britney Reid",
-    "memberNo": "J&J89",
-    "phone": "0822630089",
-    "email": "britneyreid05@gmail.com",
-    "address": "22 Portofino, Lorraine",
-    "idNumber": "9050483081",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "8wrcosed",
-    "name": "Andre Gerber",
-    "memberNo": "J&J7045",
-    "phone": "0616967045",
-    "email": "",
-    "address": "",
-    "idNumber": "7009235238080",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "x21v5tat",
-    "name": "Daniel JP Davis",
-    "memberNo": "J&J5392",
-    "phone": "0898125392",
-    "email": "danieljpdavis1995@gmail.com",
-    "address": "Lorraine",
-    "idNumber": "9501295065088",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "c9qzw0s7",
-    "name": "Keith Ellard",
-    "memberNo": "J&J9312",
-    "phone": "0673149312",
-    "email": "420keithellard@gmail.com",
-    "address": "3 Lorrient place, Lorraine",
-    "idNumber": "610265206082",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "f6do7tzp",
-    "name": "Nathan Caine",
-    "memberNo": "J&J8113",
-    "phone": "0683038113",
-    "email": "nathancaine89@gmail.com",
-    "address": "53 Charlton Place Villas, Glenroy park",
-    "idNumber": "608115121089",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "tkcr23uj",
-    "name": "Johan Van Vuuren",
-    "memberNo": "J&J6865",
-    "phone": "0664696865",
-    "email": "vanvuuren.johan24@gmail.com",
-    "address": "18 Ave, Lorraine",
-    "idNumber": "8404215126083",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "bwywx2rr",
-    "name": "Feroz Fuzz",
-    "memberNo": "J&J6997",
-    "phone": "0824926997",
-    "email": "fezifuzz@gmail.com",
-    "address": "302 Circular Drive",
-    "idNumber": "8203255284087",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  },
-  {
-    "id": "56h6ir34",
-    "name": "Travis Geldenhuys",
-    "memberNo": "J&J2715",
-    "phone": "0718722715",
-    "email": "travisgh8@gmail.com",
-    "address": "5 Chardonnay St, Lorraine",
-    "idNumber": "9608205021083",
-    "joinDate": "2025-01-01",
-    "notes": "",
-    "optIns": {
-      "menus": true,
-      "promos": true,
-      "events": false
-    }
-  }
-];
-  var changed = false;
-  newMembers.forEach(function(nm) {
-    var exists = existing.find(function(m){
-      return m.memberNo === nm.memberNo || m.idNumber === nm.idNumber;
-    });
-    if (!exists) { existing.push(nm); changed = true; }
-  });
-  if (changed) {
-    DB.set('members', existing);
-    console.log('BizPOS: Added new members to DB');
-  }
-})();
-
-
-// ============================================================
-// OUT OF STOCK POPUP
-// ============================================================
-function showOutOfStockPopup(productName, available, needed, warehouseQty, productId) {
-  _noStockProductId = productId || null;
-  var msg = '<strong>' + productName + '</strong> has ';
-  if (available <= 0) {
-    msg += 'no stock on the shop floor.';
-  } else {
-    msg += 'only <strong>' + available + '</strong> unit' + (available===1?'':'s') + ' available, but you need ' + needed + '.';
-  }
-  if (warehouseQty > 0) {
-    msg += '<br><br>&#x1F3ED; <strong>' + warehouseQty + ' unit' + (warehouseQty===1?'':'s') + '</strong> available in the warehouse — transfer stock first.';
-  }
-  var msgEl = document.getElementById('no-stock-msg');
-  if (msgEl) msgEl.innerHTML = msg;
-  openModal('modal-no-stock');
-}
-
-
-// ============================================================
-// STOCKTAKE LOCATION — shop floor vs warehouse
-// ============================================================
-var stLocation = 'shop'; // 'shop' or 'warehouse'
-
-function setSTLocation(loc) {
-  stLocation = loc;
-  var shopBtn = document.getElementById('st-loc-shop');
-  var whBtn   = document.getElementById('st-loc-warehouse');
-  if (shopBtn) {
-    shopBtn.style.background = loc === 'shop' ? 'var(--accent)' : 'transparent';
-    shopBtn.style.color      = loc === 'shop' ? '#fff' : 'var(--text3)';
-  }
-  if (whBtn) {
-    whBtn.style.background = loc === 'warehouse' ? 'var(--accent)' : 'transparent';
-    whBtn.style.color      = loc === 'warehouse' ? '#fff' : 'var(--text3)';
-  }
-  // Clear counts when switching location to avoid mixing
-  if (Object.keys(stocktakeCounts).length > 0) {
-    if (!confirm('Switching location will clear your current counts. Continue?')) {
-      // Revert
-      setSTLocation(loc === 'shop' ? 'warehouse' : 'shop');
-      return;
-    }
-  }
-  stocktakeCounts = {};
-  stSessionDate = new Date().toISOString();
-  renderStocktakeSummary();
-  renderStocktakeList();
-}
-
-
-// ============================================================
-// QUICK TRANSFER + QUICK ADD STOCK
-// ============================================================
-var _qtProductId = null;
-var _qtDir       = 'w2s'; // warehouse to shop (default when out of stock)
-var _qasProductId = null;
-var _qasLoc       = 'shop';
-var _noStockProductId = null;
-
-// ── Quick Transfer (from inventory ⇄ button) ──
-function quickTransfer(productId) {
-  _qtProductId = productId;
-  _qtDir = 'w2s';
-  var products = DB.get('products');
-  var p = products.find(function(x){return x.id===productId;});
-  if (!p) return;
-  document.getElementById('qt-title').textContent = 'Transfer: ' + p.name;
-  document.getElementById('qt-product-info').innerHTML =
-    '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">' + p.name + '</div>' +
-    '<div style="display:flex;gap:16px">' +
-    '<div><div style="font-size:11px;color:var(--text3)">Shop floor</div><div style="font-size:18px;font-weight:800;color:var(--accent)">' + (p.qty||0) + '</div></div>' +
-    '<div><div style="font-size:11px;color:var(--text3)">Warehouse</div><div style="font-size:18px;font-weight:800;color:var(--blue)">' + (p.qtyWh||0) + '</div></div>' +
-    '</div>';
-  document.getElementById('qt-qty').value = '';
-  document.getElementById('qt-preview').textContent = '';
-  setQTDir('w2s');
-  openModal('modal-quick-transfer');
-}
-
-function setQTDir(dir) {
-  _qtDir = dir;
-  var w2s = document.getElementById('qt-dir-w2s');
-  var s2w = document.getElementById('qt-dir-s2w');
-  if (w2s) { w2s.style.background = dir==='w2s'?'var(--accent)':'transparent'; w2s.style.color = dir==='w2s'?'#fff':'var(--text3)'; }
-  if (s2w) { s2w.style.background = dir==='s2w'?'var(--accent)':'transparent'; s2w.style.color = dir==='s2w'?'#fff':'var(--text3)'; }
-  updateQTPreview();
-}
-
-function updateQTPreview() {
-  if (!_qtProductId) return;
-  var qty = parseInt(document.getElementById('qt-qty').value)||0;
-  var products = DB.get('products');
-  var p = products.find(function(x){return x.id===_qtProductId;});
-  if (!p || !qty) { document.getElementById('qt-preview').textContent = ''; return; }
-  var fromQty = _qtDir==='w2s' ? (p.qtyWh||0) : (p.qty||0);
-  var toQty   = _qtDir==='w2s' ? (p.qty||0)   : (p.qtyWh||0);
-  var fromLabel = _qtDir==='w2s' ? 'Warehouse' : 'Shop';
-  var toLabel   = _qtDir==='w2s' ? 'Shop' : 'Warehouse';
-  var el = document.getElementById('qt-preview');
-  if (qty > fromQty) {
-    el.style.color = 'var(--red)';
-    el.textContent = 'Only ' + fromQty + ' available in ' + fromLabel;
-  } else {
-    el.style.color = 'var(--green)';
-    el.textContent = fromLabel + ': ' + fromQty + ' - ' + qty + ' = ' + (fromQty-qty) + ' | ' + toLabel + ': ' + toQty + ' + ' + qty + ' = ' + (toQty+qty);
-  }
-}
-
-function confirmQuickTransfer() {
-  var qty = parseInt(document.getElementById('qt-qty').value)||0;
-  if (!qty || !_qtProductId) { showToast('Enter a quantity', 'error'); return; }
-  var products = DB.get('products');
-  var p = products.find(function(x){return x.id===_qtProductId;});
-  if (!p) return;
-  var fromQty = _qtDir==='w2s' ? (p.qtyWh||0) : (p.qty||0);
-  if (qty > fromQty) { showToast('Not enough stock in source', 'error'); return; }
-  if (_qtDir==='w2s') {
-    p.qtyWh = Math.max(0, (p.qtyWh||0) - qty);
-    p.qty   = (p.qty||0) + qty;
-  } else {
-    p.qty   = Math.max(0, (p.qty||0) - qty);
-    p.qtyWh = (p.qtyWh||0) + qty;
-  }
-  // Log transfer
-  var transfers = DB.get('stockTransfers')||[];
-  transfers.push({
-    id:uid(), date:new Date().toISOString(),
-    productId:p.id, productName:p.name,
-    direction:_qtDir, qty:qty,
-    staffName:currentUser?currentUser.name:'',
-    note:'Quick transfer from inventory'
-  });
-  DB.set('stockTransfers', transfers);
-  DB.set('products', products);
-  closeModal('modal-quick-transfer');
-  renderInventory();
-  showToast(qty + ' x ' + p.name + ' transferred to ' + (_qtDir==='w2s'?'shop floor':'warehouse'), 'success');
-}
-
-// ── Quick Add Stock (from out-of-stock popup or inventory) ──
-function quickAddStock(productId) {
-  _qasProductId = productId;
-  _qasLoc = 'shop';
-  var products = DB.get('products');
-  var p = products.find(function(x){return x.id===productId;});
-  if (!p) return;
-  document.getElementById('qas-title').textContent = 'Add stock: ' + p.name;
-  document.getElementById('qas-product-info').innerHTML =
-    '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">' + p.name + '</div>' +
-    '<div style="font-size:12px;color:var(--text3)">Shop: ' + (p.qty||0) + ' &nbsp; Warehouse: ' + (p.qtyWh||0) + '</div>';
-  document.getElementById('qas-qty').value = '';
-  document.getElementById('qas-cost').value = p.cost||'';
-  document.getElementById('qas-note').value = '';
-  setQASLoc('shop');
-  openModal('modal-quick-add-stock');
-}
-
-function setQASLoc(loc) {
-  _qasLoc = loc;
-  var shopBtn = document.getElementById('qas-loc-shop');
-  var whBtn   = document.getElementById('qas-loc-wh');
-  if (shopBtn) { shopBtn.style.background = loc==='shop'?'var(--accent)':'transparent'; shopBtn.style.color = loc==='shop'?'#fff':'var(--text3)'; }
-  if (whBtn)   { whBtn.style.background   = loc==='warehouse'?'var(--accent)':'transparent'; whBtn.style.color = loc==='warehouse'?'#fff':'var(--text3)'; }
-}
-
-function confirmQuickAddStock() {
-  var qty  = parseInt(document.getElementById('qas-qty').value)||0;
-  var cost = parseFloat(document.getElementById('qas-cost').value)||0;
-  var note = document.getElementById('qas-note').value.trim();
-  if (!qty || !_qasProductId) { showToast('Enter a quantity', 'error'); return; }
-  var products = DB.get('products');
-  var p = products.find(function(x){return x.id===_qasProductId;});
-  if (!p) return;
-  if (_qasLoc === 'warehouse') {
-    p.qtyWh = (p.qtyWh||0) + qty;
-  } else {
-    p.qty = (p.qty||0) + qty;
-  }
-  if (cost) p.cost = cost;
-  // Log as GRV
-  var grvs = DB.get('grvRecords')||[];
-  grvs.push({
-    id:uid(), date:new Date().toISOString(),
-    productId:p.id, productName:p.name,
-    qty:qty, cost:cost, location:_qasLoc,
-    staffName:currentUser?currentUser.name:'',
-    note:note||'Quick stock add'
-  });
-  DB.set('grvRecords', grvs);
-  DB.set('products', products);
-  closeModal('modal-quick-add-stock');
-  closeModal('modal-no-stock');
-  renderInventory();
-  showToast('Added ' + qty + ' x ' + p.name + ' to ' + (_qasLoc==='warehouse'?'warehouse':'shop floor'), 'success');
-}
-
-// ── Out of stock popup with actions ──
-function showOutOfStockPopup(productName, available, needed, warehouseQty, productId) {
-  _noStockProductId = productId || null;
-  var msg = '<strong>' + productName + '</strong> ';
-  if (available <= 0) {
-    msg += 'has no stock on the shop floor.';
-  } else {
-    msg += 'only has <strong>' + available + '</strong> unit' + (available===1?'':'s') + ' but you need ' + needed + '.';
-  }
-  if (warehouseQty > 0) {
-    msg += '<br><br>&#x1F3ED; <strong>' + warehouseQty + ' unit' + (warehouseQty===1?'':'s') + '</strong> in warehouse — transfer to shop first.';
-  }
-  var msgEl = document.getElementById('no-stock-msg');
-  if (msgEl) msgEl.innerHTML = msg;
-  // Show transfer button only if warehouse has stock
-  var transferBtn = document.getElementById('no-stock-transfer-btn');
-  var addBtn      = document.getElementById('no-stock-add-btn');
-  if (transferBtn) transferBtn.style.display = warehouseQty > 0 ? 'block' : 'none';
-  if (addBtn)      addBtn.style.display      = isManager() ? 'block' : 'none';
-  openModal('modal-no-stock');
-}
-
-function noStockTransfer() {
-  var pid = _noStockProductId;
-  closeModal('modal-no-stock');
-  if (pid) {
-    setTimeout(function(){ quickTransfer(pid); }, 200);
-  }
-}
-
-function noStockAddStock() {
-  var pid = _noStockProductId;
-  closeModal('modal-no-stock');
-  if (pid) {
-    setTimeout(function(){ quickAddStock(pid); }, 200);
-  } else {
-    showToast('Product not identified - add stock from inventory', 'warning');
-  }
-}
-
-
-// ============================================================
-// PETTY CASH — set opening balance
-// ============================================================
-function setPettyCashBalance() {
-  var amount = parseFloat(document.getElementById('cashup-pc-set-amount').value);
-  if (isNaN(amount) || amount < 0) {
-    showToast('Enter a valid amount', 'error');
-    return;
-  }
-  var pc = DB.getObj('pettyCash', {balance: 0});
-  var oldBalance = pc.balance || 0;
-  pc.balance = amount;
-  pc.lastUpdated = new Date().toISOString();
-  pc.lastReason = 'Manual balance set by ' + (currentUser ? currentUser.name : 'manager');
-  pc.history = pc.history || [];
-  pc.history.push({
-    date: new Date().toISOString(),
-    type: 'set',
-    oldBalance: oldBalance,
-    newBalance: amount,
-    by: currentUser ? currentUser.name : 'manager'
-  });
-  DB.setObj('pettyCash', pc);
-
-  // Update display
-  var pcDisp = document.getElementById('cashup-pc-display');
-  if (pcDisp) pcDisp.textContent = fmt(amount);
-
-  // Show status
-  var status = document.getElementById('cashup-pc-set-status');
-  if (status) {
-    status.style.display = 'block';
-    status.style.color = 'var(--green)';
-    status.textContent = 'Balance set to R' + amount.toFixed(2) + '. Banking will be added on top of this.';
-  }
-
-  // Refresh cashup summary
-  updateCashupTotal();
-  showToast('Petty cash set to R' + amount.toFixed(2), 'success');
-}
-
-// Also expose a way to view petty cash history (manager only)
-function openPettyCashHistory() {
-  var pc = DB.getObj('pettyCash', {balance: 0, history: []});
-  var history = (pc.history || []).slice().reverse().slice(0, 20);
-  var exps = DB.get('expenses').filter(function(e){
-    return e.payMethod === 'Petty Cash' || e.payMethod === 'petty_cash';
-  }).slice(-10).reverse();
-
-  var content = '<div style="padding:0">';
-  content += '<div style="background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">';
-  content += '<div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Current balance</div>';
-  content += '<div style="font-size:32px;font-weight:800;color:var(--accent)">R' + (pc.balance||0).toFixed(2) + '</div>';
-  content += '</div>';
-
-  if (history.length) {
-    content += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Balance history</div>';
-    history.forEach(function(h) {
-      var icon = h.type === 'set' ? '✏️' : h.delta > 0 ? '➕' : '➖';
-      content += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">';
-      content += '<div><div style="font-size:13px;font-weight:600">' + icon + ' ' + (h.reason || h.type || '') + '</div>';
-      content += '<div style="font-size:11px;color:var(--text3)">' + new Date(h.date).toLocaleString('en-ZA') + (h.by ? ' · ' + h.by : '') + '</div></div>';
-      content += '<div style="font-size:14px;font-weight:700;color:var(--accent)">R' + (h.newBalance||0).toFixed(2) + '</div>';
-      content += '</div>';
-    });
-  }
-
-  content += '</div>';
-  var modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.style.cssText = 'display:flex;z-index:800';
-  modal.innerHTML = '<div class="modal-sheet" style="max-height:80vh"><div class="modal-handle"></div>'
-    + '<div class="modal-title-row"><div class="modal-title">Petty Cash History</div>'
-    + '<button class="close-btn" onclick="this.closest(\'\.modal-overlay\').remove()">&#x2715;</button></div>'
-    + content + '</div>';
-  document.body.appendChild(modal);
-}
-
-
-// ============================================================
-// DATE HELPERS — local timezone aware (SA = UTC+2)
-// ============================================================
-function localDateStr(dateInput) {
-  // Returns YYYY-MM-DD in LOCAL timezone for any date input
-  var d = dateInput ? new Date(dateInput) : new Date();
-  var year  = d.getFullYear();
-  var month = String(d.getMonth()+1).padStart(2,'0');
-  var day   = String(d.getDate()).padStart(2,'0');
-  return year + '-' + month + '-' + day;
-}
-
-function isToday(dateInput) {
-  return localDateStr(dateInput) === localDateStr();
-}
-
-function isSameDay(dateA, dateB) {
-  return localDateStr(dateA) === localDateStr(dateB);
-}
-
-
-// ============================================================
-// HR — pay types, commission, wage calculations
-// ============================================================
-function updateRateLabel() {
-  var payType = document.getElementById('st-pay-type');
-  var label   = document.getElementById('st-rate-label');
-  if (!payType || !label) return;
-  var labels = { hourly: 'Rate (R/hr)', daily: 'Rate (R/day)', weekly: 'Rate (R/week)' };
-  label.textContent = labels[payType.value] || 'Rate (R)';
-}
-
-function toggleCommission(enabled) {
-  var offBtn   = document.getElementById('st-comm-off');
-  var onBtn    = document.getElementById('st-comm-on');
-  var fields   = document.getElementById('st-commission-fields');
-  if (!offBtn) return;
-  offBtn.style.background = enabled ? 'transparent' : 'var(--accent)';
-  offBtn.style.color      = enabled ? 'var(--text3)' : '#fff';
-  onBtn.style.background  = enabled ? 'var(--accent)' : 'transparent';
-  onBtn.style.color       = enabled ? '#fff' : 'var(--text3)';
-  if (fields) fields.style.display = enabled ? 'block' : 'none';
-}
-
-// Calculate commission for a staff member based on today's sales
-function calcCommission(staffId) {
-  var staff = DB.get('staff');
-  var s = staff.find(function(x){ return x.id === staffId; });
-  if (!s || !s.commission || !s.commission.enabled) return 0;
-
-  var sales = DB.get('sales');
-  var today = localDateStr();
-  var todaySales = sales.filter(function(sale){
-    return !sale.voided && localDateStr(sale.date) === today;
-  });
-
-  // Only count sales made while this staff member was on shift
-  // For simplicity, count all today's sales (can be refined later)
-  var totalSales = todaySales.reduce(function(a,s){ return a + s.total; }, 0);
-  var target = s.commission.target || 4000;
-  var rate   = (s.commission.rate || 10) / 100;
-
-  if (totalSales <= target) return 0;
-  return Math.round((totalSales - target) * rate * 100) / 100;
-}
-
-// Calculate wages for a staff member
-function calcWages(s, hoursWorked) {
-  if (!s || !s.rate) return 0;
-  var payType = s.payType || 'hourly';
-  var rate    = s.rate || 0;
-  if (payType === 'hourly') return hoursWorked * rate;
-  if (payType === 'daily')  return (hoursWorked / 8) * rate; // assume 8hr day
-  if (payType === 'weekly') return (hoursWorked / 40) * rate; // assume 40hr week
-  return 0;
-}
-
-// Update the cashier staff view to show commission
-function getCommissionSummary(staffId) {
-  var comm = calcCommission(staffId);
-  if (!comm) return '';
-  return '<div style="background:var(--green-bg);border:1px solid var(--green);border-radius:8px;padding:8px 10px;margin-top:8px">'
-    + '<div style="font-size:12px;font-weight:700;color:var(--green)">Commission earned today</div>'
-    + '<div style="font-size:20px;font-weight:800;color:var(--green)">R' + comm.toFixed(2) + '</div>'
-    + '</div>';
-}
-
-
-// ============================================================
-// CHECKOUT STOCK ACTIONS — transfer or add stock during sale
-// ============================================================
-var _checkoutLowProductId = null;
-
-function checkoutTransfer() {
-  if (_checkoutLowProductId) {
-    quickTransfer(_checkoutLowProductId);
-  }
-}
-
-function checkoutAddStock() {
-  if (_checkoutLowProductId) {
-    quickAddStock(_checkoutLowProductId);
-  }
-}
-
-// Call this whenever cart changes to show/hide the stock bar
-function updateCartStockWarning() {
-  var products = DB.get('products');
-  var bar      = document.getElementById('sale-stock-actions');
-  var msg      = document.getElementById('sale-stock-action-msg');
-  var transferBtn = document.getElementById('sale-transfer-btn');
-  if (!bar || !saleCart || !saleCart.length) {
-    if (bar) bar.style.display = 'none';
-    return;
-  }
-
-  // Find first cart item with low/no stock
-  var lowItem = null;
-  for (var i = 0; i < saleCart.length; i++) {
-    var item = saleCart[i];
-    var p    = products.find(function(x){ return x.id === item.productId; });
-    var avail = p ? (parseInt(p.qty)||0) : 0;
-    if (avail < (parseInt(item.qty)||1)) {
-      lowItem = { item: item, product: p, avail: avail };
-      break;
-    }
-  }
-
-  if (!lowItem) {
-    bar.style.display = 'none';
-    _checkoutLowProductId = null;
-    return;
-  }
-
-  var p   = lowItem.product;
-  var wh  = p ? (parseInt(p.qtyWh)||0) : 0;
-  _checkoutLowProductId = p ? p.id : null;
-
-  bar.style.display = 'block';
-  if (msg) {
-    if (lowItem.avail <= 0 && wh > 0) {
-      msg.textContent = lowItem.item.name + ': 0 on shop floor, ' + wh + ' in warehouse';
-    } else if (lowItem.avail <= 0) {
-      msg.textContent = lowItem.item.name + ': out of stock (will go negative)';
-    } else {
-      msg.textContent = lowItem.item.name + ': only ' + lowItem.avail + ' available, need ' + lowItem.item.qty;
-    }
-  }
-  // Show/hide transfer button based on warehouse stock
-  if (transferBtn) transferBtn.style.display = wh > 0 ? 'block' : 'none';
 }
 
 // ============================================================
@@ -7941,16 +6710,23 @@ try { _savedVersion = localStorage.getItem('bizpos_version'); } catch(e) {}
 var _savedMode = loadDeviceMode();
 
 if (!_savedMode || _savedVersion !== _APP_VERSION) {
-  // First time OR new version — show mode selection
   try { localStorage.setItem('bizpos_version', _APP_VERSION); } catch(e) {}
   showModeSelectScreen();
 } else {
-  // Mode already chosen — go straight to login
   applyDeviceMode();
-  renderPinScreen();
+  // Show loading screen while Firebase pulls staff
+  var pinScreen = document.getElementById('pin-screen');
+  if (pinScreen) {
+    pinScreen.classList.remove('hidden');
+    pinScreen.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:var(--bg)">'
+      + '<div style="font-size:36px;margin-bottom:12px">⏳</div>'
+      + '<div style="font-size:16px;font-weight:700;color:var(--text)">Loading BizPOS</div>'
+      + '<div style="font-size:13px;color:var(--text3);margin-top:8px">Syncing data...</div>'
+      + '</div>';
+  }
 }
 
-jjInitWithSeed(); // pull Firebase first, then seed if empty
+jjInitWithSeed(); // pull Firebase first — then render pin screen with real staff
 
 
 </script>
