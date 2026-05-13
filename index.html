@@ -6502,9 +6502,39 @@ function jjWrite(remote) {
       }
 
       if (k === 'products') {
-        // Products: use remote unless stocktake is active
+        // Block during active stocktake
         if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
-        localStorage.setItem('products', JSON.stringify(remote[k]));
+
+        var remProds = remote[k] || [];
+        var locProds = local || [];
+
+        if (!locProds.length && remProds.length) {
+          // Local is empty — safe to use remote
+          localStorage.setItem('products', JSON.stringify(remProds));
+          return;
+        }
+
+        // Smart merge per-product: take whichever has MORE stock
+        // This ensures a stocktake result is never lost
+        var result = remProds.map(function(rp) {
+          var lp = locProds.find(function(x){ return x.id === rp.id; });
+          if (!lp) return rp; // new product from remote
+          // Use remote as base (has latest price/name/category)
+          var merged = JSON.parse(JSON.stringify(rp));
+          // But keep the HIGHER stock count (protects stocktake data)
+          merged.qty   = Math.max(parseInt(rp.qty)||0,   parseInt(lp.qty)||0);
+          merged.qtyWh = Math.max(parseInt(rp.qtyWh)||0, parseInt(lp.qtyWh)||0);
+          return merged;
+        });
+
+        // Keep local products not in remote (newly added)
+        locProds.forEach(function(lp) {
+          if (!result.find(function(rp){ return rp.id === lp.id; })) {
+            result.push(lp);
+          }
+        });
+
+        localStorage.setItem('products', JSON.stringify(result));
         return;
       }
 
@@ -6665,15 +6695,28 @@ function jjInitWithSeed() {
 
     checkReorderPoints();
     updatePOBadge();
-    try { renderInventory(); }  catch(e) {}
-    try { renderPinScreen(); }  catch(e) {}
+    try { renderInventory(); } catch(e) {}
+
+    // Restore the pin screen (we replaced it with a loading div)
+    var pinScreen = document.getElementById('pin-screen');
+    if (pinScreen) {
+      // Reset to proper state so renderPinScreen can populate it
+      if (pinScreen.innerHTML.indexOf('Syncing data') > -1 ||
+          pinScreen.innerHTML.indexOf('Loading BizPOS') > -1) {
+        pinScreen.innerHTML = '<div id="pin-label" style="font-size:15px;color:var(--text2);margin-bottom:20px;text-align:center">Select your name then enter PIN</div>'
+          + '<div id="staff-grid-pin" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:20px"></div>'
+          + '<div id="pin-dots" style="display:flex;gap:10px;justify-content:center;margin-bottom:16px"></div>'
+          + '<div id="pin-pad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:0 auto"></div>'
+          + '<div id="pin-error" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;min-height:20px"></div>';
+      }
+    }
+    try { renderPinScreen(); } catch(e) { console.warn('renderPinScreen error:', e); }
 
     // Auto-pull every 10 seconds
     setInterval(function(){ jjPull(true); }, 10000);
 
-    // Push any unsaved local changes immediately on startup
-    // (in case last session went offline before pushing)
-    setTimeout(function(){ jjPush(true); }, 3000);
+    // Note: we do NOT auto-push on startup to avoid overwriting Firebase
+    // with stale local data. Changes push immediately when they happen.
   });
 }
 
@@ -6697,6 +6740,49 @@ function forcePullSync() {
     showSyncActionStatus('Updated!', '#16a34a', '#dcfce7');
     try { renderPinScreen(); } catch(e) {}
   });
+}
+
+
+// ============================================================
+// EMERGENCY RESTORE + SYNC STATS
+// ============================================================
+function emergencyRestore() {
+  if (!confirm('This will push ALL your current local data (stock counts, sales, staff, members) to the cloud, overwriting what is there. Use this if your stocktake was lost.\n\nContinue?')) return;
+  showSyncActionStatus('Pushing all local data to cloud...', '#d97706', '#fff9c4');
+  window._blockPullUntil = Date.now() + 120000; // block pull for 2 min
+  JJ.pushing = false;
+  jjPush(false);
+  setTimeout(function(){
+    showSyncActionStatus('Done! All your data is now saved to cloud.', '#16a34a', '#dcfce7');
+  }, 4000);
+}
+
+function showSyncLiveStats() {
+  var el = document.getElementById('sync-live-stats');
+  if (!el) return;
+  var products = DB.get('products') || [];
+  var members  = DB.get('members')  || [];
+  var sales    = DB.get('sales')    || [];
+  var staff    = DB.get('staff')    || [];
+  var withStock = products.filter(function(p){ return (p.qty||0) > 0; }).length;
+  var today     = localDateStr();
+  var todaySales = sales.filter(function(s){ return !s.voided && localDateStr(s.date) === today; });
+  var todayRev   = todaySales.reduce(function(a,s){ return a + s.total; }, 0);
+  el.innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+    '<div><span style="font-weight:700;color:var(--text)">' + products.length + '</span> products (' + withStock + ' in stock)</div>' +
+    '<div><span style="font-weight:700;color:var(--text)">' + members.length + '</span> members</div>' +
+    '<div><span style="font-weight:700;color:var(--text)">' + staff.length + '</span> staff</div>' +
+    '<div><span style="font-weight:700;color:var(--text)">' + todaySales.length + '</span> sales today (R' + todayRev.toFixed(0) + ')</div>' +
+    '</div>' +
+    '<div style="margin-top:6px;color:var(--text3)">Last sync: ' + (JJ.lastPullAt ? new Date(JJ.lastPullAt).toLocaleTimeString('en-ZA') : 'not yet') + '</div>';
+}
+
+// Hook into openSyncSetup
+var _origOpenSync = typeof openSyncSetup === 'function' ? openSyncSetup : function(){};
+function openSyncSetup() {
+  _origOpenSync();
+  setTimeout(showSyncLiveStats, 100);
 }
 
 // ============================================================
