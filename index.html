@@ -1012,9 +1012,48 @@ table.report-table .neg{color:var(--red)}
     <div class="form-group"><label class="form-label">Phone</label><input id="st-phone" type="tel"></div>
     <div class="form-group"><label class="form-label">Email</label><input id="st-email" type="email"></div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Hourly rate (R)</label><input id="st-rate" type="number" step="0.01" placeholder="0.00"></div>
-      <div class="form-group"><label class="form-label">Start date</label><input id="st-start" type="date"></div>
+      <div class="form-group">
+        <label class="form-label">Pay type</label>
+        <select id="st-pay-type">
+          <option value="hourly">Hourly</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" id="st-rate-label">Rate (R/hr)</label>
+        <input id="st-rate" type="number" step="0.01" placeholder="0.00" oninput="updateRateLabel()">
+      </div>
     </div>
+    <div class="form-group">
+      <label class="form-label">Start date</label>
+      <input id="st-start" type="date">
+    </div>
+
+    <!-- Commission -->
+    <div class="form-group">
+      <label class="form-label">Sales commission</label>
+      <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px;margin-bottom:8px">
+        <button id="st-comm-off" onclick="toggleCommission(false)" style="flex:1;padding:7px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">None</button>
+        <button id="st-comm-on"  onclick="toggleCommission(true)"  style="flex:1;padding:7px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">Enabled</button>
+      </div>
+      <div id="st-commission-fields" style="display:none;background:var(--bg3);border-radius:10px;padding:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+          <div>
+            <label class="form-label" style="font-size:11px">Daily target (R)</label>
+            <input id="st-comm-target" type="number" step="100" placeholder="4000" value="4000">
+          </div>
+          <div>
+            <label class="form-label" style="font-size:11px">Rate above target (%)</label>
+            <input id="st-comm-rate" type="number" step="0.5" placeholder="10" value="10">
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);line-height:1.5">
+          Example: R5500 sales, R4000 target, 10% → commission = R150 (10% of R1500 over target)
+        </div>
+      </div>
+    </div>
+
     <input type="hidden" id="st-id">
     <button class="btn btn-primary btn-full" onclick="saveStaff()">Save staff member</button>
   </div>
@@ -1093,6 +1132,15 @@ table.report-table .neg{color:var(--red)}
         <button onclick="openQuickAddProduct()" title="Add new product" style="padding:0 14px;background:#1f7a6e;border:none;border-radius:10px;color:#fff;font-size:20px;font-weight:300;cursor:pointer;flex-shrink:0">+</button>
       </div>
       <div id="sale-product-results" style="margin-top:6px;display:none;max-height:200px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Stock quick actions bar — shows when cart has low/no stock items -->
+    <div id="sale-stock-actions" style="display:none;background:var(--amber-bg);border:1.5px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:8px" id="sale-stock-action-msg">Stock issue</div>
+      <div style="display:flex;gap:6px">
+        <button id="sale-transfer-btn" onclick="checkoutTransfer()" style="flex:1;padding:8px;background:#2563eb;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">⇄ Transfer from warehouse</button>
+        <button onclick="checkoutAddStock()" style="flex:1;padding:8px;background:var(--green);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">+ Add stock</button>
+      </div>
     </div>
 
     <!-- Cart -->
@@ -1925,7 +1973,7 @@ function renderInventory() {
           ? `<div style="display:flex;align-items:center;gap:4px">
               <div class="qty-controls">
                 <button class="qty-btn" onclick="adjustQty('${p.id}',-1,'${loc}')">−</button>
-                <div class="qty-num">${displayQty}</div>
+                <div class="qty-num" style="${displayQty < 0 ? 'color:var(--red)' : ''}">${displayQty}</div>
                 <button class="qty-btn" onclick="adjustQty('${p.id}',1,'${loc}')">+</button>
               </div>
               <button onclick="quickTransfer('${p.id}')" title="Transfer stock" style="padding:4px 7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;color:var(--accent)">⇄</button>
@@ -2305,13 +2353,15 @@ function commitStocktake() {
     }
   });
   DB.set('products', products);
-  // Block auto-pull for 20 seconds to let push complete first
-  window._blockPullUntil = Date.now() + 60000; // 60s to ensure push completes
-  // Push immediately to cloud
+  // Block auto-pull for 90 seconds to let push complete first
+  window._blockPullUntil = Date.now() + 90000;
+  // Force push immediately — reset pushing flag and last push time
   if (typeof jjPush === 'function') {
-    JJ.pushing = false; // force push even if one is in progress
-    setTimeout(function(){ jjPush(false); }, 200);
+    JJ.pushing = false;
+    JJ.timer = null;
+    jjPush(false); // immediate, no delay
   }
+  showToast('Stocktake saved! Pushing to cloud...', 'success', 3000);
 
   // Clear session
   DB.setObj('stocktakeSession', {});
@@ -2829,6 +2879,9 @@ function openNewSale() {
   if (delYes) { delYes.style.background = 'transparent';   delYes.style.color = 'var(--text3)'; }
   var splitSec = document.getElementById('split-section');
   if (splitSec) splitSec.style.display = 'none';
+  var stockBar = document.getElementById('sale-stock-actions');
+  if (stockBar) stockBar.style.display = 'none';
+  _checkoutLowProductId = null;
   if (document.getElementById('split-cash'))  document.getElementById('split-cash').value  = '';
   if (document.getElementById('split-card'))  document.getElementById('split-card').value  = '';
   if (document.getElementById('split-eft'))   document.getElementById('split-eft').value   = '';
@@ -3141,7 +3194,7 @@ function renderSaleCart() {
   }
   el.innerHTML = `<div style="background:var(--bg3);border-radius:var(--radius);padding:10px 12px;margin-bottom:4px">` +
     saleCart.map((item,idx) => {
-      const maxQty = (DB.get('products').find(p=>p.id===item.productId)||{}).qty || 99;
+      const maxQty = 999; // no cap on qty in cart
       return `<div class="cart-item">
         <div style="flex:1;min-width:0">
           <div class="cart-name" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.name}</div>
@@ -3157,11 +3210,12 @@ function renderSaleCart() {
       </div>`;
     }).join('') + '</div>';
   updateCartTotals();
+  if (typeof updateCartStockWarning === 'function') updateCartStockWarning();
 }
 
 function cartQty(i, delta) {
   const p = DB.get('products').find(x=>x.id===saleCart[i]?.productId);
-  const maxQty = p ? p.qty : 99;
+  const maxQty = 999; // no cap — allow selling beyond stock (goes negative)
   saleCart[i].qty = Math.min(maxQty, Math.max(1, saleCart[i].qty + delta));
   renderSaleCart();
 }
@@ -3175,20 +3229,32 @@ function completeSale() {
   if (!saleCart.length) { alert('Cart is empty'); return; }
   const products = DB.get('products');
   // Check SHOP stock only (sales deduct from shop floor)
+  // Stock check — warn if low but always allow sale (stock can go negative)
   for (const item of saleCart) {
-    const p = products.find(x=>x.id===item.productId);
+    const p     = products.find(x=>x.id===item.productId);
     const avail = p ? (parseInt(p.qty)||0) : 0;
     const need  = parseInt(item.qty)||1;
-    if (!p || avail < need) {
+    if (avail < need) {
       const wh = p ? (parseInt(p.qtyWh)||0) : 0;
-      showOutOfStockPopup(item.name, avail, need, wh, item.productId);
-      return;
+      // If warehouse has stock, suggest transfer — but still ask if they want to sell anyway
+      // Don't block the sale — just record negative stock
+      if (avail <= 0 && wh > 0) {
+        // Has warehouse stock — offer to transfer, but can sell anyway
+        if (!confirm(item.name + ' has no shop floor stock but ' + wh + ' in warehouse.\nSell anyway? (stock will go negative)\n\nTap OK to sell, Cancel to transfer first.')) {
+          showOutOfStockPopup(item.name, avail, need, wh, item.productId);
+          return;
+        }
+      } else if (avail <= 0) {
+        // No stock anywhere — allow but show warning toast
+        showToast(item.name + ': 0 stock — selling anyway (going negative)', 'warning', 3000);
+      }
+      // If avail > 0 but less than needed, just proceed — deduct what we can
     }
   }
   // Deduct from shop stock only
   saleCart.forEach(item => {
     const p = products.find(x=>x.id===item.productId);
-    if (p) p.qty = Math.max(0, (p.qty||0) - item.qty);
+    if (p) p.qty = (parseInt(p.qty)||0) - (parseInt(item.qty)||1); // allow negative
   });
   DB.set('products', products);
 
@@ -3387,6 +3453,12 @@ function openEditStaff(id) {
   document.getElementById('st-phone').value = s.phone||'';
   document.getElementById('st-email').value = s.email||'';
   document.getElementById('st-rate').value = s.rate||'';
+  if (document.getElementById('st-pay-type')) document.getElementById('st-pay-type').value = s.payType||'hourly';
+  if (typeof updateRateLabel === 'function') updateRateLabel();
+  var hasComm = s.commission && s.commission.enabled;
+  if (typeof toggleCommission === 'function') toggleCommission(!!hasComm);
+  if (document.getElementById('st-comm-target')) document.getElementById('st-comm-target').value = (s.commission && s.commission.target) || 4000;
+  if (document.getElementById('st-comm-rate'))   document.getElementById('st-comm-rate').value   = (s.commission && s.commission.rate)   || 10;
   document.getElementById('st-start').value = s.startDate||'';
   document.getElementById('modal-staff-title').textContent = 'Edit staff member';
   closeModal('modal-staff-profile');
@@ -3395,18 +3467,57 @@ function openEditStaff(id) {
 
 function saveStaff() {
   const name = document.getElementById('st-name').value.trim();
-  const pin = document.getElementById('st-pin').value.trim();
-  if (!name) { alert('Name required'); return; }
-  if (!pin || pin.length !== 4) { alert('4-digit PIN required'); return; }
+  const pin  = document.getElementById('st-pin').value.trim();
+  if (!name) { showToast('Name required', 'error'); return; }
+  if (!pin || pin.length !== 4) { showToast('4-digit PIN required', 'error'); return; }
+
   const staff = DB.get('staff');
-  const id = document.getElementById('st-id').value;
-  const data = { name, role:document.getElementById('st-role').value, pin, phone:document.getElementById('st-phone').value.trim(), email:document.getElementById('st-email').value.trim(), rate:parseFloat(document.getElementById('st-rate').value)||0, startDate:document.getElementById('st-start').value };
-  if (id) { const i=staff.findIndex(s=>s.id===id); if(i>-1) staff[i]={...staff[i],...data}; }
-  else { staff.push({id:uid(),...data, clockedIn:false, shifts:[], onLeave:false}); }
+  const id    = document.getElementById('st-id').value;
+
+  // Commission
+  var commOnBtn = document.getElementById('st-comm-on');
+  var commEnabled = commOnBtn && (commOnBtn.style.background === 'var(--accent)' || commOnBtn.classList.contains('active'));
+
+  const data = {
+    name,
+    role:      document.getElementById('st-role').value,
+    pin,
+    phone:     document.getElementById('st-phone').value.trim(),
+    email:     document.getElementById('st-email').value.trim(),
+    payType:   document.getElementById('st-pay-type')?.value || 'hourly',
+    rate:      parseFloat(document.getElementById('st-rate').value) || 0,
+    startDate: document.getElementById('st-start').value,
+    commission: {
+      enabled: commEnabled,
+      target:  parseFloat(document.getElementById('st-comm-target')?.value) || 4000,
+      rate:    parseFloat(document.getElementById('st-comm-rate')?.value)   || 10
+    }
+  };
+
+  if (id) {
+    const idx = staff.findIndex(s=>s.id===id);
+    if (idx > -1) {
+      // Preserve clock-in state and shifts
+      data.id        = id;
+      data.clockedIn = staff[idx].clockedIn || false;
+      data.clockedInAt = staff[idx].clockedInAt || null;
+      data.shifts    = staff[idx].shifts || [];
+      data.onLeave   = staff[idx].onLeave || false;
+      staff[idx]     = data;
+    }
+  } else {
+    data.id        = uid();
+    data.clockedIn = false;
+    data.clockedInAt = null;
+    data.shifts    = [];
+    data.onLeave   = false;
+    staff.push(data);
+  }
+
   DB.set('staff', staff);
-  closeModal('modal-staff');
+  closeModal('modal-add-staff');
   renderStaff();
-  renderPinScreen();
+  showToast('Staff member saved', 'success');
 }
 
 function openStaffProfile(id) {
@@ -6393,6 +6504,60 @@ function jjPull(silent, cb) {
   });
 }
 
+function jjInitWithSeed() {
+  // Hook DB writes first
+  if (!DB._jjHooked) {
+    DB._jjHooked = true;
+    var _origSet = DB.set.bind(DB);
+    DB.set = function(k, v) {
+      _origSet(k, v);
+      if (JJ.keys.indexOf(k) > -1) {
+        clearTimeout(JJ.timer);
+        JJ.timer = setTimeout(function(){ jjPush(true); }, 1500);
+      }
+    };
+  }
+
+  updateSyncIndicator('syncing', 'Loading...');
+
+  // Pull from Firebase first — seed only if Firebase returns nothing
+  fetch(JJ.url + '?t=' + Date.now(), { cache: 'no-store' })
+  .then(function(r) { return r.ok ? r.json() : null; })
+  .then(function(data) {
+    if (data && data._at) {
+      // Firebase has real data — apply it, skip seedData
+      jjWrite(data);
+      window._jjHasCloudData = true;
+      updateSyncIndicator('ok', 'Sync on');
+      try { renderInventory(); } catch(e) {}
+      try { renderMembers(); }   catch(e) {}
+      try { renderSales(); }     catch(e) {}
+      try { renderStaff(); }     catch(e) {}
+      // Also re-render pin screen so staff show up for login
+      try { renderPinScreen(); } catch(e) {}
+    } else {
+      // Firebase is empty — seed defaults then push
+      seedData();
+      setTimeout(function(){ jjPush(true); }, 2000);
+    }
+    checkReorderPoints();
+    updatePOBadge();
+    renderInventory();
+    // Start auto-pull every 10s
+    setInterval(function(){ jjPull(true); }, 10000);
+  })
+  .catch(function() {
+    // Offline — use whatever is in localStorage
+    updateSyncIndicator('off', 'Offline');
+    seedData();
+    checkReorderPoints();
+    updatePOBadge();
+    renderInventory();
+    // Keep trying
+    setTimeout(function(){ jjInit(); }, 15000);
+  });
+}
+
 function jjInit() {
   if (!DB._jjHooked) {
     DB._jjHooked = true;
@@ -7633,12 +7798,144 @@ function isSameDay(dateA, dateB) {
   return localDateStr(dateA) === localDateStr(dateB);
 }
 
+
+// ============================================================
+// HR — pay types, commission, wage calculations
+// ============================================================
+function updateRateLabel() {
+  var payType = document.getElementById('st-pay-type');
+  var label   = document.getElementById('st-rate-label');
+  if (!payType || !label) return;
+  var labels = { hourly: 'Rate (R/hr)', daily: 'Rate (R/day)', weekly: 'Rate (R/week)' };
+  label.textContent = labels[payType.value] || 'Rate (R)';
+}
+
+function toggleCommission(enabled) {
+  var offBtn   = document.getElementById('st-comm-off');
+  var onBtn    = document.getElementById('st-comm-on');
+  var fields   = document.getElementById('st-commission-fields');
+  if (!offBtn) return;
+  offBtn.style.background = enabled ? 'transparent' : 'var(--accent)';
+  offBtn.style.color      = enabled ? 'var(--text3)' : '#fff';
+  onBtn.style.background  = enabled ? 'var(--accent)' : 'transparent';
+  onBtn.style.color       = enabled ? '#fff' : 'var(--text3)';
+  if (fields) fields.style.display = enabled ? 'block' : 'none';
+}
+
+// Calculate commission for a staff member based on today's sales
+function calcCommission(staffId) {
+  var staff = DB.get('staff');
+  var s = staff.find(function(x){ return x.id === staffId; });
+  if (!s || !s.commission || !s.commission.enabled) return 0;
+
+  var sales = DB.get('sales');
+  var today = localDateStr();
+  var todaySales = sales.filter(function(sale){
+    return !sale.voided && localDateStr(sale.date) === today;
+  });
+
+  // Only count sales made while this staff member was on shift
+  // For simplicity, count all today's sales (can be refined later)
+  var totalSales = todaySales.reduce(function(a,s){ return a + s.total; }, 0);
+  var target = s.commission.target || 4000;
+  var rate   = (s.commission.rate || 10) / 100;
+
+  if (totalSales <= target) return 0;
+  return Math.round((totalSales - target) * rate * 100) / 100;
+}
+
+// Calculate wages for a staff member
+function calcWages(s, hoursWorked) {
+  if (!s || !s.rate) return 0;
+  var payType = s.payType || 'hourly';
+  var rate    = s.rate || 0;
+  if (payType === 'hourly') return hoursWorked * rate;
+  if (payType === 'daily')  return (hoursWorked / 8) * rate; // assume 8hr day
+  if (payType === 'weekly') return (hoursWorked / 40) * rate; // assume 40hr week
+  return 0;
+}
+
+// Update the cashier staff view to show commission
+function getCommissionSummary(staffId) {
+  var comm = calcCommission(staffId);
+  if (!comm) return '';
+  return '<div style="background:var(--green-bg);border:1px solid var(--green);border-radius:8px;padding:8px 10px;margin-top:8px">'
+    + '<div style="font-size:12px;font-weight:700;color:var(--green)">Commission earned today</div>'
+    + '<div style="font-size:20px;font-weight:800;color:var(--green)">R' + comm.toFixed(2) + '</div>'
+    + '</div>';
+}
+
+
+// ============================================================
+// CHECKOUT STOCK ACTIONS — transfer or add stock during sale
+// ============================================================
+var _checkoutLowProductId = null;
+
+function checkoutTransfer() {
+  if (_checkoutLowProductId) {
+    quickTransfer(_checkoutLowProductId);
+  }
+}
+
+function checkoutAddStock() {
+  if (_checkoutLowProductId) {
+    quickAddStock(_checkoutLowProductId);
+  }
+}
+
+// Call this whenever cart changes to show/hide the stock bar
+function updateCartStockWarning() {
+  var products = DB.get('products');
+  var bar      = document.getElementById('sale-stock-actions');
+  var msg      = document.getElementById('sale-stock-action-msg');
+  var transferBtn = document.getElementById('sale-transfer-btn');
+  if (!bar || !saleCart || !saleCart.length) {
+    if (bar) bar.style.display = 'none';
+    return;
+  }
+
+  // Find first cart item with low/no stock
+  var lowItem = null;
+  for (var i = 0; i < saleCart.length; i++) {
+    var item = saleCart[i];
+    var p    = products.find(function(x){ return x.id === item.productId; });
+    var avail = p ? (parseInt(p.qty)||0) : 0;
+    if (avail < (parseInt(item.qty)||1)) {
+      lowItem = { item: item, product: p, avail: avail };
+      break;
+    }
+  }
+
+  if (!lowItem) {
+    bar.style.display = 'none';
+    _checkoutLowProductId = null;
+    return;
+  }
+
+  var p   = lowItem.product;
+  var wh  = p ? (parseInt(p.qtyWh)||0) : 0;
+  _checkoutLowProductId = p ? p.id : null;
+
+  bar.style.display = 'block';
+  if (msg) {
+    if (lowItem.avail <= 0 && wh > 0) {
+      msg.textContent = lowItem.item.name + ': 0 on shop floor, ' + wh + ' in warehouse';
+    } else if (lowItem.avail <= 0) {
+      msg.textContent = lowItem.item.name + ': out of stock (will go negative)';
+    } else {
+      msg.textContent = lowItem.item.name + ': only ' + lowItem.avail + ' available, need ' + lowItem.item.qty;
+    }
+  }
+  // Show/hide transfer button based on warehouse stock
+  if (transferBtn) transferBtn.style.display = wh > 0 ? 'block' : 'none';
+}
+
 // ============================================================
 // INIT
 // ============================================================
 // Check device mode first
 // Version bump forces re-selection on all devices after redeploy
-var _APP_VERSION = '2.1';
+var _APP_VERSION = '2.2';
 var _savedVersion = null;
 try { _savedVersion = localStorage.getItem('bizpos_version'); } catch(e) {}
 var _savedMode = loadDeviceMode();
@@ -7653,13 +7950,7 @@ if (!_savedMode || _savedVersion !== _APP_VERSION) {
   renderPinScreen();
 }
 
-jjInit(); // auto sync, zero setup needed
-setTimeout(function(){
-  seedData();
-  checkReorderPoints();
-  updatePOBadge();
-  renderInventory();
-}, 400);
+jjInitWithSeed(); // pull Firebase first, then seed if empty
 
 
 </script>
