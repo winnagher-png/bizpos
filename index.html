@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta charset="UTF-8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -498,13 +501,14 @@ table.report-table .neg{color:var(--red)}
 <div id="sync-setup-overlay">
   <div id="sync-setup-box">
     <div style="font-size:28px;margin-bottom:8px">&#9729;&#65039;</div>
-    <h2 style="margin-bottom:6px">Auto Sync</h2>
-    <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5">Jack &amp; Jill's BizPOS syncs automatically. Every change pushes within 2 seconds. All devices stay up to date.</p>
+    <h2 style="margin-bottom:6px">Sync Status</h2>
+    <div id="sync-live-stats" style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text3)">Loading...</div>
     <div id="sync-action-status" style="display:none;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:600;margin-bottom:12px;text-align:center"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-      <button onclick="forcePushSync()" style="padding:14px 8px;background:#16a34a;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Push my data</button>
-      <button onclick="forcePullSync()" style="padding:14px 8px;background:#2563eb;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Pull latest</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <button onclick="forcePushSync()" style="padding:14px 8px;background:#16a34a;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">&#x2B06; Push my data</button>
+      <button onclick="forcePullSync()" style="padding:14px 8px;background:#2563eb;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">&#x2B07; Pull latest</button>
     </div>
+    <button onclick="emergencyRestore()" style="width:100%;padding:11px;background:var(--amber);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px">&#x1F6A8; Emergency: push ALL my data to cloud</button>
     <button onclick="closeSyncSetup()" style="width:100%;padding:13px;background:#1f7a6e;border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer">Done</button>
   </div>
 </div>
