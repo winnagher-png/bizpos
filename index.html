@@ -6697,19 +6697,7 @@ function jjInitWithSeed() {
     updatePOBadge();
     try { renderInventory(); } catch(e) {}
 
-    // Restore the pin screen (we replaced it with a loading div)
-    var pinScreen = document.getElementById('pin-screen');
-    if (pinScreen) {
-      // Reset to proper state so renderPinScreen can populate it
-      if (pinScreen.innerHTML.indexOf('Syncing data') > -1 ||
-          pinScreen.innerHTML.indexOf('Loading BizPOS') > -1) {
-        pinScreen.innerHTML = '<div id="pin-label" style="font-size:15px;color:var(--text2);margin-bottom:20px;text-align:center">Select your name then enter PIN</div>'
-          + '<div id="staff-grid-pin" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:20px"></div>'
-          + '<div id="pin-dots" style="display:flex;gap:10px;justify-content:center;margin-bottom:16px"></div>'
-          + '<div id="pin-pad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:0 auto"></div>'
-          + '<div id="pin-error" style="color:var(--red);font-size:13px;text-align:center;margin-top:10px;min-height:20px"></div>';
-      }
-    }
+    // Re-render pin screen with updated staff from Firebase
     try { renderPinScreen(); } catch(e) { console.warn('renderPinScreen error:', e); }
 
     // Auto-pull every 10 seconds
@@ -6800,16 +6788,7 @@ if (!_savedMode || _savedVersion !== _APP_VERSION) {
   showModeSelectScreen();
 } else {
   applyDeviceMode();
-  // Show loading screen while Firebase pulls staff
-  var pinScreen = document.getElementById('pin-screen');
-  if (pinScreen) {
-    pinScreen.classList.remove('hidden');
-    pinScreen.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:var(--bg)">'
-      + '<div style="font-size:36px;margin-bottom:12px">⏳</div>'
-      + '<div style="font-size:16px;font-weight:700;color:var(--text)">Loading BizPOS</div>'
-      + '<div style="font-size:13px;color:var(--text3);margin-top:8px">Syncing data...</div>'
-      + '</div>';
-  }
+  renderPinScreen();
 }
 
 jjInitWithSeed(); // pull Firebase first — then render pin screen with real staff
