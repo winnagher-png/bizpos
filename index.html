@@ -1370,7 +1370,7 @@ table.report-table .neg{color:var(--red)}
 
 <!-- PO Detail Modal -->
 <div class="modal-overlay" id="modal-po-detail">
-  <div class="modal-sheet">
+  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto">
     <div class="modal-handle"></div>
     <div id="po-detail-content"></div>
   </div>
@@ -2760,12 +2760,29 @@ function openPODetail(id) {
   var printEl = document.getElementById('po-print-btns');
   if (printEl) {
     var printBtn = document.createElement('button');
-    printBtn.className = 'btn btn-secondary'; printBtn.style.flex = '1'; printBtn.textContent = 'Print';
+    printBtn.className = 'btn btn-secondary'; printBtn.style.flex = '1'; printBtn.textContent = '🖨 Print';
     (function(pid){printBtn.onclick=function(){printPO(pid);};})(id);
     var dlBtn = document.createElement('button');
-    dlBtn.className = 'btn btn-secondary'; dlBtn.style.flex = '1'; dlBtn.textContent = 'Save doc';
+    dlBtn.className = 'btn btn-secondary'; dlBtn.style.flex = '1'; dlBtn.textContent = '📄 Save doc';
     (function(pid){dlBtn.onclick=function(){downloadPO(pid);};})(id);
     printEl.appendChild(printBtn); printEl.appendChild(dlBtn);
+
+    // Delete button — always visible for managers
+    if (isManager()) {
+      var delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-danger'; delBtn.style.width = '100%'; delBtn.style.marginTop = '8px';
+      delBtn.textContent = '🗑 Delete purchase order';
+      (function(pid){ delBtn.onclick = function(){
+        if (window.confirm ? confirm('Delete this PO permanently?') : true) {
+          var pos = DB.get('purchaseOrders').filter(function(p){ return p.id !== pid; });
+          DB.set('purchaseOrders', pos);
+          closeModal('modal-po-detail');
+          renderPO();
+          showToast('Purchase order deleted', 'success');
+        }
+      }; })(id);
+      printEl.appendChild(delBtn);
+    }
   }
 
   openModal('modal-po-detail');
@@ -5354,6 +5371,7 @@ function jjPull(silent, cb) {
     try { renderSales(); }         catch(e) {}
     try { renderExpenses(); }      catch(e) {}
     try { renderCashupHistory(); } catch(e) {}
+    try { renderPO(); }            catch(e) {}
     try { renderPinScreen(); } catch(e) {}
 
     var ts = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'});
