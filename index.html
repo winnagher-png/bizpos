@@ -2753,8 +2753,8 @@ function openPODetail(id) {
 
   // Print / Download / Delete
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
-  h += '<button id="po-print-btn" style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer">🖨 Print</button>';
-  h += '<button id="po-dl-btn" style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer">📄 Save doc</button>';
+  h += '<button id="po-print-btn" style="padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">🖨 Print PO</button>';
+  h += '<button id="po-dl-btn" style="padding:12px;background:var(--blue);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">📄 Download PO</button>';
   h += '</div>';
   h += '<button id="po-delete-btn" style="width:100%;padding:10px;background:var(--red-bg);border:1px solid var(--red);border-radius:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer">🗑 Delete purchase order</button>';
 
@@ -2882,7 +2882,7 @@ function openMemberProfile(id) {
   const m = DB.get('members').find(x=>x.id===id);
   if (!m) return;
   const sales = DB.get('sales').filter(s=>s.memberId===id);
-  const totalSpend = sales.reduce((a,s)=>a+s.total,0);
+  const totalSpend = sales.filter(s=>!s.voided).reduce((a,s)=>a+s.total,0);
   const el = document.getElementById('member-profile-content');
   el.innerHTML = `
     <div class="modal-title-row">
@@ -2966,16 +2966,17 @@ function renderSales() {
   const sales = DB.get('sales');
   const today = localDateStr();
   const thisMonth = new Date().getMonth();
-  const todayTotal = sales.filter(s=>localDateStr(s.date)===today).reduce((a,s)=>a+s.total,0);
-  const monthTotal = sales.filter(s=>new Date(s.date).getMonth()===thisMonth).reduce((a,s)=>a+s.total,0);
-  const allTotal = sales.reduce((a,s)=>a+s.total,0);
+  const todayTotal = sales.filter(s=>!s.voided&&localDateStr(s.date)===today).reduce((a,s)=>a+s.total,0);
+  const monthTotal = sales.filter(s=>!s.voided&&new Date(s.date).getMonth()===thisMonth).reduce((a,s)=>a+s.total,0);
+  const allTotal = sales.filter(s=>!s.voided).reduce((a,s)=>a+s.total,0);
   document.getElementById('sales-today').textContent = fmt(todayTotal);
   document.getElementById('sales-month').textContent = fmt(monthTotal);
   document.getElementById('sales-all').textContent = fmt(allTotal);
 
   const el = document.getElementById('sales-list');
-  if (!sales.length) { el.innerHTML = '<div class="empty"><p>No sales yet</p></div>'; return; }
-  el.innerHTML = [...sales].reverse().slice(0,30).map(s => `<div class="card" onclick="openSaleDetail('${s.id}')">
+  var activeSales = sales.filter(function(s){ return !s.voided; });
+  if (!activeSales.length) { el.innerHTML = '<div class="empty"><p>No sales yet</p></div>'; return; }
+  el.innerHTML = [...activeSales].reverse().slice(0,50).map(s => `<div class="card" onclick="openSaleDetail('${s.id}')">
     <div class="flex-between">
       <div>
         <div class="bold text-sm">${s.memberName || 'Walk-in'}</div>
@@ -3487,21 +3488,39 @@ function openSaleDetail(id) {
 }
 
 function voidSale(id) {
-  if (!confirm('Void this sale? Stock will be returned.')) return;
-  const sales = DB.get('sales');
-  const s = sales.find(x=>x.id===id);
+  if (!window._voidConfirmed) {
+    window._voidConfirmed = id;
+    showToast('Tap Void again to confirm — stock will be returned', 'warning', 4000);
+    setTimeout(function(){ window._voidConfirmed = null; }, 5000);
+    return;
+  }
+  if (window._voidConfirmed !== id) {
+    window._voidConfirmed = id;
+    showToast('Tap Void again to confirm', 'warning', 4000);
+    setTimeout(function(){ window._voidConfirmed = null; }, 5000);
+    return;
+  }
+  window._voidConfirmed = null;
+
+  var sales = DB.get('sales');
+  var s = sales.find(function(x){ return x.id===id; });
   if (!s || s.voided) return;
   s.voided = true;
-  const products = DB.get('products');
-  s.items.forEach(item => {
-    const p = products.find(x=>x.id===item.productId);
-    if (p) p.qty += item.qty;
+  s.voidedAt = new Date().toISOString();
+  s.voidedBy = currentUser ? currentUser.name : 'manager';
+
+  // Return stock
+  var products = DB.get('products');
+  s.items.forEach(function(item) {
+    var p = products.find(function(x){ return x.id===item.productId; });
+    if (p) p.qty = (p.qty||0) + item.qty;
   });
   DB.set('sales', sales);
   DB.set('products', products);
   closeModal('modal-sale-detail');
   renderSales();
   renderInventory();
+  showToast('Sale voided — stock returned', 'success');
 }
 
 // ============================================================
@@ -3828,12 +3847,13 @@ function openStaffProfile(id) {
     <div class="section-title">Shift log</div>
     <div style="max-height:180px;overflow-y:auto">
       ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map(sh=>`
-        <div class="shift-row">
-          <div><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
-          <div style="text-align:right">
+        <div class="shift-row" style="align-items:center">
+          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
+          <div style="text-align:right;margin-right:8px">
             <div class="text-sm">${sh.out?((new Date(sh.out)-new Date(sh.in))/3600000).toFixed(1)+'h':'—'}</div>
             ${s.rate&&sh.out?`<div class="text-xs amber">${fmt(calcShiftWages(s,sh.in,sh.out))}</div>`:''}
           </div>
+          <button onclick="deleteShift('${s.id}',${(s.shifts||[]).length-1-i})" style="padding:3px 7px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:10px;font-weight:700;color:var(--red);cursor:pointer">✕</button>
         </div>`).join('') : '<div class="text-sm text-muted">No shifts logged</div>'}
     </div>
 
@@ -3843,6 +3863,7 @@ function openStaffProfile(id) {
         ${s.clockedIn?'Clock out':'Clock in'}
       </button>
     </div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:8px;width:100%" onclick="openWageRecords('${s.id}')">💰 View & edit wage records</button>
     <button class="btn btn-danger btn-sm" style="margin-top:8px;width:100%" onclick="deleteStaff('${s.id}')">Remove staff member</button>`;
   openModal('modal-staff-profile');
 }
@@ -4642,9 +4663,16 @@ function addPOLine() {
 
 function renderPOLines() {
   const el = document.getElementById('poe-lines');
+  const products = DB.get('products') || [];
   el.innerHTML = poLines.map((line,i)=>`
     <div class="po-line">
-      <input type="text" value="${line.productName}" placeholder="Product name" oninput="poLines[${i}].productName=this.value">
+      <div style="position:relative;flex:2">
+        <input type="text" value="${line.productName}" placeholder="Search or type product..." 
+          oninput="poLines[${i}].productName=this.value;filterPOProducts(${i},this.value)"
+          onfocus="filterPOProducts(${i},this.value)"
+          style="width:100%;box-sizing:border-box">
+        <div id="po-prod-drop-${i}" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;z-index:999;max-height:160px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
+      </div>
       <input type="number" value="${line.qty}" min="1" placeholder="1" oninput="poLines[${i}].qty=parseInt(this.value)||1;updatePOTotal()">
       <input type="number" value="${line.unitCost||''}" step="0.01" placeholder="0.00" oninput="poLines[${i}].unitCost=parseFloat(this.value)||0;updatePOTotal()">
       <div class="po-line-total">${fmt((line.qty||1)*(line.unitCost||0))}</div>
@@ -6777,6 +6805,400 @@ function quickAddSupplier(selectId) {
   }
 
   showToast('Supplier "' + name + '" added', 'success');
+}
+
+
+// ============================================================
+// PURCHASE ORDER — print and download
+// ============================================================
+function printPO(id) {
+  var po = (DB.get('purchaseOrders')||[]).find(function(p){return p.id===id;});
+  if (!po) return;
+  var win = window.open('','_blank','width=750,height=950');
+  win.document.write(buildPOHTML(po));
+  win.document.close();
+  win.focus();
+  setTimeout(function(){ win.print(); }, 600);
+}
+
+function downloadPO(id) {
+  var po = (DB.get('purchaseOrders')||[]).find(function(p){return p.id===id;});
+  if (!po) return;
+  var content = buildPOHTML(po);
+  var blob = new Blob([content], {type:'text/html'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href     = url;
+  a.download = (po.poNumber||'PurchaseOrder').replace(/[^a-zA-Z0-9\-_]/g,'-') + '.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('PO downloaded: ' + a.download, 'success');
+}
+
+function buildPOHTML(po) {
+  var payLabels = {paid:'Paid',unpaid:'Unpaid',on_account:'On account',consignment:'Consignment',credit:'Credit loaded'};
+  var rows = (po.items||[]).map(function(i){
+    return '<tr>'
+      + '<td style="padding:10px 12px;border-bottom:1px solid #eee;font-size:14px">' + i.productName + '</td>'
+      + '<td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:center">' + i.qty + '</td>'
+      + '<td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right">R' + (i.unitCost||0).toFixed(2) + '</td>'
+      + '<td style="padding:10px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:700">R' + ((i.qty||0)*(i.unitCost||0)).toFixed(2) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  var payBadge = po.payStatus ? '<span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:#dcfce7;color:#16a34a">' + (payLabels[po.payStatus]||po.payStatus) + '</span>' : '';
+
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+    + '<title>' + (po.poNumber||'PO') + '</title>'
+    + '<style>'
+    + 'body{font-family:Arial,sans-serif;max-width:720px;margin:40px auto;color:#1a1a1a;font-size:14px;padding:0 20px}'
+    + 'h1{font-size:24px;margin:0;color:#1f7a6e}'
+    + 'table{width:100%;border-collapse:collapse;margin:20px 0}'
+    + 'th{background:#1f7a6e;color:#fff;padding:10px 12px;text-align:left;font-size:13px}'
+    + '.total-row td{font-size:16px;font-weight:700;border-top:2px solid #1f7a6e;padding:12px}'
+    + '@media print{.no-print{display:none}}'
+    + '</style></head><body>'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:2px solid #1f7a6e;margin-bottom:24px">'
+    + '<div><h1>Jack &amp; Jill&#39;s Adventure Club</h1><div style="color:#666;margin-top:4px;font-size:13px">Purchase Order</div></div>'
+    + '<div style="text-align:right"><div style="font-size:22px;font-weight:800;color:#1f7a6e">' + (po.poNumber||'PO') + '</div>'
+    + '<div style="color:#666;font-size:13px">' + (po.date||'').slice(0,10) + '</div></div>'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">'
+    + '<div><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Supplier</div>'
+    + '<div style="font-size:16px;font-weight:700">' + (po.supplierName||'—') + '</div>'
+    + (po.payment ? '<div style="color:#666;font-size:13px;margin-top:2px">' + po.payment + '</div>' : '')
+    + '</div>'
+    + '<div style="text-align:right">' + payBadge
+    + (po.stockStatus ? '<div style="margin-top:4px;font-size:13px;color:#666">' + po.stockStatus + '</div>' : '')
+    + '</div></div>'
+    + '<table>'
+    + '<thead><tr><th>Product</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit cost</th><th style="text-align:right">Line total</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '<tfoot><tr class="total-row">'
+    + '<td colspan="3">Order total</td>'
+    + '<td style="text-align:right;color:#1f7a6e;font-size:18px">R' + (po.total||0).toFixed(2) + '</td>'
+    + '</tr></tfoot></table>'
+    + (po.notes ? '<div style="background:#f5f5f5;padding:12px;border-radius:6px;margin-top:8px"><strong>Notes:</strong> ' + po.notes + '</div>' : '')
+    + '<div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;text-align:center">Generated by BizPOS</div>'
+    + '<button class="no-print" onclick="window.print()" style="position:fixed;bottom:24px;right:24px;background:#1f7a6e;color:#fff;border:none;border-radius:10px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2)">🖨 Print</button>'
+    + '</body></html>';
+}
+
+
+// ============================================================
+// PO / GRV PRODUCT SEARCH
+// ============================================================
+function filterPOProducts(lineIdx, query) {
+  var drop = document.getElementById('po-prod-drop-' + lineIdx);
+  if (!drop) return;
+  if (!query || query.length < 1) { drop.style.display = 'none'; return; }
+
+  var products = DB.get('products') || [];
+  var q = query.toLowerCase();
+  var matches = products.filter(function(p){
+    return p.name.toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q);
+  }).slice(0, 8);
+
+  var html2 = '';
+  if (matches.length) {
+    matches.forEach(function(p) {
+      html2 += '<div class="po-prod-item" data-idx="' + lineIdx + '" data-id="' + p.id + '" data-name="' + p.name.replace(/"/g,"&quot;") + '" data-cost="' + (p.cost||0) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'">'
+        + 'style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" '
+        + '>'
+        + '<div style="font-weight:600">' + p.name + '</div>'
+        + '<div style="font-size:11px;color:var(--text3)">Cost: R' + (p.cost||0).toFixed(2) + ' · Sell: R' + (p.price||0).toFixed(2) + '</div>'
+        + '</div>';
+    });
+  }
+  // Add new product option
+      html2 += '<div class="po-new-item" data-idx="' + lineIdx + '" data-name="' + query.replace(/"/g,"&quot;") + '" style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;background:var(--accent-bg)">+ Add new: ' + query + '</div>';
+    + 'style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;background:var(--accent-bg)" '
+    + '>'
+    + '+ Add new product: &quot;' + query + '&quot;</div>';
+
+  drop.innerHTML = html2;
+  drop.style.display = 'block';
+}
+
+function selectPOProduct(lineIdx, productId, productName, cost) {
+  poLines[lineIdx].productName = productName;
+  poLines[lineIdx].productId   = productId;
+  poLines[lineIdx].unitCost    = cost;
+  // Close dropdown
+  var drop = document.getElementById('po-prod-drop-' + lineIdx);
+  if (drop) drop.style.display = 'none';
+  renderPOLines();
+}
+
+function addNewProductFromPO(lineIdx, name) {
+  var category = prompt('Category for "' + name + '":') || 'Other';
+  var price    = parseFloat(prompt('Selling price (R):') || '0') || 0;
+  var cost     = parseFloat(prompt('Cost price (R):') || '0') || 0;
+
+  if (!name.trim()) return;
+
+  var products = DB.get('products') || [];
+  var newProd = {
+    id: uid(), name: name.trim(), category: category,
+    price: price, cost: cost, qty: 0, qtyWh: 0,
+    sku: '', lowAt: 3, reorderAt: 5, supplierId: '', notes: ''
+  };
+  products.push(newProd);
+  DB.set('products', products);
+
+  poLines[lineIdx].productName = newProd.name;
+  poLines[lineIdx].productId   = newProd.id;
+  poLines[lineIdx].unitCost    = cost;
+
+  renderPOLines();
+  showToast('Product "' + newProd.name + '" created and added', 'success');
+}
+
+// Event delegation for PO and GRV product dropdowns
+document.addEventListener('click', function(e) {
+  var poItem = e.target.closest('.po-prod-item');
+  if (poItem) {
+    selectPOProduct(
+      parseInt(poItem.dataset.idx),
+      poItem.dataset.id,
+      poItem.dataset.name,
+      parseFloat(poItem.dataset.cost)||0
+    );
+    return;
+  }
+  var poNew = e.target.closest('.po-new-item');
+  if (poNew) { addNewProductFromPO(parseInt(poNew.dataset.idx), poNew.dataset.name); return; }
+
+  var grvItem = e.target.closest('.grv-prod-item');
+  if (grvItem) {
+    selectGRVProduct(
+      parseInt(grvItem.dataset.idx),
+      grvItem.dataset.id,
+      grvItem.dataset.name,
+      parseFloat(grvItem.dataset.cost)||0
+    );
+    return;
+  }
+  var grvNew = e.target.closest('.grv-new-item');
+  if (grvNew) { addNewProductFromGRV(parseInt(grvNew.dataset.idx), grvNew.dataset.name); return; }
+
+  // Close all dropdowns
+  if (!e.target.closest('.po-line') && !e.target.closest('.grv-line')) {
+    document.querySelectorAll('[id^="po-prod-drop-"],[id^="grv-prod-drop-"]').forEach(function(d){ d.style.display='none'; });
+  }
+});
+
+// ── GRV product search ──
+function filterGRVProducts(lineIdx, query) {
+  var drop = document.getElementById('grv-prod-drop-' + lineIdx);
+  if (!drop) return;
+  if (!query || query.length < 1) { drop.style.display = 'none'; return; }
+
+  var products = DB.get('products') || [];
+  var q = query.toLowerCase();
+  var matches = products.filter(function(p){
+    return p.name.toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q);
+  }).slice(0, 8);
+
+  var h = '';
+  if (matches.length) {
+    matches.forEach(function(p) {
+      h += '<div class="grv-prod-item" data-idx="' + lineIdx + '" data-id="' + p.id + '" data-name="' + p.name.replace(/"/g,"&quot;") + '" data-cost="' + (p.cost||0) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)">'
+        + 'style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)">'
+        + '<div style="font-weight:600">' + p.name + '</div>'
+        + '<div style="font-size:11px;color:var(--text3)">Cost: R' + (p.cost||0).toFixed(2) + ' · Stock: ' + (p.qty||0) + '</div>'
+        + '</div>';
+    });
+  }
+      h += '<div class="grv-new-item" data-idx="' + lineIdx + '" data-name="' + query.replace(/"/g,"&quot;") + '" style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;background:var(--accent-bg)">+ Add new: ' + query + '</div>';
+    + 'style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;background:var(--accent-bg)">'
+    + '+ Add new product: &quot;' + query + '&quot;</div>';
+
+  drop.innerHTML = h;
+  drop.style.display = 'block';
+}
+
+function selectGRVProduct(lineIdx, productId, productName, cost) {
+  grvLines[lineIdx].productId   = productId;
+  grvLines[lineIdx].productName = productName;
+  grvLines[lineIdx].unitCost    = cost;
+  var drop = document.getElementById('grv-prod-drop-' + lineIdx);
+  if (drop) drop.style.display = 'none';
+  renderGRVLines();
+}
+
+function addNewProductFromGRV(lineIdx, name) {
+  var category = prompt('Category for "' + name + '":') || 'Other';
+  var price    = parseFloat(prompt('Selling price (R):') || '0') || 0;
+  var cost     = parseFloat(prompt('Cost price (R):') || '0') || 0;
+
+  var products = DB.get('products') || [];
+  var newProd = {
+    id: uid(), name: name.trim(), category: category,
+    price: price, cost: cost, qty: 0, qtyWh: 0,
+    sku: '', lowAt: 3, reorderAt: 5, supplierId: '', notes: ''
+  };
+  products.push(newProd);
+  DB.set('products', products);
+
+  grvLines[lineIdx].productId   = newProd.id;
+  grvLines[lineIdx].productName = newProd.name;
+  grvLines[lineIdx].unitCost    = cost;
+  renderGRVLines();
+  showToast('Product "' + newProd.name + '" created', 'success');
+}
+
+
+// ============================================================
+// PO STATUS FUNCTIONS
+// ============================================================
+function setPOPayStatus(id, status) {
+  var pos = DB.get('purchaseOrders') || [];
+  var po  = pos.find(function(p){ return p.id === id; });
+  if (!po) return;
+  po.payStatus = status;
+  DB.set('purchaseOrders', pos);
+  renderPO();
+  openPODetail(id); // refresh the detail view
+  showToast('Payment status updated', 'success');
+}
+
+function setPOStockStatus(id, status) {
+  var pos = DB.get('purchaseOrders') || [];
+  var po  = pos.find(function(p){ return p.id === id; });
+  if (!po) return;
+  po.stockStatus = status;
+  DB.set('purchaseOrders', pos);
+  renderPO();
+  openPODetail(id);
+  showToast('Stock status updated', 'success');
+}
+
+function updatePO(id, status) {
+  var pos = DB.get('purchaseOrders') || [];
+  var po  = pos.find(function(p){ return p.id === id; });
+  if (!po) return;
+  po.status = status;
+  if (status === 'confirmed') {
+    // Receive stock into products
+    var products = DB.get('products') || [];
+    var loc = po.stockLocation || 'warehouse';
+    (po.items || []).forEach(function(item) {
+      var p = products.find(function(x){ return x.id === item.productId || x.name === item.productName; });
+      if (p) {
+        if (loc === 'shop') p.qty = (p.qty||0) + item.qty;
+        else p.qtyWh = (p.qtyWh||0) + item.qty;
+      }
+    });
+    DB.set('products', products);
+    po.stockStatus = 'received';
+    showToast('Order confirmed — stock received into ' + loc, 'success');
+  }
+  DB.set('purchaseOrders', pos);
+  renderPO();
+  renderInventory();
+  openPODetail(id);
+}
+
+
+// ============================================================
+// WAGE RECORDS — edit and delete
+// ============================================================
+function openWageRecords(staffId) {
+  var staff    = DB.get('staff') || [];
+  var s        = staff.find(function(x){ return x.id === staffId; });
+  var wageRecs = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+  var myRecs   = wageRecs.filter(function(w){ return w.staffId === staffId; })
+                          .sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+
+  var modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;z-index:900';
+  modal.id = 'modal-wage-records';
+
+  var rows = myRecs.map(function(w) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)">'
+      + '<div style="flex:1">'
+      + '<div style="font-size:13px;font-weight:600">' + w.date + '</div>'
+      + '<div style="font-size:11px;color:var(--text3)">'
+      + w.hours.toFixed(2) + 'h · Wages: R' + w.wages.toFixed(2)
+      + (w.commission > 0 ? ' · Commission: R' + w.commission.toFixed(2) : '')
+      + '</div></div>'
+      + '<div style="font-size:14px;font-weight:700;color:var(--accent)">R' + w.totalPay.toFixed(2) + '</div>'
+      + '<button data-wid="' + w.id + '" data-sid="' + staffId + '" class="wage-edit-btn" style="padding:4px 8px;background:var(--blue-bg);border:1px solid var(--blue);border-radius:6px;font-size:11px;font-weight:700;color:var(--blue);cursor:pointer">Edit</button>'
+      + '<button data-wid="' + w.id + '" data-sid="' + staffId + '" class="wage-del-btn" style="padding:4px 8px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">Delete</button>'
+      + '</div>';
+  }).join('') || '<div style="color:var(--text3);padding:20px;text-align:center">No wage records yet</div>';
+
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px;width:100%;max-width:500px;max-height:85vh;overflow-y:auto;padding:20px;box-sizing:border-box">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+    + '<div style="font-size:18px;font-weight:800">Wage Records — ' + (s ? s.name : '') + '</div>'
+    + '<button id="wage-records-close" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--bg3);font-size:16px;cursor:pointer">✕</button>'
+    + '</div>'
+    + rows
+    + '</div>';
+
+  document.body.appendChild(modal);
+
+  document.getElementById('wage-records-close').onclick = function(){ modal.remove(); };
+
+  // Event delegation for edit/delete
+  modal.addEventListener('click', function(e) {
+    var editBtn = e.target.closest('.wage-edit-btn');
+    var delBtn  = e.target.closest('.wage-del-btn');
+
+    if (delBtn) {
+      var wid = delBtn.dataset.wid;
+      var sid = delBtn.dataset.sid;
+      showToast('Tap Delete again to confirm', 'warning', 3000);
+      delBtn.textContent = 'Confirm';
+      delBtn.onclick = function() {
+        var recs = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+        recs = recs.filter(function(w){ return w.id !== wid; });
+        localStorage.setItem('wageRecords', JSON.stringify(recs));
+        modal.remove();
+        openWageRecords(sid);
+        showToast('Wage record deleted', 'success');
+      };
+    }
+
+    if (editBtn) {
+      var wid = editBtn.dataset.wid;
+      var sid = editBtn.dataset.sid;
+      var recs = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+      var rec  = recs.find(function(w){ return w.id === wid; });
+      if (!rec) return;
+
+      var newHours = parseFloat(prompt('Hours worked:', rec.hours.toFixed(2)));
+      if (isNaN(newHours)) return;
+      var newWages = parseFloat(prompt('Wages (R):', rec.wages.toFixed(2)));
+      if (isNaN(newWages)) return;
+      var newComm  = parseFloat(prompt('Commission (R):', rec.commission.toFixed(2)));
+      if (isNaN(newComm)) return;
+
+      rec.hours      = newHours;
+      rec.wages      = newWages;
+      rec.commission = newComm;
+      rec.totalPay   = newWages + newComm;
+      localStorage.setItem('wageRecords', JSON.stringify(recs));
+      modal.remove();
+      openWageRecords(sid);
+      showToast('Wage record updated', 'success');
+    }
+  });
+}
+
+// Also allow editing shifts directly on a staff member
+function deleteShift(staffId, shiftIdx) {
+  var staff = DB.get('staff') || [];
+  var s = staff.find(function(x){ return x.id === staffId; });
+  if (!s || !s.shifts) return;
+  s.shifts.splice(shiftIdx, 1);
+  DB.set('staff', staff);
+  renderStaff();
+  showToast('Shift deleted', 'success');
 }
 
 // ============================================================
