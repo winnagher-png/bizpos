@@ -2383,48 +2383,46 @@ function discardStocktake() {
 }
 
 function commitStocktake() {
-  const countedIds = Object.keys(stocktakeCounts);
+  var countedIds = Object.keys(stocktakeCounts);
   if (!countedIds.length) { showToast('No counts entered yet', 'error'); return; }
 
-  const products = DB.get('products');
-  let variances = [];
-  products.forEach(p => {
+  var products = DB.get('products');
+  var variances = [];
+  products.forEach(function(p) {
     if (stocktakeCounts[p.id] !== undefined) {
-      const sysQty = stLocation === 'warehouse' ? (p.qtyWh||0) : (p.qty||0);
-      const diff = stocktakeCounts[p.id] - sysQty;
-      if (diff !== 0) variances.push({ name: p.name, sku: p.sku, expected: p.qty, counted: stocktakeCounts[p.id], diff, costImpact: diff*(p.cost||0) });
+      var sysQty = stLocation === 'warehouse' ? (p.qtyWh||0) : (p.qty||0);
+      var diff = stocktakeCounts[p.id] - sysQty;
+      if (diff !== 0) variances.push({ name: p.name, sku: p.sku, location: stLocation, expected: sysQty, counted: stocktakeCounts[p.id], diff: diff, costImpact: diff*(p.cost||0) });
     }
   });
 
-  // Skip confirm dialog (blocked on some mobile browsers) — show inline confirmation
-  if (!window._stocktakeConfirmed) {
-    window._stocktakeConfirmed = true;
-    showToast('Tap Commit again to confirm (' + countedIds.length + ' products, ' + variances.length + ' variances)', 'warning', 4000);
-    setTimeout(function(){ window._stocktakeConfirmed = false; }, 5000);
-    return;
-  }
-  window._stocktakeConfirmed = false;
-
   // Save variance report to history
-  const reports = DB.get('stocktakeReports') || [];
+  var reports = DB.get('stocktakeReports') || [];
+  var gains = variances.filter(function(v){return v.diff>0;});
+  var losses = variances.filter(function(v){return v.diff<0;});
   reports.unshift({
-    id: uid(), date: stSessionDate || new Date().toISOString(), committedAt: new Date().toISOString(),
-    staffId: currentUser?.id, staffName: currentUser?.name,
-    totalCounted: countedIds.length, variances,
-    totalGains: variances.filter(v=>v.diff>0).reduce((a,v)=>a+v.diff,0),
-    totalLosses: variances.filter(v=>v.diff<0).reduce((a,v)=>a+Math.abs(v.diff),0),
-    gainValue: variances.filter(v=>v.diff>0).reduce((a,v)=>a+v.costImpact,0),
-    lossValue: variances.filter(v=>v.diff<0).reduce((a,v)=>a+Math.abs(v.costImpact),0),
+    id: uid(),
+    date: stSessionDate || new Date().toISOString(),
+    committedAt: new Date().toISOString(),
+    staffId:  currentUser ? currentUser.id   : null,
+    staffName: currentUser ? currentUser.name : null,
+    location: stLocation,
+    totalCounted: countedIds.length,
+    variances: variances,
+    totalGains:  gains.reduce(function(a,v){return a+v.diff;},0),
+    totalLosses: losses.reduce(function(a,v){return a+Math.abs(v.diff);},0),
+    gainValue:   gains.reduce(function(a,v){return a+v.costImpact;},0),
+    lossValue:   losses.reduce(function(a,v){return a+Math.abs(v.costImpact);},0)
   });
   DB.set('stocktakeReports', reports);
 
-  // Apply counts
-  products.forEach(p => {
+  // Apply counts to correct location field
+  products.forEach(function(p) {
     if (stocktakeCounts[p.id] !== undefined) {
       if (stLocation === 'warehouse') {
-        p.qtyWh = stocktakeCounts[p.id];
+        p.qtyWh = parseInt(stocktakeCounts[p.id])||0;
       } else {
-        p.qty = stocktakeCounts[p.id];
+        p.qty = parseInt(stocktakeCounts[p.id])||0;
       }
     }
   });
