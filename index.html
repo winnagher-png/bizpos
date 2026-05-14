@@ -2198,6 +2198,7 @@ function renderWriteoffs() {
 // STOCK TAKE — Full variance tracking
 // ============================================================
 let stocktakeCounts = {};      // { productId: countedQty }
+var stLocation = 'shop';       // 'shop' or 'warehouse'
 let stCatFilter = 'all';
 let stShowFilter = 'all';
 let stSessionDate = null;
@@ -2383,6 +2384,7 @@ function discardStocktake() {
 }
 
 function commitStocktake() {
+  try {
   var countedIds = Object.keys(stocktakeCounts);
   if (!countedIds.length) { showToast('No counts entered yet', 'error'); return; }
 
@@ -2446,9 +2448,13 @@ function commitStocktake() {
   checkReorderPoints();
 
   // Show summary
-  setTimeout(() => {
-    openVarianceReportById(reports[0].id);
+  setTimeout(function() {
+    try { openVarianceReportById(reports[0].id); } catch(e2) {}
   }, 300);
+  } catch(err) {
+    showToast('Error: ' + err.message, 'error', 5000);
+    console.error('commitStocktake error:', err);
+  }
 }
 
 function openVarianceReport() {
