@@ -1369,9 +1369,8 @@ table.report-table .neg{color:var(--red)}
 </div>
 
 <!-- PO Detail Modal -->
-<div class="modal-overlay" id="modal-po-detail" style="align-items:flex-end">
-  <div style="background:var(--bg2);border-radius:20px 20px 0 0;width:100%;max-height:92vh;overflow-y:auto;padding:16px 16px 32px;box-sizing:border-box">
-    <div class="modal-handle"></div>
+<div class="modal-overlay" id="modal-po-detail" style="align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--bg2);border-radius:16px;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px;box-sizing:border-box;position:relative">
     <div id="po-detail-content"></div>
   </div>
 </div>
@@ -1697,6 +1696,7 @@ function switchTab(tab, btn) {
   else if (tab==='cashup') renderCashup();
   else if (tab==='reports') initReports();
   else if (tab==='warehouse') renderWarehouse();
+  else if (tab==='po')        renderPO();
 }
 
 function toggleMoreMenu(btn) {
@@ -6115,9 +6115,9 @@ function applyPermissions() {
   });
 
   // Show/hide more menu items based on role
-  if (role === 'cashier' || role === 'sales') {
-    // Cashiers see limited more menu
-    ['nav-reports','nav-po-menu'].forEach(function(id) {
+  if (role === 'cashier') {
+    // Cashiers see limited more menu - hide reports only
+    ['nav-reports'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.style.display = 'none';
     });
@@ -6716,6 +6716,49 @@ function exportCashupCSV() {
   a.download = 'JJ_Cashups.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   showToast('Cashup CSV downloaded', 'success');
+}
+
+
+// ============================================================
+// QUICK ADD SUPPLIER inline
+// ============================================================
+function quickAddSupplier(selectId) {
+  var name = prompt('New supplier name:');
+  if (!name || !name.trim()) return;
+  name = name.trim();
+
+  var suppliers = DB.get('suppliers') || [];
+  // Check if already exists
+  if (suppliers.find(function(s){ return s.name.toLowerCase() === name.toLowerCase(); })) {
+    showToast('Supplier already exists', 'warning');
+    // Still select it
+    var existing = suppliers.find(function(s){ return s.name.toLowerCase() === name.toLowerCase(); });
+    var sel = document.getElementById(selectId);
+    if (sel) {
+      for (var i=0; i<sel.options.length; i++) {
+        if (sel.options[i].value === existing.id) { sel.selectedIndex = i; break; }
+      }
+    }
+    return;
+  }
+
+  var newSup = {
+    id: uid(), name: name, contact: '', phone: '', email: '', leadTime: 3, notes: ''
+  };
+  suppliers.push(newSup);
+  DB.set('suppliers', suppliers);
+
+  // Add to the select dropdown and select it
+  var sel = document.getElementById(selectId);
+  if (sel) {
+    var opt = document.createElement('option');
+    opt.value = newSup.id;
+    opt.textContent = name;
+    sel.appendChild(opt);
+    sel.value = newSup.id;
+  }
+
+  showToast('Supplier "' + name + '" added', 'success');
 }
 
 // ============================================================
