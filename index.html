@@ -612,6 +612,7 @@ table.report-table .neg{color:var(--red)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input class="search-input" type="text" placeholder="Search by name, number, phone…" id="member-search" oninput="renderMembers()">
     </div>
+    <button onclick="openBroadcast()" style="width:100%;padding:10px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:10px">&#x1F4E2; Send broadcast to members</button>
     <div id="members-list"></div>
   </div>
 
@@ -670,6 +671,7 @@ table.report-table .neg{color:var(--red)}
     </div>
     <div class="stats-row-3" id="exp-stats"></div>
     <div class="filter-row" id="exp-cat-filters"></div>
+    <div id="pending-expenses-banner" style="display:none;background:var(--amber-bg);border:1px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:10px"></div>
     <div id="expenses-list"></div>
   </div>
 
@@ -793,6 +795,7 @@ table.report-table .neg{color:var(--red)}
       <button class="pill" onclick="setReportType('profit',this)">Profit</button>
       <button class="pill" onclick="setReportType('expenses',this)">Expenses</button>
       <button class="pill" onclick="setReportType('accounting',this)">Accounting</button>
+      <button class="pill" onclick="setReportType('members',this)">Members</button>
       <button class="pill" onclick="setReportType('pettycash',this)">Petty Cash</button>
       <button class="pill" onclick="setReportType('inventory',this)">Inventory</button>
       <button class="pill" onclick="setReportType('tokens',this)">Tokens</button>
@@ -3842,6 +3845,7 @@ function renderExpenses() {
       </div>
       <div class="flex-between mt-4">
         <div class="text-xs text-muted">${e.category} · ${e.payMethod} · ${fmtDate(e.date)}</div>
+        ${e.status && e.status !== 'paid' ? `<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;background:${e.status==='pending'?'var(--amber-bg)':e.status==='overdue'?'var(--red-bg)':'var(--blue-bg)'};color:${e.status==='pending'?'var(--amber)':e.status==='overdue'?'var(--red)':'var(--blue)'}">${e.status==='pending'?'⏳ Pending':e.status==='overdue'?'🔴 Overdue':'📒 On account'}</span>` : ''}
         <div style="display:flex;gap:6px">
           <button class="btn btn-secondary btn-sm" onclick="editExpense('${e.id}')">Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteExpense('${e.id}')">Del</button>
@@ -3862,6 +3866,7 @@ function openAddExpense() {
   ['ex-desc','ex-amount','ex-notes','ex-id'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('ex-date').value = new Date().toISOString().slice(0,10);
   document.getElementById('ex-cat').value = 'Other';
+  if (document.getElementById('ex-status')) document.getElementById('ex-status').value = 'paid';
   document.getElementById('ex-pay').value = 'cash';
   document.getElementById('modal-expense-title').textContent = 'Add expense';
   openModal('modal-expense');
@@ -3874,8 +3879,9 @@ function editExpense(id) {
   document.getElementById('ex-desc').value = e.desc||'';
   document.getElementById('ex-amount').value = e.amount||'';
   document.getElementById('ex-date').value = e.date||'';
-  document.getElementById('ex-cat').value = e.category||'Other';
-  document.getElementById('ex-pay').value = e.payMethod||'cash';
+  document.getElementById('ex-cat').value    = e.category||'Other';
+  document.getElementById('ex-pay').value    = e.payMethod||'cash';
+  if (document.getElementById('ex-status')) document.getElementById('ex-status').value = e.status||'paid';
   document.getElementById('ex-notes').value = e.notes||'';
   document.getElementById('modal-expense-title').textContent = 'Edit expense';
   openModal('modal-expense');
@@ -3887,7 +3893,7 @@ function saveExpense() {
   if (!desc || !amount) { alert('Description and amount required'); return; }
   const exps = DB.get('expenses');
   const id = document.getElementById('ex-id').value;
-  const data = { desc, amount, date: document.getElementById('ex-date').value, category: document.getElementById('ex-cat').value, payMethod: document.getElementById('ex-pay').value, notes: document.getElementById('ex-notes').value.trim() };
+  const data = { desc, amount, date: document.getElementById('ex-date').value, category: document.getElementById('ex-cat').value, payMethod: document.getElementById('ex-pay').value, status: document.getElementById('ex-status')?.value||'paid', notes: document.getElementById('ex-notes').value.trim() };
   if (id) { const i=exps.findIndex(e=>e.id===id); if(i>-1) exps[i]={...exps[i],...data}; }
   else { exps.push({id:uid(),...data}); }
   DB.set('expenses', exps);
@@ -4260,15 +4266,29 @@ function inRange(dateStr, from, to) {
 
 function runReport() {
   const el = document.getElementById('report-content');
-  const { from, to } = getReportDates();
-  if (isNaN(from) || isNaN(to)) { el.innerHTML='<div class="empty"><p>Select a date range</p></div>'; return; }
+  if (!el) return;
 
-  if (currentReportType === 'sales') renderSalesReport(from, to, el);
-  else if (currentReportType === 'inventory') renderInventoryReport(el);
-  else if (currentReportType === 'profit') renderProfitReport(from, to, el);
-  else if (currentReportType === 'stocktake') renderStocktakeReport(el);
-  else if (currentReportType === 'variance') renderVarianceRpt(el);
-  else if (currentReportType === 'expenses') renderExpensesReport(from, to, el);
+  // These reports don't need a date range
+  if (currentReportType === 'pettycash')  { renderPettyCashReport(el); return; }
+  if (currentReportType === 'inventory')  { renderInventoryReport(el); return; }
+  if (currentReportType === 'stocktake')  { renderStocktakeReport(el); return; }
+  if (currentReportType === 'variance')   { renderVarianceRpt(el); return; }
+
+  // These need a date range
+  const { from, to } = getReportDates();
+  if (isNaN(from) || isNaN(to)) {
+    el.innerHTML = '<div class="empty"><p>Select a date range above</p></div>';
+    return;
+  }
+  var fromStr = from.toISOString().slice(0,10);
+  var toStr   = to.toISOString().slice(0,10);
+
+  if (currentReportType === 'sales')       renderSalesReport(from, to, el);
+  else if (currentReportType === 'profit')     renderProfitReport(from, to, el);
+  else if (currentReportType === 'expenses')   renderExpensesReport(from, to, el);
+  else if (currentReportType === 'accounting') renderAccountingReport(fromStr, toStr, el);
+  else if (currentReportType === 'tokens')     renderTokenReport(fromStr, toStr, el);
+  else if (currentReportType === 'members')    renderMemberReport(fromStr, toStr, el);
 }
 
 function renderSalesReport(from, to, el) {
@@ -4580,13 +4600,14 @@ function savePOEditor(status) {
   const pos = DB.get('purchaseOrders');
   const existingId = document.getElementById('poe-id').value;
   const payStatus    = document.getElementById('poe-pay-status')?.value || 'unpaid';
+  const stockStatus  = document.getElementById('poe-stock-status')?.value || 'awaiting';
   const creditAmount = payStatus === 'credit' ? (parseFloat(document.getElementById('poe-credit-amount')?.value)||0) : 0;
   const poData = {
     poNumber: document.getElementById('poe-num').value,
     date: document.getElementById('poe-date').value,
     supplierId, supplierName: sup?.name||'No supplier',
     payment: document.getElementById('poe-payment').value,
-    payStatus, creditAmount,
+    payStatus, stockStatus, creditAmount,
     notes: document.getElementById('poe-notes').value,
     items: validLines, total, status,
     createdBy: currentUser?.name, createdAt: new Date().toISOString()
@@ -4932,8 +4953,12 @@ function openGRVForProduct(productId) {
 
 function setGRVLoc(loc) {
   document.getElementById('grv-location').value = loc;
-  document.getElementById('grv-loc-shop').className = 'loc-btn' + (loc==='shop'?' active':'');
-  document.getElementById('grv-loc-wh').className = 'loc-btn' + (loc==='warehouse'?' active':'');
+  var shopBtn = document.getElementById('grv-loc-shop');
+  var whBtn   = document.getElementById('grv-loc-wh');
+  var label   = document.getElementById('grv-loc-label');
+  if (shopBtn) { shopBtn.style.background = loc==='shop'?'var(--accent)':'transparent'; shopBtn.style.color = loc==='shop'?'#fff':'var(--text3)'; }
+  if (whBtn)   { whBtn.style.background   = loc==='warehouse'?'var(--accent)':'transparent'; whBtn.style.color = loc==='warehouse'?'#fff':'var(--text3)'; }
+  if (label)   label.textContent = loc==='warehouse' ? '&#x1F3ED; Stock will be added to warehouse qty' : '&#x1F3EA; Stock will be added to shop floor qty';
 }
 
 function addGRVLine() {
@@ -5503,7 +5528,10 @@ function renderPettyCashReport(el) {
       + '</tr>';
   }).join('');
 
-  el.innerHTML = '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">'
+  el.innerHTML = '<div style="background:var(--blue-bg);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--blue)">'
+    + '&#x1F512; <strong>Anonymous compliance report</strong> — shows transaction values only. No member names, no products purchased. Use this for accounting/regulatory submissions.'
+    + '</div>'
+    + '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">'
     + '<div class="kpi-tile"><div class="kpi-label">Current balance</div><div class="kpi-val accent">'+fmt(pc.balance||0)+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">Total banked in</div><div class="kpi-val green">'+fmt(totalIn)+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">Total expenses out</div><div class="kpi-val red">'+fmt(totalOut)+'</div></div>'
@@ -5610,7 +5638,7 @@ function renderAccountingReport(from, to, el) {
   el.innerHTML = ''
     // KPIs
     + '<div class="report-kpi-grid" style="margin-bottom:16px">'
-    + '<div class="kpi-tile"><div class="kpi-label">Total revenue</div><div class="kpi-val green">'+fmt(totalRev)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Total token value</div><div class="kpi-val green">'+fmt(totalRev)+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">COGS</div><div class="kpi-val red">'+fmt(totalCogs)+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">Gross profit</div><div class="kpi-val '+(grossProfit>=0?'green':'red')+'">'+fmt(grossProfit)+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">Total expenses</div><div class="kpi-val red">'+fmt(totalExp)+'</div></div>'
@@ -5682,7 +5710,8 @@ function printAccountingReport() {
 // TOKEN REPORT — anonymous sales summary
 // ============================================================
 function renderTokenReport(from, to, el) {
-  var sales = DB.get('sales') || [];
+  var sales   = DB.get('sales')   || [];
+  var members = DB.get('members') || [];
   sales = sales.filter(function(s){
     var d = localDateStr(s.date);
     return !s.voided && d >= from && d <= to;
@@ -5690,37 +5719,45 @@ function renderTokenReport(from, to, el) {
 
   var tokens = sales.map(function(s, i) {
     return {
-      token:   'T' + String(i+1).padStart(4,'0'),
-      date:    localDateStr(s.date),
-      time:    new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}),
-      items:   s.items.length,
-      total:   s.total,
-      payment: s.paymentMethod
+      token:    'T' + String(i+1).padStart(4,'0'),
+      date:     localDateStr(s.date),
+      time:     new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}),
+      memberName: s.memberName || 'Walk-in',
+      memberNo:   s.memberNo   || '—',
+      items:    s.items.length,
+      total:    s.total,
+      payment:  s.paymentMethod
     };
   });
 
   var totalRev = tokens.reduce(function(a,t){ return a+t.total; }, 0);
+  var memberCount = tokens.filter(function(t){ return t.memberNo !== '—'; }).length;
 
   var rows = tokens.map(function(t){
     return '<tr>'
-      +'<td>'+t.token+'</td>'
+      +'<td style="font-weight:700;color:var(--accent)">'+t.token+'</td>'
       +'<td>'+t.date+'</td>'
       +'<td>'+t.time+'</td>'
-      +'<td style="text-align:center">'+t.items+'</td>'
-      +'<td style="text-align:right">'+fmt(t.total)+'</td>'
+      +'<td style="font-weight:600">'+t.memberName+'</td>'
+      +'<td style="color:var(--text3);font-size:12px">'+t.memberNo+'</td>'
+      +'<td style="text-align:right;font-weight:700;color:var(--green)">'+fmt(t.total)+'</td>'
       +'<td>'+t.payment+'</td>'
       +'</tr>';
   }).join('');
 
-  el.innerHTML = '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">'
+  el.innerHTML = '<div style="background:var(--blue-bg);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--blue)">'
+    + '&#x1F4CB; <strong>Compliance transaction log</strong> — member names &amp; numbers recorded for compliance. Products purchased not shown.'
+    + '</div>'
+    + '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-bottom:16px">'
     + '<div class="kpi-tile"><div class="kpi-label">Transactions</div><div class="kpi-val accent">'+tokens.length+'</div></div>'
-    + '<div class="kpi-tile"><div class="kpi-label">Total revenue</div><div class="kpi-val green">'+fmt(totalRev)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Total token value</div><div class="kpi-val green">'+fmt(totalRev)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Member sales</div><div class="kpi-val blue">'+memberCount+'</div></div>'
     + '<div class="kpi-tile"><div class="kpi-label">Avg per sale</div><div class="kpi-val">'+fmt(tokens.length?totalRev/tokens.length:0)+'</div></div>'
     + '</div>'
     + '<div class="report-section"><div class="section-title">Anonymous token log</div>'
     + '<div class="table-wrap"><table class="report-table">'
-    + '<tr><th>Token</th><th>Date</th><th>Time</th><th class="num">Items</th><th class="num">Total</th><th>Payment</th></tr>'
-    + (rows||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">No sales in period</td></tr>')
+    + '<tr><th>Token ref</th><th>Date</th><th>Time</th><th>Member name</th><th>Member No.</th><th class="num">Token value</th><th>Payment</th></tr>'
+    + (rows||'<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">No sales in period</td></tr>')
     + '</table></div></div>';
 }
 
@@ -6060,6 +6097,371 @@ function isToday(dateInput) {
   return localDateStr(dateInput) === localDateStr();
 }
 
+
+// ============================================================
+// MEMBER REPORT + BROADCAST
+// ============================================================
+function renderMemberReport(from, to, el) {
+  var members = DB.get('members') || [];
+  var sales   = DB.get('sales')   || [];
+  var products = DB.get('products') || [];
+
+  // Filter sales to period
+  var periodSales = sales.filter(function(s){
+    return !s.voided && s.memberId && s.date >= from && s.date.slice(0,10) <= to;
+  });
+
+  // Build member stats
+  var stats = {};
+  periodSales.forEach(function(s) {
+    if (!s.memberId) return;
+    if (!stats[s.memberId]) stats[s.memberId] = {
+      id: s.memberId, name: s.memberName || 'Unknown',
+      memberNo: s.memberNo || '',
+      spend: 0, visits: 0, items: {}, lastVisit: ''
+    };
+    var ms = stats[s.memberId];
+    ms.spend  += s.total;
+    ms.visits += 1;
+    if (s.date > ms.lastVisit) ms.lastVisit = s.date;
+    s.items.forEach(function(i) {
+      var p = products.find(function(x){ return x.id === i.productId; });
+      var name = p ? p.name : i.productName;
+      ms.items[name] = (ms.items[name] || 0) + i.qty;
+    });
+  });
+
+  var statsArr = Object.values(stats).sort(function(a,b){ return b.spend - a.spend; });
+  var totalMemberRev = statsArr.reduce(function(a,m){ return a+m.spend; }, 0);
+  var totalSalesRev  = periodSales.reduce(function(a,s){ return a+s.total; }, 0);
+  var memberSalesCount = periodSales.length;
+
+  // Build rows
+  var rows = statsArr.slice(0,50).map(function(m, idx) {
+    var topItems = Object.entries(m.items).sort(function(a,b){return b[1]-a[1];}).slice(0,3)
+      .map(function(e){ return e[0]+'('+e[1]+')'; }).join(', ');
+    var badge = idx===0 ? '🥇' : idx===1 ? '🥈' : idx===2 ? '🥉' : '';
+    return '<tr>'
+      + '<td style="font-weight:600">' + badge + ' ' + m.name + '</td>'
+      + '<td style="color:var(--text3);font-size:12px">' + m.memberNo + '</td>'
+      + '<td style="text-align:center">' + m.visits + '</td>'
+      + '<td style="text-align:right;font-weight:700;color:var(--green)">' + fmt(m.spend) + '</td>'
+      + '<td style="text-align:right">' + fmt(m.visits ? m.spend/m.visits : 0) + '</td>'
+      + '<td style="font-size:11px;color:var(--text3)">' + topItems + '</td>'
+      + '<td style="font-size:11px;color:var(--text3)">' + (m.lastVisit ? m.lastVisit.slice(0,10) : '') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  // Top products bought by members
+  var allItems = {};
+  periodSales.forEach(function(s){
+    s.items.forEach(function(i){
+      var p = products.find(function(x){ return x.id===i.productId; });
+      var name = p ? p.name : i.productName;
+      allItems[name] = (allItems[name]||0) + i.qty;
+    });
+  });
+  var topProducts = Object.entries(allItems).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+
+  el.innerHTML = ''
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+    + '<div class="section-title" style="margin:0">Member Analytics</div>'
+    + '<button onclick="openBroadcast()" style="padding:8px 14px;background:var(--accent);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">📢 Broadcast</button>'
+    + '</div>'
+
+    + '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-bottom:16px">'
+    + '<div class="kpi-tile"><div class="kpi-label">Active members</div><div class="kpi-val accent">' + statsArr.length + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Member revenue</div><div class="kpi-val green">' + fmt(totalMemberRev) + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Member visits</div><div class="kpi-val">' + memberSalesCount + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Avg per visit</div><div class="kpi-val">' + fmt(memberSalesCount ? totalMemberRev/memberSalesCount : 0) + '</div></div>'
+    + '</div>'
+
+    + '<div class="report-section"><div class="section-title">Top spenders</div>'
+    + '<div class="table-wrap" style="overflow-x:auto"><table class="report-table">'
+    + '<tr><th>Member</th><th>No.</th><th class="num">Visits</th><th class="num">Total spend</th><th class="num">Avg/visit</th><th>Favourite products</th><th>Last visit</th></tr>'
+    + (rows || '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">No member sales in this period</td></tr>')
+    + '</table></div></div>'
+
+    + '<div class="report-section"><div class="section-title">Most popular products</div>'
+    + '<div class="table-wrap"><table class="report-table">'
+    + '<tr><th>Product</th><th class="num">Units sold</th></tr>'
+    + topProducts.map(function(p){ return '<tr><td>'+p[0]+'</td><td style="text-align:right;font-weight:700">'+p[1]+'</td></tr>'; }).join('')
+    + '</table></div></div>';
+}
+
+// ============================================================
+// BROADCAST TO MEMBERS
+// ============================================================
+var _broadcastSelected = {};
+
+function openBroadcast() {
+  var members = DB.get('members') || [];
+  _broadcastSelected = {};
+  // Default: select all
+  members.forEach(function(m){ _broadcastSelected[m.id] = true; });
+  renderBroadcastList();
+  openModal('modal-broadcast');
+}
+
+function renderBroadcastList() {
+  var members = DB.get('members') || [];
+  var search  = (document.getElementById('bc-search') ? document.getElementById('bc-search').value : '').toLowerCase();
+  var filtered = members.filter(function(m){
+    return !search || m.name.toLowerCase().includes(search) || (m.phone||'').includes(search);
+  });
+  var selectedCount = Object.values(_broadcastSelected).filter(Boolean).length;
+  var countEl = document.getElementById('bc-count');
+  if (countEl) countEl.textContent = selectedCount + ' / ' + members.length + ' selected';
+
+  var el = document.getElementById('bc-member-list');
+  if (!el) return;
+  el.innerHTML = filtered.map(function(m) {
+    var checked = _broadcastSelected[m.id];
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">'
+      + '<input type="checkbox" ' + (checked?'checked':'') + ' onchange="toggleBCMember(\'' + m.id + '\',this.checked)" style="width:16px;height:16px;cursor:pointer">'
+      + '<div style="flex:1"><div style="font-size:13px;font-weight:600">' + m.name + '</div>'
+      + '<div style="font-size:11px;color:var(--text3)">' + (m.phone||'No phone') + ' · ' + (m.memberNo||'') + '</div></div>'
+      + (m.phone ? '<a href="https://wa.me/27' + (m.phone||'').replace(/^0/,'').replace(/\D/g,'') + '" target="_blank" style="font-size:16px;text-decoration:none">💬</a>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function toggleBCMember(id, checked) {
+  _broadcastSelected[id] = checked;
+  var members = DB.get('members') || [];
+  var selectedCount = Object.values(_broadcastSelected).filter(Boolean).length;
+  var countEl = document.getElementById('bc-count');
+  if (countEl) countEl.textContent = selectedCount + ' / ' + members.length + ' selected';
+}
+
+function selectAllBC(select) {
+  var members = DB.get('members') || [];
+  members.forEach(function(m){ _broadcastSelected[m.id] = select; });
+  renderBroadcastList();
+}
+
+function sendBroadcast() {
+  var msg     = document.getElementById('bc-message').value.trim();
+  var link    = document.getElementById('bc-link').value.trim();
+  var members = DB.get('members') || [];
+  var selected = members.filter(function(m){ return _broadcastSelected[m.id] && m.phone; });
+
+  if (!msg && !link) { showToast('Enter a message or link first', 'error'); return; }
+  if (!selected.length) { showToast('No members selected (or none have phone numbers)', 'error'); return; }
+
+  var fullMsg = msg + (link ? '\n\n' + link : '');
+
+  // Open WhatsApp for first selected member — they'll need to send to others manually
+  // Or open email if no phone
+  var first = selected[0];
+  var phone = (first.phone || '').replace(/^0/,'').replace(/\D/g,'');
+  var waUrl = 'https://wa.me/27' + phone + '?text=' + encodeURIComponent(fullMsg);
+  window.open(waUrl, '_blank');
+
+  // Show list of remaining recipients
+  if (selected.length > 1) {
+    showToast('Opened WhatsApp for ' + first.name + '. ' + (selected.length-1) + ' more to send to.', 'success', 5000);
+    // Show remaining list
+    var remaining = document.getElementById('bc-remaining');
+    if (remaining) {
+      remaining.style.display = 'block';
+      remaining.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">Send to remaining ' + (selected.length-1) + ' members:</div>'
+        + selected.slice(1).map(function(m){
+          var p = (m.phone||'').replace(/^0/,'').replace(/\D/g,'');
+          return '<a href="https://wa.me/27' + p + '?text=' + encodeURIComponent(fullMsg) + '" target="_blank" '
+            + 'style="display:block;padding:8px;background:var(--bg3);border-radius:8px;margin-bottom:4px;font-size:13px;font-weight:600;color:var(--accent);text-decoration:none">'
+            + '💬 Send to ' + m.name + '</a>';
+        }).join('');
+    }
+  } else {
+    showToast('WhatsApp opened for ' + first.name, 'success');
+  }
+}
+
+function sendEmailBroadcast() {
+  var msg     = document.getElementById('bc-message').value.trim();
+  var link    = document.getElementById('bc-link').value.trim();
+  var members = DB.get('members') || [];
+  var selected = members.filter(function(m){ return _broadcastSelected[m.id] && m.email && m.email !== '/'; });
+
+  if (!msg && !link) { showToast('Enter a message first', 'error'); return; }
+  if (!selected.length) { showToast('No members with email addresses selected', 'error'); return; }
+
+  var emails  = selected.map(function(m){ return m.email; }).join(',');
+  var subject = document.getElementById('bc-subject').value.trim() || "Jack & Jill's Adventure Club";
+  var body    = msg + (link ? '\n\n' + link : '') + '\n\nJack & Jill\'s Adventure Club';
+
+  window.location.href = 'mailto:' + encodeURIComponent(emails)
+    + '?subject=' + encodeURIComponent(subject)
+    + '&body=' + encodeURIComponent(body);
+  showToast('Email client opened with ' + selected.length + ' recipients', 'success');
+}
+
+
+// ============================================================
+// RECEIPT SCANNER — AI powered via Claude API
+// ============================================================
+function scanReceipt(input) {
+  var file = input.files[0];
+  if (!file) return;
+
+  var statusEl = document.getElementById('receipt-scan-status');
+  statusEl.style.display = 'block';
+  statusEl.style.background = 'var(--amber-bg)';
+  statusEl.style.color = 'var(--amber)';
+  statusEl.textContent = '⏳ Reading receipt...';
+
+  // Get Claude API key
+  var apiKey = localStorage.getItem('bizpos_ai_key');
+  if (!apiKey) {
+    statusEl.style.background = 'var(--red-bg)';
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '❌ No AI key set — go to More → AI Command Centre → set API key first';
+    return;
+  }
+
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var base64 = e.target.result.split(',')[1];
+    var mediaType = file.type || 'image/jpeg';
+
+    // Build message for Claude
+    var messages = [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data: base64 }
+        },
+        {
+          type: 'text',
+          text: receiptScanPrompt
+        }
+      ]
+    }];
+
+    var receiptScanPrompt = 'Read this receipt and return JSON only: {"description":"what was bought","amount":0.00,"date":"YYYY-MM-DD","category":"choose from: Rent,Utilities,Stock purchase,Salaries,Commission,Packaging,Transport,Marketing,Equipment,Banking fees,Cleaning,Security,Internet,Till expense,Other","supplier":"vendor name or null","notes":"ref numbers or null"}. Use null for unknown values. Amount is number only.';
+
+    fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: 500,
+        messages: messages
+      })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        statusEl.style.background = 'var(--red-bg)';
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = '❌ AI error: ' + (data.error.message || 'Unknown error');
+        return;
+      }
+
+      var text = data.content && data.content[0] ? data.content[0].text : '';
+      // Strip markdown code fences if present
+      text = text.replace(/```json[\s\S]*?```/g,'').replace(/```/g,'').trim();
+
+      var parsed;
+      try { parsed = JSON.parse(text); }
+      catch(e) {
+        statusEl.style.background = 'var(--red-bg)';
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = '❌ Could not read receipt — try a clearer photo';
+        return;
+      }
+
+      // Populate the expense form
+      if (parsed.description) document.getElementById('ex-desc').value = parsed.description + (parsed.supplier ? ' — ' + parsed.supplier : '');
+      if (parsed.amount)      document.getElementById('ex-amount').value = parsed.amount;
+      if (parsed.date)        document.getElementById('ex-date').value = parsed.date;
+      if (parsed.notes)       document.getElementById('ex-notes').value = parsed.notes;
+      if (parsed.category) {
+        var catSel = document.getElementById('ex-cat');
+        for (var i=0; i<catSel.options.length; i++) {
+          if (catSel.options[i].value === parsed.category) {
+            catSel.selectedIndex = i; break;
+          }
+        }
+      }
+
+      statusEl.style.background = 'var(--green-bg)';
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = '✅ Receipt scanned! Check details below and save.';
+
+      // Clear the file input
+      input.value = '';
+    })
+    .catch(function(e) {
+      statusEl.style.background = 'var(--red-bg)';
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = '❌ Network error — check connection';
+      console.warn('Receipt scan error:', e);
+    });
+  };
+
+  reader.onerror = function() {
+    statusEl.style.background = 'var(--red-bg)';
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '❌ Could not read file';
+  };
+
+  reader.readAsDataURL(file);
+}
+
+
+// ============================================================
+// EXPENSE + GRV STATUS
+// ============================================================
+function markExpensePaid(id) {
+  var exps = DB.get('expenses');
+  var e = exps.find(function(x){ return x.id === id; });
+  if (!e) return;
+  e.status = 'paid';
+  e.paidDate = new Date().toISOString().slice(0,10);
+  DB.set('expenses', exps);
+  renderExpenses();
+  showToast('Marked as paid', 'success');
+}
+
+function setExpenseStatus(id, status) {
+  var exps = DB.get('expenses');
+  var e = exps.find(function(x){ return x.id === id; });
+  if (!e) return;
+  e.status = status;
+  DB.set('expenses', exps);
+  renderExpenses();
+  showToast('Status updated', 'success');
+}
+
+// Pending expenses summary — shown at top of expenses tab
+function renderPendingExpenses() {
+  var exps = DB.get('expenses') || [];
+  var pending = exps.filter(function(e){ return e.status === 'pending' || e.status === 'overdue'; });
+  var pendingTotal = pending.reduce(function(a,e){ return a + e.amount; }, 0);
+  var el = document.getElementById('pending-expenses-banner');
+  if (!el) return;
+  if (!pending.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center">'
+    + '<div><span style="font-size:13px;font-weight:700;color:var(--amber)">⏳ ' + pending.length + ' pending expense' + (pending.length===1?'':'s') + '</span>'
+    + '<span style="font-size:12px;color:var(--text3);margin-left:8px">Total: R' + pendingTotal.toFixed(2) + '</span></div>'
+    + '<button onclick="filterExpensesByStatus(\"pending\")" style="font-size:11px;padding:4px 10px;background:var(--amber);border:none;border-radius:6px;color:#fff;font-weight:700;cursor:pointer">View</button>'
+    + '</div>';
+}
+
+function filterExpensesByStatus(status) {
+  // Could add filter logic here — for now just scroll to expenses
+  switchTab('expenses', null);
+}
+
 // ============================================================
 // INIT
 // ============================================================
@@ -6091,6 +6493,14 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <div class="modal-title" id="modal-expense-title">Add expense</div>
       <button class="close-btn" onclick="closeModal('modal-expense')">✕</button>
     </div>
+    <!-- Scan receipt button -->
+    <div style="margin-bottom:12px">
+      <label for="receipt-upload" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;background:var(--accent-bg);border:1.5px dashed var(--accent);border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;color:var(--accent)">
+        <span style="font-size:18px">📸</span> Scan receipt / invoice
+        <input type="file" id="receipt-upload" accept="image/*,application/pdf" style="display:none" onchange="scanReceipt(this)">
+      </label>
+      <div id="receipt-scan-status" style="display:none;margin-top:6px;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:600;text-align:center"></div>
+    </div>
     <div class="form-group"><label class="form-label">Description *</label><input id="ex-desc" type="text" placeholder="e.g. Electricity bill"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Amount (R) *</label><input id="ex-amount" type="number" step="0.01" placeholder="0.00"></div>
@@ -6115,15 +6525,25 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
         <option value="Other">Other</option>
       </select>
     </div>
-    <div class="form-group"><label class="form-label">Payment method</label>
-      <select id="ex-pay">
-        <option value="cash">💵 Cash</option>
-        <option value="petty_cash">💵 Petty Cash</option>
-        <option value="card">💳 Card</option>
-        <option value="eft">🏦 EFT</option>
-        <option value="yoco">💳 Yoco</option>
-        <option value="account">📒 Supplier account</option>
-      </select>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Payment method</label>
+        <select id="ex-pay">
+          <option value="cash">💵 Cash</option>
+          <option value="petty_cash">💵 Petty Cash</option>
+          <option value="card">💳 Card</option>
+          <option value="eft">🏦 EFT</option>
+          <option value="yoco">💳 Yoco</option>
+          <option value="account">📒 Supplier account</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select id="ex-status">
+          <option value="paid">✅ Paid</option>
+          <option value="pending">⏳ Pending</option>
+          <option value="overdue">🔴 Overdue</option>
+          <option value="on_account">📒 On account</option>
+        </select>
+      </div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea id="ex-notes" rows="2" placeholder="Optional…"></textarea></div>
     <input type="hidden" id="ex-id">
@@ -6256,11 +6676,12 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <div class="form-group"><label class="form-label">Date</label><input id="grv-date" type="date"></div>
     </div>
     <div class="form-group"><label class="form-label">Supplier</label><select id="grv-supplier"></select></div>
-    <div class="form-group"><label class="form-label">Receive into</label>
-      <div class="loc-toggle">
-        <div class="loc-btn active" id="grv-loc-shop" onclick="setGRVLoc('shop')">Shop floor</div>
-        <div class="loc-btn" id="grv-loc-wh" onclick="setGRVLoc('warehouse')">Warehouse</div>
+    <div class="form-group"><label class="form-label">Receive stock into</label>
+      <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
+        <button id="grv-loc-shop" onclick="setGRVLoc('shop')" style="flex:1;padding:10px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">&#x1F3EA; Shop floor</button>
+        <button id="grv-loc-wh" onclick="setGRVLoc('warehouse')" style="flex:1;padding:10px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">&#x1F3ED; Warehouse</button>
       </div>
+      <div id="grv-loc-label" style="font-size:12px;color:var(--text3);margin-top:4px">Stock will be added to shop floor qty</div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Reference / PO #</label><input id="grv-ref" type="text" placeholder="Optional"></div>
@@ -6601,6 +7022,53 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
 
     <button onclick="saveEmailSettings();closeModal('modal-email-reports')" class="btn btn-success btn-full">Save email address</button>
+  </div>
+</div>
+
+<!-- Broadcast Modal -->
+<div class="modal-overlay" id="modal-broadcast">
+  <div class="modal-sheet" style="max-height:95vh">
+    <div class="modal-handle"></div>
+    <div class="modal-title-row">
+      <div class="modal-title">📢 Send Broadcast</div>
+      <button class="close-btn" onclick="closeModal('modal-broadcast')">✕</button>
+    </div>
+
+    <!-- Message -->
+    <div class="form-group">
+      <label class="form-label">Subject (email only)</label>
+      <input id="bc-subject" type="text" placeholder="e.g. Weekend specials at J&J's">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Message *</label>
+      <textarea id="bc-message" rows="4" placeholder="Type your message, menu, specials, announcement..."></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Link (optional)</label>
+      <input id="bc-link" type="url" placeholder="e.g. https://menu.link or file link">
+    </div>
+
+    <!-- Send buttons -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+      <button onclick="sendBroadcast()" style="padding:12px;background:#25D366;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">💬 Send via WhatsApp</button>
+      <button onclick="sendEmailBroadcast()" style="padding:12px;background:var(--blue);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">📧 Send via Email</button>
+    </div>
+
+    <!-- Remaining recipients -->
+    <div id="bc-remaining" style="display:none;background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px;max-height:160px;overflow-y:auto"></div>
+
+    <!-- Member selector -->
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:var(--text3)" id="bc-count">0 selected</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="selectAllBC(true)"  style="padding:4px 10px;background:var(--accent);border:none;border-radius:6px;font-size:11px;font-weight:700;color:#fff;cursor:pointer">All</button>
+          <button onclick="selectAllBC(false)" style="padding:4px 10px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer">None</button>
+        </div>
+      </div>
+      <input id="bc-search" type="text" placeholder="Search members..." oninput="renderBroadcastList()" style="margin-bottom:8px">
+      <div id="bc-member-list" style="max-height:220px;overflow-y:auto"></div>
+    </div>
   </div>
 </div>
 
