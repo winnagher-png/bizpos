@@ -792,6 +792,7 @@ table.report-table .neg{color:var(--red)}
   <div class="tab-pane" id="tab-reports">
     <div class="filter-row" style="margin-bottom:16px">
       <button class="pill active" onclick="setReportType('sales',this)">Sales</button>
+      <button class="pill" onclick="setReportType('cashups',this)">Cash Ups</button>
       <button class="pill" onclick="setReportType('profit',this)">Profit</button>
       <button class="pill" onclick="setReportType('expenses',this)">Expenses</button>
       <button class="pill" onclick="setReportType('accounting',this)">Accounting</button>
@@ -860,6 +861,9 @@ table.report-table .neg{color:var(--red)}
   </button>
   <button class="more-menu-item" onclick="switchTab('staff',null);closeMoreMenu()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Staff & HR
+  </button>
+  <button class="more-menu-item" onclick="openPettyCashSetter();closeMoreMenu()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Set Petty Cash
   </button>
   <button class="more-menu-item" onclick="openEmailReports();closeMoreMenu()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Email Reports
@@ -3880,7 +3884,10 @@ function filterExpCat(cat, btn) {
 
 function openAddExpense() {
   ['ex-desc','ex-amount','ex-notes','ex-id'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('ex-date').value = new Date().toISOString().slice(0,10);
+  var today = new Date().toISOString().slice(0,10);
+  document.getElementById('ex-date').value = today;
+  var dateEl = document.getElementById('ex-date');
+  if (dateEl) dateEl.max = today;
   document.getElementById('ex-cat').value = 'Other';
   if (document.getElementById('ex-status')) document.getElementById('ex-status').value = 'paid';
   document.getElementById('ex-pay').value = 'cash';
@@ -4242,6 +4249,9 @@ function renderCashupHistory() {
       </div>
       <div class="text-xs text-muted" style="margin-top:6px">${c.staff||c.staffName||'—'} · ${c.txnCount||0} sales · Total: ${fmt(c.totalSales||0)}</div>
       ${c.note?`<div class="text-xs text-muted" style="margin-top:4px">${c.note}</div>`:''}
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button onclick="reverseCashup('${c.id}')" style="padding:6px 12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">🔄 Reverse cashup</button>
+      </div>
     </div>`).join('');
 }
 
@@ -4289,6 +4299,7 @@ function runReport() {
   if (currentReportType === 'inventory')  { renderInventoryReport(el); return; }
   if (currentReportType === 'stocktake')  { renderStocktakeReport(el); return; }
   if (currentReportType === 'variance')   { renderVarianceRpt(el); return; }
+  if (currentReportType === 'cashups')    { renderCashupReport(el); return; }
 
   // These need a date range
   const { from, to } = getReportDates();
@@ -6478,6 +6489,199 @@ function filterExpensesByStatus(status) {
   switchTab('expenses', null);
 }
 
+
+// Quick petty cash setter
+function openPettyCashSetter() {
+  var pc = getPettyCash();
+  var balEl = document.getElementById('pc-setter-balance');
+  if (balEl) balEl.textContent = fmt(pc.balance || 0);
+  var amtEl = document.getElementById('pc-setter-amount');
+  if (amtEl) { amtEl.value = ''; setTimeout(function(){ amtEl.focus(); }, 300); }
+  var reasonEl = document.getElementById('pc-setter-reason');
+  if (reasonEl) reasonEl.value = '';
+  openModal('modal-petty-cash-setter');
+}
+
+function quickSetPettyCash() {
+  var amount = parseFloat(document.getElementById('pc-setter-amount').value);
+  if (isNaN(amount) || amount < 0) { showToast('Enter a valid amount', 'error'); return; }
+  var reason = document.getElementById('pc-setter-reason').value.trim() || 'Opening balance set';
+  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+  var oldBal = pc.balance || 0;
+  pc.balance = amount;
+  pc.history = pc.history || [];
+  pc.history.push({
+    date: new Date().toISOString(), type: 'set',
+    oldBalance: oldBal, newBalance: amount,
+    delta: amount - oldBal, reason: reason,
+    by: currentUser ? currentUser.name : 'manager'
+  });
+  DB.setObj('pettyCash', pc);
+  closeModal('modal-petty-cash-setter');
+  showToast('Petty cash set to R' + amount.toFixed(2), 'success');
+  // Also update cashup display if open
+  var dispEl = document.getElementById('cashup-pc-display');
+  if (dispEl) dispEl.textContent = fmt(amount);
+}
+
+
+// ============================================================
+// REVERSE CASHUP
+// ============================================================
+function reverseCashup(id) {
+  var cashups = DB.get('cashups') || [];
+  var cu = cashups.find(function(c){ return c.id === id; });
+  if (!cu) { showToast('Cashup not found', 'error'); return; }
+
+  // Reverse petty cash change
+  var toBank = cu.toBank || 0;
+  if (toBank > 0) {
+    var pc = getPettyCash();
+    var newBal = Math.max(0, (pc.balance||0) - toBank);
+    pc.balance = newBal;
+    pc.history = pc.history || [];
+    pc.history.push({
+      date: new Date().toISOString(), type: 'reversal',
+      oldBalance: pc.balance + toBank, newBalance: newBal,
+      delta: -toBank, reason: 'Cashup reversed',
+      by: currentUser ? currentUser.name : 'manager'
+    });
+    DB.setObj('pettyCash', pc);
+  }
+
+  // Remove the cashup record
+  var newCashups = cashups.filter(function(c){ return c.id !== id; });
+  DB.set('cashups', newCashups);
+
+  renderCashupHistory();
+  showToast('Cashup reversed. Petty cash adjusted by -R' + toBank.toFixed(2), 'success', 4000);
+}
+
+
+// ============================================================
+// CASHUP REPORT
+// ============================================================
+function renderCashupReport(el) {
+  var cashups = DB.get('cashups') || [];
+  if (!cashups.length) {
+    el.innerHTML = '<div class="empty"><p>No cash-ups recorded yet</p></div>';
+    return;
+  }
+
+  var sorted = cashups.slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+
+  // Totals
+  var totalBanked  = sorted.reduce(function(a,c){ return a+(c.toBank||0); }, 0);
+  var totalCounted = sorted.reduce(function(a,c){ return a+(c.counted||0); }, 0);
+  var totalSales   = sorted.reduce(function(a,c){ return a+(c.totalSales||0); }, 0);
+  var totalVar     = sorted.reduce(function(a,c){ return a+(c.variance||0); }, 0);
+  var totalExp     = sorted.reduce(function(a,c){ return a+(c.tillExpenses||0); }, 0);
+
+  var rows = sorted.map(function(c) {
+    var varCol = (c.variance||0) >= 0 ? 'var(--green)' : 'var(--red)';
+    var varSign = (c.variance||0) >= 0 ? '+' : '';
+    return '<tr>'
+      + '<td>' + fmtDate(c.date) + '</td>'
+      + '<td>' + (c.staffName||c.staff||'—') + '</td>'
+      + '<td style="text-align:right">' + fmt(c.totalSales||0) + '</td>'
+      + '<td style="text-align:right">' + fmt(c.counted||0) + '</td>'
+      + '<td style="text-align:right">' + fmt(c.cardTotal||0) + '</td>'
+      + '<td style="text-align:right">' + fmt(c.eftTotal||0) + '</td>'
+      + '<td style="text-align:right">' + fmt(c.tillExpenses||0) + '</td>'
+      + '<td style="text-align:right;font-weight:700;color:' + varCol + '">' + varSign + fmt(c.variance||0) + '</td>'
+      + '<td style="text-align:right;font-weight:700;color:var(--green)">' + fmt(c.toBank||0) + '</td>'
+      + '<td style="text-align:right;color:var(--amber)">' + fmt(c.pettyCashAfter||0) + '</td>'
+      + '<td style="text-align:center">'
+      + '<button onclick="reverseCashup(\'' + c.id + '\')" style="padding:3px 8px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:10px;font-weight:700;color:var(--red);cursor:pointer">Reverse</button>'
+      + '</td>'
+      + '</tr>';
+  }).join('');
+
+  // Daily/weekly summary
+  var byDay = {};
+  sorted.forEach(function(c) {
+    var d = localDateStr(c.date);
+    if (!byDay[d]) byDay[d] = { banked:0, sales:0, variance:0, count:0 };
+    byDay[d].banked   += c.toBank||0;
+    byDay[d].sales    += c.totalSales||0;
+    byDay[d].variance += c.variance||0;
+    byDay[d].count++;
+  });
+  var dayRows = Object.keys(byDay).sort().reverse().slice(0,14).map(function(d){
+    var v = byDay[d];
+    var vc = v.variance >= 0 ? 'var(--green)' : 'var(--red)';
+    return '<tr><td>' + d + '</td>'
+      + '<td style="text-align:center">' + v.count + '</td>'
+      + '<td style="text-align:right">' + fmt(v.sales) + '</td>'
+      + '<td style="text-align:right;font-weight:700;color:var(--green)">' + fmt(v.banked) + '</td>'
+      + '<td style="text-align:right;color:' + vc + '">' + fmt(v.variance) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  el.innerHTML = ''
+    // KPIs
+    + '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">'
+    + '<div class="kpi-tile"><div class="kpi-label">Total banked</div><div class="kpi-val green">' + fmt(totalBanked) + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Total counted</div><div class="kpi-val">' + fmt(totalCounted) + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Total variances</div><div class="kpi-val ' + (totalVar>=0?'green':'red') + '">' + fmt(totalVar) + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Till expenses</div><div class="kpi-val red">' + fmt(totalExp) + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Cash-ups done</div><div class="kpi-val accent">' + sorted.length + '</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">System sales</div><div class="kpi-val">' + fmt(totalSales) + '</div></div>'
+    + '</div>'
+
+    // Daily summary
+    + '<div class="report-section"><div class="section-title">Daily summary</div>'
+    + '<div class="table-wrap"><table class="report-table">'
+    + '<tr><th>Date</th><th class="num">Cash-ups</th><th class="num">Sales</th><th class="num">Banked</th><th class="num">Variance</th></tr>'
+    + dayRows
+    + '</table></div></div>'
+
+    // Full cashup log
+    + '<div class="report-section"><div class="section-title">Full cashup log</div>'
+    + '<div class="table-wrap" style="overflow-x:auto"><table class="report-table">'
+    + '<tr><th>Date</th><th>Staff</th><th class="num">Sales</th><th class="num">Counted</th><th class="num">Card</th><th class="num">EFT</th><th class="num">Expenses</th><th class="num">Variance</th><th class="num">Banked</th><th class="num">Petty Cash</th><th></th></tr>'
+    + rows
+    + '<tr style="font-weight:700;background:var(--bg3)">'
+    + '<td colspan="2">TOTAL</td>'
+    + '<td style="text-align:right">' + fmt(totalSales) + '</td>'
+    + '<td style="text-align:right">' + fmt(totalCounted) + '</td>'
+    + '<td colspan="2"></td>'
+    + '<td style="text-align:right">' + fmt(totalExp) + '</td>'
+    + '<td style="text-align:right;color:' + (totalVar>=0?'var(--green)':'var(--red)') + '">' + fmt(totalVar) + '</td>'
+    + '<td style="text-align:right;color:var(--green)">' + fmt(totalBanked) + '</td>'
+    + '<td colspan="2"></td>'
+    + '</tr>'
+    + '</table></div></div>'
+
+    // Export
+    + '<div style="margin-top:12px">'
+    + '<button onclick="exportCashupCSV()" class="btn btn-secondary btn-full">&#x1F4E5; Export CSV</button>'
+    + '</div>';
+}
+
+function exportCashupCSV() {
+  var cashups = DB.get('cashups') || [];
+  var csv = 'Date,Staff,System Sales,Counted Cash,Card,EFT,Expenses,Variance,Banked,Petty Cash After\n';
+  cashups.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);}).forEach(function(c){
+    csv += localDateStr(c.date) + ','
+      + '"' + (c.staffName||c.staff||'') + '",'
+      + (c.totalSales||0).toFixed(2) + ','
+      + (c.counted||0).toFixed(2) + ','
+      + (c.cardTotal||0).toFixed(2) + ','
+      + (c.eftTotal||0).toFixed(2) + ','
+      + (c.tillExpenses||0).toFixed(2) + ','
+      + (c.variance||0).toFixed(2) + ','
+      + (c.toBank||0).toFixed(2) + ','
+      + (c.pettyCashAfter||0).toFixed(2) + '\n';
+  });
+  var blob = new Blob([csv],{type:'text/csv'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'JJ_Cashups.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('Cashup CSV downloaded', 'success');
+}
+
 // ============================================================
 // INIT
 // ============================================================
@@ -6520,7 +6724,10 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div class="form-group"><label class="form-label">Description *</label><input id="ex-desc" type="text" placeholder="e.g. Electricity bill"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Amount (R) *</label><input id="ex-amount" type="number" step="0.01" placeholder="0.00"></div>
-      <div class="form-group"><label class="form-label">Date</label><input id="ex-date" type="date"></div>
+      <div class="form-group">
+        <label class="form-label">Date <span style="font-size:11px;color:var(--text3);font-weight:400">(can be any past date)</span></label>
+        <input id="ex-date" type="date" max="">
+      </div>
     </div>
     <div class="form-group"><label class="form-label">Category</label>
       <select id="ex-cat">
@@ -7085,6 +7292,30 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <input id="bc-search" type="text" placeholder="Search members..." oninput="renderBroadcastList()" style="margin-bottom:8px">
       <div id="bc-member-list" style="max-height:220px;overflow-y:auto"></div>
     </div>
+  </div>
+</div>
+
+<!-- Quick Petty Cash Setter -->
+<div class="modal-overlay" id="modal-petty-cash-setter">
+  <div class="modal-sheet" style="max-height:50vh">
+    <div class="modal-handle"></div>
+    <div class="modal-title-row">
+      <div class="modal-title">💵 Set Petty Cash Balance</div>
+      <button class="close-btn" onclick="closeModal('modal-petty-cash-setter')">✕</button>
+    </div>
+    <div id="pc-setter-current" style="background:var(--accent-bg);border-radius:10px;padding:12px;margin-bottom:14px;text-align:center">
+      <div style="font-size:12px;color:var(--text3);margin-bottom:4px">Current balance</div>
+      <div id="pc-setter-balance" style="font-size:28px;font-weight:800;color:var(--accent)">R0.00</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">New opening balance (R)</label>
+      <input id="pc-setter-amount" type="number" step="0.01" placeholder="e.g. 2500.00">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Reason (optional)</label>
+      <input id="pc-setter-reason" type="text" placeholder="e.g. Month end opening balance">
+    </div>
+    <button onclick="quickSetPettyCash()" class="btn btn-success btn-full">Set balance</button>
   </div>
 </div>
 
