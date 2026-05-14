@@ -2369,7 +2369,13 @@ function clearSTCount(id) {
 
 function discardStocktake() {
   if (Object.keys(stocktakeCounts).length > 0) {
-    if (!confirm('Discard this stock take session? All counts will be lost.')) return;
+    if (!window._discardConfirmed) {
+      window._discardConfirmed = true;
+      showToast('Tap Discard again to confirm — all counts will be lost', 'warning', 4000);
+      setTimeout(function(){ window._discardConfirmed = false; }, 5000);
+      return;
+    }
+    window._discardConfirmed = false;
   }
   stocktakeCounts = {};
   DB.setObj('stocktakeSession', {});
@@ -2378,7 +2384,7 @@ function discardStocktake() {
 
 function commitStocktake() {
   const countedIds = Object.keys(stocktakeCounts);
-  if (!countedIds.length) { alert('No counts entered yet'); return; }
+  if (!countedIds.length) { showToast('No counts entered yet', 'error'); return; }
 
   const products = DB.get('products');
   let variances = [];
@@ -2390,8 +2396,14 @@ function commitStocktake() {
     }
   });
 
-  const msg = `Commit stock take?\n\n• ${countedIds.length} products counted\n• ${variances.length} variance(s)\n\nThis will update all stock quantities.`;
-  if (!confirm(msg)) return;
+  // Skip confirm dialog (blocked on some mobile browsers) — show inline confirmation
+  if (!window._stocktakeConfirmed) {
+    window._stocktakeConfirmed = true;
+    showToast('Tap Commit again to confirm (' + countedIds.length + ' products, ' + variances.length + ' variances)', 'warning', 4000);
+    setTimeout(function(){ window._stocktakeConfirmed = false; }, 5000);
+    return;
+  }
+  window._stocktakeConfirmed = false;
 
   // Save variance report to history
   const reports = DB.get('stocktakeReports') || [];
