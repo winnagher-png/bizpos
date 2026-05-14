@@ -5372,10 +5372,9 @@ function jjWrite(remote) {
   return true;
 }
 
-// ── Push to Firebase ──
+// ── Push to Firebase — pull first, merge, then push ──
 function jjPush(silent) {
   if (JJ.pushing) {
-    // Queue a push for after current one finishes
     clearTimeout(JJ.timer);
     JJ.timer = setTimeout(function(){ jjPush(silent); }, 2000);
     return;
@@ -5383,21 +5382,33 @@ function jjPush(silent) {
   JJ.pushing = true;
   if (!silent) updateSyncIndicator('syncing', 'Saving...');
 
-  var data = jjCollect();
-  fetch(JJ.url, {
-    method:  'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(data)
+  // Pull latest from Firebase first, merge locally, then push combined data
+  fetch(JJ.url + '?t=' + Date.now(), { cache: 'no-store' })
+  .then(function(r){ return r.ok ? r.json() : null; })
+  .then(function(remote) {
+    // Merge remote data into local before pushing
+    if (remote && remote._at) {
+      jjWrite(remote); // merge remote into local
+    }
+    // Now push the merged local data
+    var data = jjCollect();
+    return fetch(JJ.url, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(data)
+    });
   })
   .then(function(r) {
-    JJ.pushing   = false;
+    JJ.pushing    = false;
     JJ.lastPushAt = Date.now();
-    JJ.connected = r.ok;
-    if (r.ok) {
+    JJ.connected  = r && r.ok;
+    if (r && r.ok) {
       updateSyncIndicator('ok', 'Saved ' + new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}));
       setTimeout(function(){ updateSyncIndicator('ok','Sync on'); }, 3000);
+      // Refresh UI with merged data
+      try { renderSales(); }     catch(e) {}
+      try { renderInventory(); } catch(e) {}
     } else {
-      console.warn('BizPOS push HTTP', r.status);
       updateSyncIndicator('warn', 'Retry...');
       JJ.retryTimer = setTimeout(function(){ jjPush(silent); }, 8000);
     }
