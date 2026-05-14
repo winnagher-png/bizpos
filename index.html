@@ -2675,118 +2675,136 @@ function renderPO() {
 }
 
 function openPODetail(id) {
-  const po = DB.get('purchaseOrders').find(p=>p.id===id);
+  var pos = DB.get('purchaseOrders');
+  var po  = pos.find(function(p){return p.id===id;});
   if (!po) return;
-  const el = document.getElementById('po-detail-content');
-  const payStatusLabels = {paid:'Paid',unpaid:'Unpaid',on_account:'On account',consignment:'Consignment',credit:'Credit loaded'};
-  const payStatusLabel = payStatusLabels[po.payStatus] || '';
-  const statusClass = {pending:'badge-amber',confirmed:'badge-green',draft:'badge-accent',cancelled:'badge-red'};
-  const payClass = {paid:'badge-green',unpaid:'badge-red',on_account:'badge-blue',consignment:'badge-blue',credit:'badge-blue'};
 
-  let html = '<div class="modal-title-row">';
-  html += '<div class="modal-title">' + (po.poNumber||'Purchase Order') + '</div>';
-  html += '<button class="close-btn" onclick="closeModal(\'modal-po-detail\')">&#x2715;</button></div>';
+  var payLabels = {paid:'✅ Paid',unpaid:'❌ Unpaid',on_account:'📒 On account',consignment:'🤝 Consignment',credit:'💳 Credit'};
+  var stockLabels = {awaiting:'⏳ Awaiting',partial:'📦 Partial',received:'✅ Received',cancelled:'❌ Cancelled'};
 
-  html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap">';
-  html += '<span class="badge ' + (statusClass[po.status]||'badge-accent') + '">' + po.status + '</span>';
-  if (payStatusLabel) html += '<span class="badge ' + (payClass[po.payStatus]||'badge-blue') + '">' + payStatusLabel + '</span>';
-  html += '<span class="text-xs text-muted" style="margin-left:auto">' + (po.date||'') + '</span></div>';
+  var h = '';
 
-  html += '<div class="flex-between" style="margin-bottom:4px"><div class="text-sm bold">Supplier</div><div class="text-sm">' + po.supplierName + '</div></div>';
-  if (po.payment) html += '<div class="flex-between" style="margin-bottom:8px"><div class="text-sm bold">Payment method</div><div class="text-sm">' + po.payment + '</div></div>';
+  // Title row
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h += '<div><div style="font-size:18px;font-weight:800">' + (po.poNumber||'Purchase Order') + '</div>';
+  h += '<div style="font-size:12px;color:var(--text3)">' + (po.date||'').slice(0,10) + '</div></div>';
+  h += '<button id="po-close-x" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--bg3);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
+  h += '</div>';
 
-  html += '<div style="border-top:1px solid var(--border);margin:8px 0"></div>';
-  po.items.forEach(function(i) {
-    html += '<div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">';
-    html += '<div class="text-sm">' + i.productName + '</div>';
-    html += '<div class="text-sm">' + i.qty + ' x ' + fmt(i.unitCost) + ' = <span class="bold">' + fmt(i.qty*i.unitCost) + '</span></div></div>';
+  // Status badges
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">';
+  var stCol = {pending:'var(--amber)',confirmed:'var(--green)',draft:'var(--blue)',cancelled:'var(--red)'};
+  h += '<span style="padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:'+( stCol[po.status]||'var(--text3)')+';color:#fff">' + (po.status||'pending') + '</span>';
+  if (po.payStatus) h += '<span style="padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:var(--blue-bg);color:var(--blue)">' + (payLabels[po.payStatus]||po.payStatus) + '</span>';
+  if (po.stockStatus) h += '<span style="padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;background:var(--green-bg);color:var(--green)">' + (stockLabels[po.stockStatus]||po.stockStatus) + '</span>';
+  h += '</div>';
+
+  // Supplier
+  h += '<div style="display:flex;justify-content:space-between;margin-bottom:8px">';
+  h += '<span style="font-weight:700">Supplier</span><span>' + (po.supplierName||'—') + '</span></div>';
+  if (po.payment) {
+    h += '<div style="display:flex;justify-content:space-between;margin-bottom:8px">';
+    h += '<span style="font-weight:700">Payment method</span><span>' + po.payment + '</span></div>';
+  }
+
+  // Items
+  h += '<div style="border-top:1px solid var(--border);margin:10px 0"></div>';
+  (po.items||[]).forEach(function(item){
+    h += '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">';
+    h += '<span style="font-size:13px">' + item.productName + '</span>';
+    h += '<span style="font-size:13px;font-weight:700">' + item.qty + ' × ' + fmt(item.unitCost) + ' = ' + fmt(item.qty*item.unitCost) + '</span>';
+    h += '</div>';
   });
 
-  html += '<div class="flex-between" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border)">';
-  html += '<span class="bold">Total</span><span class="bold accent" style="font-size:18px">' + fmt(po.total) + '</span></div>';
-  if (po.notes) html += '<div class="text-sm text-muted" style="margin-top:8px">Note: ' + po.notes + '</div>';
-  if (po.creditAmount) html += '<div class="text-sm" style="margin-top:6px;color:var(--blue)">Credit loaded: ' + fmt(po.creditAmount) + '</div>';
+  // Total
+  h += '<div style="display:flex;justify-content:space-between;margin:12px 0;padding-top:8px;border-top:2px solid var(--border)">';
+  h += '<span style="font-size:16px;font-weight:800">Total</span>';
+  h += '<span style="font-size:20px;font-weight:800;color:var(--accent)">' + fmt(po.total||0) + '</span></div>';
+
+  if (po.notes) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Note: ' + po.notes + '</div>';
 
   // Payment status buttons
-  html += '<div style="margin-top:16px"><div class="text-xs text-muted bold" style="margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Payment status</div>';
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-  ['paid','unpaid','on_account','consignment'].forEach(function(s) {
-    var labels = {paid:'Paid',unpaid:'Unpaid',on_account:'On account',consignment:'Consignment'};
-    var icons  = {paid:'✅',unpaid:'❌',on_account:'📒',consignment:'🤝'};
-    var active = po.payStatus === s;
-    var cls    = s === 'paid' ? (active?'btn-success':'btn-secondary') : s === 'unpaid' ? (active?'btn-danger':'btn-secondary') : (active?'btn-primary':'btn-secondary');
-    // Payment buttons added via DOM below
+  h += '<div style="margin-bottom:12px">';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Mark payment as</div>';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+  [['paid','✅ Paid','var(--green)'],['unpaid','❌ Unpaid','var(--red)'],['on_account','📒 On account','var(--blue)'],['consignment','🤝 Consignment','var(--blue)']].forEach(function(s){
+    var active = po.payStatus === s[0];
+    h += '<button id="po-ps-'+s[0]+'" style="padding:8px;border-radius:8px;font-size:12px;font-weight:700;border:2px solid '+(active?s[2]:'var(--border)')+';background:'+(active?s[2]:'transparent')+';color:'+(active?'#fff':'var(--text)')+';cursor:pointer">' + s[1] + '</button>';
   });
-  html += '</div></div>';
+  h += '</div></div>';
 
-  // Order action buttons
+  // Stock status buttons
+  h += '<div style="margin-bottom:12px">';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Stock status</div>';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+  [['awaiting','⏳ Awaiting'],['partial','📦 Partial'],['received','✅ Received'],['cancelled','❌ Cancelled']].forEach(function(s){
+    var active = po.stockStatus === s[0];
+    h += '<button id="po-ss-'+s[0]+'" style="padding:8px;border-radius:8px;font-size:12px;font-weight:700;border:2px solid '+(active?'var(--accent)':'var(--border)')+';background:'+(active?'var(--accent)':'transparent')+';color:'+(active?'#fff':'var(--text)')+';cursor:pointer">' + s[1] + '</button>';
+  });
+  h += '</div></div>';
+
+  // Action buttons
   if (po.status === 'pending') {
-    html += '<div style="margin-top:12px;display:flex;gap:8px">';
-    // action button added via DOM
-    // action button added via DOM
-    html += '</div>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
+    h += '<button id="po-cancel-btn" style="padding:10px;background:var(--red-bg);border:1px solid var(--red);border-radius:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer">Cancel order</button>';
+    h += '<button id="po-confirm-btn" style="padding:10px;background:var(--green);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Confirm & receive</button>';
+    h += '</div>';
   }
 
-  // Print + Download
-  html += '<div style="margin-top:10px;display:flex;gap:8px">';
-    // action button added via DOM
-    // action button added via DOM
-  html += '</div>';
+  // Print / Download / Delete
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
+  h += '<button id="po-print-btn" style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer">🖨 Print</button>';
+  h += '<button id="po-dl-btn" style="padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;color:var(--text);cursor:pointer">📄 Save doc</button>';
+  h += '</div>';
+  h += '<button id="po-delete-btn" style="width:100%;padding:10px;background:var(--red-bg);border:1px solid var(--red);border-radius:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer">🗑 Delete purchase order</button>';
 
-  el.innerHTML = html;
+  // Set content
+  var el = document.getElementById('po-detail-content');
+  el.innerHTML = h;
 
-  // Add all buttons via DOM to avoid quote escaping
-  var payBtnsEl = document.getElementById('po-pay-btns');
-  if (payBtnsEl) {
-    [{k:'paid',l:'Paid'},{k:'unpaid',l:'Unpaid'},{k:'on_account',l:'On account'},{k:'consignment',l:'Consignment'}].forEach(function(ps) {
-      var active = po.payStatus === ps.k;
-      var btn = document.createElement('button');
-      btn.className = 'btn btn-sm ' + (ps.k==='paid'?(active?'btn-success':'btn-secondary'):ps.k==='unpaid'?(active?'btn-danger':'btn-secondary'):(active?'btn-primary':'btn-secondary'));
-      btn.textContent = ps.l;
-      (function(pid,st){btn.onclick=function(){setPOPayStatus(pid,st);};})(id,ps.k);
-      payBtnsEl.appendChild(btn);
-    });
-  }
-  var actionEl = document.getElementById('po-action-btns');
-  if (actionEl && po.status === 'pending') {
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'btn btn-danger'; cancelBtn.style.flex = '1'; cancelBtn.textContent = 'Cancel';
-    (function(pid){cancelBtn.onclick=function(){updatePO(pid,'cancelled');};})(id);
-    var confirmBtn = document.createElement('button');
-    confirmBtn.className = 'btn btn-success'; confirmBtn.style.flex = '1'; confirmBtn.textContent = 'Confirm & receive';
-    (function(pid){confirmBtn.onclick=function(){updatePO(pid,'confirmed');};})(id);
-    actionEl.appendChild(cancelBtn); actionEl.appendChild(confirmBtn);
-  }
-  var printEl = document.getElementById('po-print-btns');
-  if (printEl) {
-    var printBtn = document.createElement('button');
-    printBtn.className = 'btn btn-secondary'; printBtn.style.flex = '1'; printBtn.textContent = '🖨 Print';
-    (function(pid){printBtn.onclick=function(){printPO(pid);};})(id);
-    var dlBtn = document.createElement('button');
-    dlBtn.className = 'btn btn-secondary'; dlBtn.style.flex = '1'; dlBtn.textContent = '📄 Save doc';
-    (function(pid){dlBtn.onclick=function(){downloadPO(pid);};})(id);
-    printEl.appendChild(printBtn); printEl.appendChild(dlBtn);
+  // Wire up button events via DOM (no inline onclick needed)
+  document.getElementById('po-close-x').onclick = function(){ closeModal('modal-po-detail'); };
 
-    // Delete button — always visible for managers
-    if (isManager()) {
-      var delBtn = document.createElement('button');
-      delBtn.className = 'btn btn-danger'; delBtn.style.width = '100%'; delBtn.style.marginTop = '8px';
-      delBtn.textContent = '🗑 Delete purchase order';
-      (function(pid){ delBtn.onclick = function(){
-        if (window.confirm ? confirm('Delete this PO permanently?') : true) {
-          var pos = DB.get('purchaseOrders').filter(function(p){ return p.id !== pid; });
-          DB.set('purchaseOrders', pos);
-          closeModal('modal-po-detail');
-          renderPO();
-          showToast('Purchase order deleted', 'success');
-        }
-      }; })(id);
-      printEl.appendChild(delBtn);
+  ['paid','unpaid','on_account','consignment'].forEach(function(s){
+    var btn = document.getElementById('po-ps-'+s);
+    if (btn) btn.onclick = function(){ setPOPayStatus(id, s); };
+  });
+  ['awaiting','partial','received','cancelled'].forEach(function(s){
+    var btn = document.getElementById('po-ss-'+s);
+    if (btn) btn.onclick = function(){ setPOStockStatus(id, s); };
+  });
+
+  var cancelBtn = document.getElementById('po-cancel-btn');
+  if (cancelBtn) cancelBtn.onclick = function(){ updatePO(id,'cancelled'); };
+  var confirmBtn = document.getElementById('po-confirm-btn');
+  if (confirmBtn) confirmBtn.onclick = function(){ updatePO(id,'confirmed'); };
+
+  document.getElementById('po-print-btn').onclick = function(){ printPO(id); };
+  document.getElementById('po-dl-btn').onclick    = function(){ downloadPO(id); };
+  document.getElementById('po-delete-btn').onclick = function(){
+    if (confirm('Delete this PO permanently?')) {
+      var all = DB.get('purchaseOrders').filter(function(p){ return p.id !== id; });
+      DB.set('purchaseOrders', all);
+      closeModal('modal-po-detail');
+      renderPO();
+      showToast('Purchase order deleted', 'success');
     }
-  }
+  };
 
   openModal('modal-po-detail');
 }
+
+function setPOStockStatus(id, status) {
+  var pos = DB.get('purchaseOrders');
+  var po  = pos.find(function(p){return p.id===id;});
+  if (!po) return;
+  po.stockStatus = status;
+  DB.set('purchaseOrders', pos);
+  renderPO();
+  openPODetail(id);
+  showToast('Stock status updated', 'success');
+}
+
 
 function updatePO(id, status) {
   const pos = DB.get('purchaseOrders');
