@@ -2143,6 +2143,7 @@ function saveProduct() {
     qty: parseInt(document.getElementById('p-qty').value)||0,
     lowAt: parseInt(document.getElementById('p-low').value)||5,
     reorderAt: parseInt(document.getElementById('p-reorder').value)||0,
+    reorderQty: parseInt(document.getElementById('p-reorder-qty')?.value)||0,
     supplierId: document.getElementById('p-supplier').value
   };
   if (id) { const i = products.findIndex(p=>p.id===id); if(i>-1) products[i]={...products[i],...data}; }
@@ -2619,32 +2620,112 @@ function filterPO(f, btn) {
 }
 
 function checkReorderPoints() {
-  const products = DB.get('products');
-  const pos = DB.get('purchaseOrders');
-  let newOrders = 0;
+  var products  = DB.get('products')  || [];
+  var pos       = DB.get('purchaseOrders') || [];
+  var suppliers = DB.get('suppliers') || [];
+  var added = [];
 
-  // Only create POs for products that don't already have a pending PO
-  const pendingProductIds = new Set(pos.filter(p=>p.status==='pending').flatMap(p=>p.items.map(i=>i.productId)));
-
-  products.forEach(p => {
-    if (p.reorderAt > 0 && p.qty <= p.reorderAt && !pendingProductIds.has(p.id)) {
-      const topUp = Math.max(p.reorderAt * 3, 10);
-      const qty = topUp - p.qty;
-      const sup = p.supplierId ? DB.get('suppliers').find(s=>s.id===p.supplierId) : null;
-      pos.push({
-        id: uid(), status: 'pending', date: new Date().toISOString(),
-        supplierId: p.supplierId||'', supplierName: sup?.name||'No supplier',
-        items: [{ productId: p.id, productName: p.name, qty, unitCost: p.cost||0 }],
-        total: qty*(p.cost||0), notes: 'Auto-generated'
-      });
-      newOrders++;
+  // Products already on a pending/draft PO — skip them
+  var pendingProductIds = {};
+  pos.forEach(function(po) {
+    if (po.status === 'pending' || po.status === 'draft') {
+      (po.items||[]).forEach(function(item){ pendingProductIds[item.productId] = true; });
     }
   });
 
-  if (newOrders) {
+  // Group reorder products by supplier
+  var bySupplier = {};
+  products.forEach(function(p) {
+    if (!p.reorderAt || p.reorderAt <= 0) return;
+    if ((p.qty||0) > p.reorderAt) return;
+    if (pendingProductIds[p.id]) return; // already on a PO
+
+    var supId = p.supplierId || '__none__';
+    if (!bySupplier[supId]) bySupplier[supId] = [];
+    bySupplier[supId].push(p);
+    added.push(p.name);
+  });
+
+  // For each supplier group: add to existing pending PO or create one
+  Object.keys(bySupplier).forEach(function(supId) {
+    var prods = bySupplier[supId];
+    var sup   = suppliers.find(function(s){ return s.id === supId; });
+
+    // Find existing pending PO for this supplier
+    var existingPO = pos.find(function(po) {
+      return (po.status === 'pending' || po.status === 'draft') &&
+             po.supplierId === supId;
+    });
+
+    var newItems = prods.map(function(p) {
+      var reorderQty = p.reorderQty || Math.max((p.reorderAt||5) * 3, 10);
+      return { productId: p.id, productName: p.name, qty: reorderQty, unitCost: p.cost||0 };
+    });
+
+    if (existingPO) {
+      // Add to existing PO
+      newItems.forEach(function(ni) {
+        var exists = existingPO.items.find(function(i){ return i.productId === ni.productId; });
+        if (!exists) existingPO.items.push(ni);
+      });
+      existingPO.total = existingPO.items.reduce(function(a,i){ return a+i.qty*i.unitCost; }, 0);
+    } else {
+      // Create new PO for this supplier
+      var total = newItems.reduce(function(a,i){ return a+i.qty*i.unitCost; }, 0);
+      var d = new Date();
+      var dd = String(d.getDate()).padStart(2,'0');
+      var mm = String(d.getMonth()+1).padStart(2,'0');
+      var yyyy = d.getFullYear();
+      var supName = sup ? sup.name : 'No supplier';
+      pos.push({
+        id: uid(),
+        status: 'pending',
+        stockStatus: 'awaiting',
+        payStatus: 'unpaid',
+        date: d.toISOString(),
+        poNumber: 'PO-' + dd + mm + yyyy + '-' + supName.replace(/[^a-zA-Z0-9]/g,'-').slice(0,15),
+        supplierId: supId === '__none__' ? '' : supId,
+        supplierName: supName,
+        items: newItems,
+        total: total,
+        notes: 'Auto-generated reorder'
+      });
+    }
+  });
+
+  if (added.length) {
     DB.set('purchaseOrders', pos);
     updatePOBadge();
+    renderPO && renderPO();
+    // Show notification
+    showReorderNotification(added);
   }
+}
+
+function showReorderNotification(productNames) {
+  var existing = document.getElementById('reorder-notification');
+  if (existing) existing.remove();
+
+  var el = document.createElement('div');
+  el.id = 'reorder-notification';
+  el.style.cssText = 'position:fixed;top:70px;left:50%;transform:translateX(-50%);'
+    + 'background:#fff;border:2px solid var(--amber);border-radius:14px;padding:14px 18px;'
+    + 'z-index:2000;box-shadow:0 4px 20px rgba(0,0,0,.15);max-width:320px;width:90%';
+
+  el.innerHTML = '<div style="display:flex;align-items:flex-start;gap:10px">'
+    + '<div style="font-size:24px">📦</div>'
+    + '<div style="flex:1">'
+    + '<div style="font-weight:800;color:var(--amber);margin-bottom:4px">Reorder alert!</div>'
+    + '<div style="font-size:13px;color:var(--text2)">' + productNames.slice(0,3).join(', ')
+    + (productNames.length > 3 ? ' + ' + (productNames.length-3) + ' more' : '') + '</div>'
+    + '<div style="font-size:12px;color:var(--text3);margin-top:4px">Draft POs created — check Purchase Orders</div>'
+    + '</div>'
+    + '<button id="reorder-close" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--text3)">✕</button>'
+    + '</div>';
+
+  document.body.appendChild(el);
+  document.getElementById('reorder-close').onclick = function(){ el.remove(); };
+  setTimeout(function(){ if (el.parentNode) el.remove(); }, 10000);
 }
 
 function updatePOBadge() {
@@ -6944,27 +7025,12 @@ function selectPOProduct(lineIdx, productId, productName, cost) {
 }
 
 function addNewProductFromPO(lineIdx, name) {
-  var category = prompt('Category for "' + name + '":') || 'Other';
-  var price    = parseFloat(prompt('Selling price (R):') || '0') || 0;
-  var cost     = parseFloat(prompt('Cost price (R):') || '0') || 0;
-
-  if (!name.trim()) return;
-
-  var products = DB.get('products') || [];
-  var newProd = {
-    id: uid(), name: name.trim(), category: category,
-    price: price, cost: cost, qty: 0, qtyWh: 0,
-    sku: '', lowAt: 3, reorderAt: 5, supplierId: '', notes: ''
-  };
-  products.push(newProd);
-  DB.set('products', products);
-
-  poLines[lineIdx].productName = newProd.name;
-  poLines[lineIdx].productId   = newProd.id;
-  poLines[lineIdx].unitCost    = cost;
-
-  renderPOLines();
-  showToast('Product "' + newProd.name + '" created and added', 'success');
+  openQuickNewProduct(name, function(newProd) {
+    poLines[lineIdx].productName = newProd.name;
+    poLines[lineIdx].productId   = newProd.id;
+    poLines[lineIdx].unitCost    = newProd.cost;
+    renderPOLines();
+  });
 }
 
 // Event delegation for PO and GRV product dropdowns
@@ -7041,24 +7107,12 @@ function selectGRVProduct(lineIdx, productId, productName, cost) {
 }
 
 function addNewProductFromGRV(lineIdx, name) {
-  var category = prompt('Category for "' + name + '":') || 'Other';
-  var price    = parseFloat(prompt('Selling price (R):') || '0') || 0;
-  var cost     = parseFloat(prompt('Cost price (R):') || '0') || 0;
-
-  var products = DB.get('products') || [];
-  var newProd = {
-    id: uid(), name: name.trim(), category: category,
-    price: price, cost: cost, qty: 0, qtyWh: 0,
-    sku: '', lowAt: 3, reorderAt: 5, supplierId: '', notes: ''
-  };
-  products.push(newProd);
-  DB.set('products', products);
-
-  grvLines[lineIdx].productId   = newProd.id;
-  grvLines[lineIdx].productName = newProd.name;
-  grvLines[lineIdx].unitCost    = cost;
-  renderGRVLines();
-  showToast('Product "' + newProd.name + '" created', 'success');
+  openQuickNewProduct(name, function(newProd) {
+    grvLines[lineIdx].productId   = newProd.id;
+    grvLines[lineIdx].productName = newProd.name;
+    grvLines[lineIdx].unitCost    = newProd.cost;
+    renderGRVLines();
+  });
 }
 
 
@@ -7212,6 +7266,833 @@ function deleteShift(staffId, shiftIdx) {
   showToast('Shift deleted', 'success');
 }
 
+
+// ============================================================
+// QUICK NEW PRODUCT MODAL (for PO and GRV)
+// ============================================================
+function openQuickNewProduct(defaultName, callback) {
+  var categories = [];
+  var products = DB.get('products') || [];
+  products.forEach(function(p){ if (p.category && !categories.includes(p.category)) categories.push(p.category); });
+  categories.sort();
+
+  var modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;z-index:1500';
+
+  var catOptions = categories.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('');
+
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px;width:100%;max-width:400px;padding:20px;box-sizing:border-box">'
+    + '<div style="font-size:17px;font-weight:800;margin-bottom:16px">+ New product</div>'
+    + '<div class="form-group"><label class="form-label">Product name *</label>'
+    + '<input id="qnp-name" type="text" value="' + (defaultName||'') + '" placeholder="Product name"></div>'
+    + '<div class="form-group"><label class="form-label">Category</label>'
+    + '<select id="qnp-cat"><option value="">-- select --</option>' + catOptions + '<option value="__new__">+ New category</option></select></div>'
+    + '<div id="qnp-new-cat-row" style="display:none" class="form-group"><label class="form-label">New category name</label>'
+    + '<input id="qnp-new-cat" type="text" placeholder="e.g. Edibles"></div>'
+    + '<div class="form-row">'
+    + '<div class="form-group"><label class="form-label">Selling price (R)</label><input id="qnp-price" type="number" step="0.01" placeholder="0.00"></div>'
+    + '<div class="form-group"><label class="form-label">Cost price (R)</label><input id="qnp-cost" type="number" step="0.01" placeholder="0.00"></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    + '<div class="form-group"><label class="form-label">Low stock at</label><input id="qnp-low" type="number" placeholder="3" value="3"></div>'
+    + '<div class="form-group"><label class="form-label">Reorder at</label><input id="qnp-reorder" type="number" placeholder="5" value="5"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + '<button id="qnp-cancel" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '<button id="qnp-save" style="flex:1;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Create product</button>'
+    + '</div>'
+    + '</div>';
+
+  document.body.appendChild(modal);
+
+  // Category new row toggle
+  document.getElementById('qnp-cat').onchange = function() {
+    var row = document.getElementById('qnp-new-cat-row');
+    row.style.display = this.value === '__new__' ? 'block' : 'none';
+  };
+
+  document.getElementById('qnp-cancel').onclick = function(){ modal.remove(); };
+
+  document.getElementById('qnp-save').onclick = function() {
+    var name = document.getElementById('qnp-name').value.trim();
+    if (!name) { showToast('Product name required', 'error'); return; }
+
+    var catSel = document.getElementById('qnp-cat').value;
+    var category = catSel === '__new__'
+      ? (document.getElementById('qnp-new-cat').value.trim() || 'Other')
+      : (catSel || 'Other');
+
+    var price   = parseFloat(document.getElementById('qnp-price').value)   || 0;
+    var cost    = parseFloat(document.getElementById('qnp-cost').value)    || 0;
+    var lowAt   = parseInt(document.getElementById('qnp-low').value)    || 3;
+    var reorderAt = parseInt(document.getElementById('qnp-reorder').value) || 5;
+
+    var products = DB.get('products') || [];
+    var newProd = {
+      id: uid(), name: name, category: category,
+      price: price, cost: cost, qty: 0, qtyWh: 0,
+      sku: '', lowAt: lowAt, reorderAt: reorderAt, reorderQty: reorderAt * 3,
+      supplierId: '', notes: ''
+    };
+    products.push(newProd);
+    DB.set('products', products);
+    renderInventory && renderInventory();
+    modal.remove();
+    showToast('Product "' + name + '" created', 'success');
+    if (callback) callback(newProd);
+  };
+
+  setTimeout(function(){
+    var inp = document.getElementById('qnp-name');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 100);
+}
+
+
+// ── Import historical cashup and expense data ──
+(function importHistoricalData() {
+  var existingCashups  = DB.get('cashups')  || [];
+  var existingExpenses = DB.get('expenses') || [];
+
+  // Only import if not already done
+  var alreadyImported = existingCashups.some(function(c){ return c.notes === 'Imported historical record'; });
+  if (alreadyImported) return;
+
+  var newCashups  = [
+  {
+    "id": "uzaqi9f7",
+    "date": "2026-05-01T18:00:00.000Z",
+    "staffName": "Charne & Jordan",
+    "totalSales": 1058.0,
+    "counted": 1058.0,
+    "tillExpenses": 525.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 533.0,
+    "variance": 0,
+    "pettyCashBefore": 0.0,
+    "pettyCashAfter": 533.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "nwd5w2i4",
+    "date": "2026-05-02T18:00:00.000Z",
+    "staffName": "Jordan",
+    "totalSales": 1410.0,
+    "counted": 1410.0,
+    "tillExpenses": 524.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 886.0,
+    "variance": 0,
+    "pettyCashBefore": 183.0,
+    "pettyCashAfter": 1069.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "nrf90mug",
+    "date": "2026-05-03T18:00:00.000Z",
+    "staffName": "Jordan",
+    "totalSales": 295.0,
+    "counted": 295.0,
+    "tillExpenses": 199.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 96.0,
+    "variance": 0,
+    "pettyCashBefore": 1069.0,
+    "pettyCashAfter": 1165.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "wzz9w06t",
+    "date": "2026-05-04T18:00:00.000Z",
+    "staffName": "Charne & Jordan",
+    "totalSales": 730.0,
+    "counted": 730.0,
+    "tillExpenses": 429.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 301.0,
+    "variance": 0,
+    "pettyCashBefore": 1065.0,
+    "pettyCashAfter": 1366.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "p2qxhdgw",
+    "date": "2026-05-05T18:00:00.000Z",
+    "staffName": "Charne",
+    "totalSales": 260.0,
+    "counted": 260.0,
+    "tillExpenses": 136.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 124.0,
+    "variance": 0,
+    "pettyCashBefore": 666.0,
+    "pettyCashAfter": 790.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "ousjtphj",
+    "date": "2026-05-06T18:00:00.000Z",
+    "staffName": "Charne",
+    "totalSales": 588.0,
+    "counted": 588.0,
+    "tillExpenses": 0.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 588.0,
+    "variance": 0,
+    "pettyCashBefore": 440.0,
+    "pettyCashAfter": 1028.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "kwpo2ugu",
+    "date": "2026-05-07T18:00:00.000Z",
+    "staffName": "Charne",
+    "totalSales": 650.0,
+    "counted": 650.0,
+    "tillExpenses": 0.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 650.0,
+    "variance": 0,
+    "pettyCashBefore": 1028.0,
+    "pettyCashAfter": 1678.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "ygbgqofw",
+    "date": "2026-05-08T18:00:00.000Z",
+    "staffName": "Charne & Jordan",
+    "totalSales": 240.0,
+    "counted": 257.0,
+    "tillExpenses": 257.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 0.0,
+    "variance": 0,
+    "pettyCashBefore": 1328.0,
+    "pettyCashAfter": 1328.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "mz3j4v5t",
+    "date": "2026-05-09T18:00:00.000Z",
+    "staffName": "Jordan",
+    "totalSales": 1220.0,
+    "counted": 1220.0,
+    "tillExpenses": 0.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 1220.0,
+    "variance": 0,
+    "pettyCashBefore": 778.0,
+    "pettyCashAfter": 1998.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "l1mowson",
+    "date": "2026-05-10T18:00:00.000Z",
+    "staffName": "Jordan",
+    "totalSales": 640.0,
+    "counted": 675.0,
+    "tillExpenses": 135.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 540.0,
+    "variance": 0,
+    "pettyCashBefore": 1998.0,
+    "pettyCashAfter": 2538.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "tlquhokf",
+    "date": "2026-05-11T18:00:00.000Z",
+    "staffName": "Jordan & Charne",
+    "totalSales": 1320.0,
+    "counted": 1320.0,
+    "tillExpenses": 416.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 904.0,
+    "variance": 0,
+    "pettyCashBefore": 1588.0,
+    "pettyCashAfter": 2492.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "eyfehr8z",
+    "date": "2026-05-12T18:00:00.000Z",
+    "staffName": "Charne",
+    "totalSales": 370.0,
+    "counted": 370.0,
+    "tillExpenses": 0.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 370.0,
+    "variance": 0,
+    "pettyCashBefore": 2492.0,
+    "pettyCashAfter": 2862.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "p7dt5sjm",
+    "date": "2026-05-13T18:00:00.000Z",
+    "staffName": "Jordan & Charne",
+    "totalSales": 200.0,
+    "counted": 216.0,
+    "tillExpenses": 216.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 0.0,
+    "variance": 0,
+    "pettyCashBefore": 1762.0,
+    "pettyCashAfter": 1762.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "56nvw7c7",
+    "date": "2026-05-14T18:00:00.000Z",
+    "staffName": "Jordan & Charne",
+    "totalSales": 0.0,
+    "counted": 0.0,
+    "tillExpenses": 0.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 0.0,
+    "variance": 0,
+    "pettyCashBefore": 1746.0,
+    "pettyCashAfter": 1746.0,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  }
+];
+  var newExpenses = [
+  {
+    "id": "2dpwm8qx",
+    "date": "2026-05-01",
+    "desc": "Till expenses",
+    "amount": 525.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Charne & Jordan"
+  },
+  {
+    "id": "oh83hrxv",
+    "date": "2026-05-01",
+    "desc": "Charne Friday wage",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "kwxitwzb",
+    "date": "2026-05-02",
+    "desc": "Till expenses",
+    "amount": 524.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Jordan"
+  },
+  {
+    "id": "1t9cwvcq",
+    "date": "2026-05-03",
+    "desc": "Till expenses",
+    "amount": 199.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Jordan"
+  },
+  {
+    "id": "wz0m5e3p",
+    "date": "2026-05-03",
+    "desc": "Rent contribution",
+    "amount": 100.0,
+    "category": "Rent",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "y62mab3l",
+    "date": "2026-05-04",
+    "desc": "Till expenses",
+    "amount": 429.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Charne & Jordan"
+  },
+  {
+    "id": "7g5z6t22",
+    "date": "2026-05-04",
+    "desc": "Charne Mon+Tues wages",
+    "amount": 700.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "go3ignrw",
+    "date": "2026-05-05",
+    "desc": "Till expenses",
+    "amount": 136.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Charne"
+  },
+  {
+    "id": "747war1t",
+    "date": "2026-05-05",
+    "desc": "Charne Wed wages",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "9idaqniv",
+    "date": "2026-05-07",
+    "desc": "Charne Thurs wages",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "2blcbxbn",
+    "date": "2026-05-08",
+    "desc": "Till expenses",
+    "amount": 257.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Charne & Jordan"
+  },
+  {
+    "id": "p6olxk5w",
+    "date": "2026-05-08",
+    "desc": "Charne Friday wages",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "7fidfl5w",
+    "date": "2026-05-08",
+    "desc": "MacBook Pro maintenance",
+    "amount": 200.0,
+    "category": "Equipment",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "wtib2pj3",
+    "date": "2026-05-10",
+    "desc": "Till expenses",
+    "amount": 135.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Jordan"
+  },
+  {
+    "id": "dqzibcfu",
+    "date": "2026-05-10",
+    "desc": "Rent set aside",
+    "amount": 300.0,
+    "category": "Rent",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "k6z0s0ev",
+    "date": "2026-05-10",
+    "desc": "Electricity set aside",
+    "amount": 300.0,
+    "category": "Utilities",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "vc1x78rf",
+    "date": "2026-05-10",
+    "desc": "Charne Mon wages",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "wd253vsk",
+    "date": "2026-05-11",
+    "desc": "Till expenses",
+    "amount": 416.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Jordan & Charne"
+  },
+  {
+    "id": "tm5cuu9h",
+    "date": "2026-05-12",
+    "desc": "Charne Tues wages",
+    "amount": 350.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "oxesuvng",
+    "date": "2026-05-12",
+    "desc": "Shaun PO110526-SHAUN",
+    "amount": 750.0,
+    "category": "Stock purchase",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "qeit4rgv",
+    "date": "2026-05-13",
+    "desc": "Till expenses",
+    "amount": 216.0,
+    "category": "Till expense",
+    "payMethod": "cash",
+    "status": "paid",
+    "notes": "Cash expenses from till - Jordan & Charne"
+  },
+  {
+    "id": "6h93iu8v",
+    "date": "2026-05-13",
+    "desc": "Float top up",
+    "amount": 16.0,
+    "category": "Till expense",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "p9f67y7g",
+    "date": "2026-05-14",
+    "desc": "Trink Consumables, stationery, cleaning, ink",
+    "amount": 1205.7,
+    "category": "Equipment",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  }
+];
+
+  // Merge in
+  newCashups.forEach(function(c){
+    if (!existingCashups.find(function(x){ return x.id===c.id; })) existingCashups.push(c);
+  });
+  newExpenses.forEach(function(e){
+    if (!existingExpenses.find(function(x){ return x.id===e.id; })) existingExpenses.push(e);
+  });
+
+  DB.set('cashups',  existingCashups);
+  DB.set('expenses', existingExpenses);
+
+  // Set petty cash balance and history
+  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+  if (!pc.history || pc.history.length < 5) {
+    pc.balance = 540.3;
+    pc.history = [
+  {
+    "date": "2026-05-01T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 0.0,
+    "newBalance": 533.0,
+    "delta": 533.0,
+    "reason": "Cash banked - Charne & Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-01T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 533.0,
+    "newBalance": 183.0,
+    "delta": -350.0,
+    "reason": "Charne Friday wage",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-02T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 183.0,
+    "newBalance": 1069.0,
+    "delta": 886.0,
+    "reason": "Cash banked - Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-03T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1069.0,
+    "newBalance": 1165.0,
+    "delta": 96.0,
+    "reason": "Cash banked - Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-03T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1165.0,
+    "newBalance": 1065.0,
+    "delta": -100.0,
+    "reason": "Rent contribution",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-04T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1065.0,
+    "newBalance": 1366.0,
+    "delta": 301.0,
+    "reason": "Cash banked - Charne & Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-04T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1366.0,
+    "newBalance": 666.0,
+    "delta": -700.0,
+    "reason": "Charne Mon+Tues wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-05T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 666.0,
+    "newBalance": 790.0,
+    "delta": 124.0,
+    "reason": "Cash banked - Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-05T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 790.0,
+    "newBalance": 440.0,
+    "delta": -350.0,
+    "reason": "Charne Wed wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-06T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 440.0,
+    "newBalance": 1028.0,
+    "delta": 588.0,
+    "reason": "Cash banked - Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-07T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1028.0,
+    "newBalance": 1678.0,
+    "delta": 650.0,
+    "reason": "Cash banked - Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-07T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1678.0,
+    "newBalance": 1328.0,
+    "delta": -350.0,
+    "reason": "Charne Thurs wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-08T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1328.0,
+    "newBalance": 1328.0,
+    "delta": 0.0,
+    "reason": "Cash banked - Charne & Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-08T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1328.0,
+    "newBalance": 978.0,
+    "delta": -350.0,
+    "reason": "Charne Friday wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-08T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 978.0,
+    "newBalance": 778.0,
+    "delta": -200.0,
+    "reason": "MacBook Pro maintenance",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-09T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 778.0,
+    "newBalance": 1998.0,
+    "delta": 1220.0,
+    "reason": "Cash banked - Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-10T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1998.0,
+    "newBalance": 2538.0,
+    "delta": 540.0,
+    "reason": "Cash banked - Jordan",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-10T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 2538.0,
+    "newBalance": 2238.0,
+    "delta": -300.0,
+    "reason": "Rent set aside",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-10T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 2238.0,
+    "newBalance": 1938.0,
+    "delta": -300.0,
+    "reason": "Electricity set aside",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-10T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1938.0,
+    "newBalance": 1588.0,
+    "delta": -350.0,
+    "reason": "Charne Mon wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-11T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1588.0,
+    "newBalance": 2492.0,
+    "delta": 904.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-12T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 2492.0,
+    "newBalance": 2862.0,
+    "delta": 370.0,
+    "reason": "Cash banked - Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-12T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 2862.0,
+    "newBalance": 2512.0,
+    "delta": -350.0,
+    "reason": "Charne Tues wages",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-12T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 2512.0,
+    "newBalance": 1762.0,
+    "delta": -750.0,
+    "reason": "Shaun PO110526-SHAUN",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-13T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1762.0,
+    "newBalance": 1762.0,
+    "delta": 0.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-13T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1762.0,
+    "newBalance": 1746.0,
+    "delta": -16.0,
+    "reason": "Float top up",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-14T18:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1746.0,
+    "newBalance": 1746.0,
+    "delta": 0.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-14T20:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 1746.0,
+    "newBalance": 540.3,
+    "delta": -1205.7,
+    "reason": "Trink Consumables, stationery, cleaning, ink",
+    "by": "import"
+  }
+];
+    DB.setObj('pettyCash', pc);
+  }
+
+  console.log('BizPOS: Historical data imported');
+})();
+
 // ============================================================
 // INIT
 // ============================================================
@@ -7261,21 +8142,64 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
     <div class="form-group"><label class="form-label">Category</label>
       <select id="ex-cat">
-        <option value="Rent">🏠 Rent</option>
-        <option value="Utilities">💡 Utilities</option>
-        <option value="Stock purchase">📦 Stock purchase</option>
-        <option value="Salaries">👷 Salaries</option>
-        <option value="Commission">💰 Commission</option>
-        <option value="Packaging">📦 Packaging</option>
-        <option value="Transport">🚗 Transport</option>
-        <option value="Marketing">📣 Marketing</option>
-        <option value="Equipment">🔧 Equipment</option>
-        <option value="Banking fees">🏦 Banking fees</option>
-        <option value="Cleaning">🧹 Cleaning</option>
-        <option value="Security">🔒 Security</option>
-        <option value="Internet">📶 Internet</option>
-        <option value="Till expense">💵 Till expense</option>
-        <option value="Other">Other</option>
+        <optgroup label="Inventory &amp; Stock">
+          <option value="Stock purchase">📦 Stock purchase</option>
+          <option value="Packaging">📦 Packaging</option>
+          <option value="Till expense">💵 Till expense</option>
+        </optgroup>
+        <optgroup label="Payroll &amp; Staff">
+          <option value="Salaries">👷 Salaries</option>
+          <option value="Commission">💰 Commission</option>
+          <option value="Owner Drawings">💸 Owner drawings</option>
+        </optgroup>
+        <optgroup label="Rent &amp; Utilities">
+          <option value="Rent">🏠 Rent</option>
+          <option value="Utilities">💡 Utilities</option>
+          <option value="Electricity">⚡ Electricity</option>
+          <option value="Water">🚿 Water</option>
+          <option value="Internet">📶 Internet</option>
+        </optgroup>
+        <optgroup label="Office &amp; Admin">
+          <option value="Office supplies">🖊 Office supplies</option>
+          <option value="Stationery">📄 Stationery</option>
+          <option value="Cleaning">🧹 Cleaning</option>
+          <option value="Security">🔒 Security</option>
+        </optgroup>
+        <optgroup label="Marketing &amp; Advertising">
+          <option value="Marketing">📣 Marketing</option>
+          <option value="Advertising">📺 Advertising</option>
+          <option value="Social media">📱 Social media</option>
+        </optgroup>
+        <optgroup label="Transport &amp; Travel">
+          <option value="Transport">🚗 Transport</option>
+          <option value="Fuel">⛽ Fuel</option>
+          <option value="Delivery">🚚 Delivery</option>
+        </optgroup>
+        <optgroup label="Professional &amp; Compliance">
+          <option value="Legal fees">⚖️ Legal fees</option>
+          <option value="Accounting">📊 Accounting</option>
+          <option value="Licenses">📋 Licenses</option>
+          <option value="Compliance">✅ Compliance</option>
+        </optgroup>
+        <optgroup label="Equipment &amp; Maintenance">
+          <option value="Equipment">🔧 Equipment</option>
+          <option value="Maintenance">🛠 Maintenance</option>
+          <option value="Repairs">🔨 Repairs</option>
+        </optgroup>
+        <optgroup label="Banking &amp; Finance">
+          <option value="Banking fees">🏦 Banking fees</option>
+          <option value="Interest">💳 Interest</option>
+          <option value="Payment processing">💱 Payment processing</option>
+        </optgroup>
+        <optgroup label="Tax &amp; Insurance">
+          <option value="Tax">🧾 Tax</option>
+          <option value="Insurance">🛡 Insurance</option>
+          <option value="SARS">📋 SARS</option>
+        </optgroup>
+        <optgroup label="Miscellaneous">
+          <option value="Miscellaneous">🗂 Miscellaneous</option>
+          <option value="Other">Other</option>
+        </optgroup>
       </select>
     </div>
     <div class="form-row">
