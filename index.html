@@ -3839,12 +3839,13 @@ function openEditStaff(id) {
 }
 
 function saveStaff() {
+  try {
   var nameEl = document.getElementById('st-name');
   var pinEl  = document.getElementById('st-pin');
   const name = nameEl ? nameEl.value.trim() : '';
   const pin  = pinEl  ? String(pinEl.value).trim() : '';
-  if (!name) { showToast('Name is required', 'error'); return; }
-  if (!pin || pin.length < 4) { showToast('PIN must be 4 digits (entered: "' + pin + '")', 'error'); return; }
+  if (!name) { alert('Name is required'); return; }
+  if (!pin || pin.length < 4) { alert('PIN must be 4 digits. You entered: "' + pin + '" (length: ' + pin.length + ')'); return; }
 
   const staff = DB.get('staff');
   const id    = document.getElementById('st-id').value;
@@ -3892,6 +3893,10 @@ function saveStaff() {
   closeModal('modal-staff');
   renderStaff();
   showToast('Staff member saved', 'success');
+  } catch(err) {
+    alert('ERROR saving staff: ' + err.message);
+    console.error('saveStaff error:', err);
+  }
 }
 
 function openStaffProfile(id) {
