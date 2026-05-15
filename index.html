@@ -1041,10 +1041,11 @@ table.report-table .neg{color:var(--red)}
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Pay type</label>
-        <select id="st-pay-type">
-          <option value="hourly">Hourly</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
+        <select id="st-pay-type" onchange="updateRateLabel()">
+          <option value="hourly">Hourly rate</option>
+          <option value="daily">Daily flat rate</option>
+          <option value="weekly">Weekly flat rate</option>
+          <option value="monthly">Monthly flat rate</option>
         </select>
       </div>
       <div class="form-group">
@@ -1499,10 +1500,9 @@ function renderPinScreen() {
     try { var r=localStorage.getItem('staff'); if(r){var p=JSON.parse(r);if(Array.isArray(p))staff=p.filter(function(s){return s&&s.name&&s.pin;});} } catch(e){}
   }
   if (!staff.length) {
-    // Show loading state — Firebase may still be pulling
     grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">'
       + '⏳ Loading staff...<br><span style="font-size:11px">Type PIN 9921 for Manager</span></div>';
-    staff = [{id:'mgr-001',name:'Manager',role:'manager',pin:'9921',phone:'',email:'',rate:0,startDate:'2025-01-01',clockedIn:false,shifts:[],onLeave:false}];
+    return; // Don't add fake Manager — real staff will load from Firebase
   }
 
   var COLORS = ['#1f7a6e','#2563eb','#16a34a','#d97706','#b65c5e','#7c3aed','#db2777','#0891b2'];
@@ -3796,35 +3796,46 @@ function calcShiftWages(s, shiftIn, shiftOut) {
 }
 
 function openAddStaff() {
-  ['st-name','st-pin','st-phone','st-email','st-rate','st-start','st-id'].forEach(id=>document.getElementById(id).value='');
+  ['st-name','st-pin','st-phone','st-email','st-rate','st-start','st-id'].forEach(function(id){
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
   document.getElementById('st-role').value = 'cashier';
   document.getElementById('st-start').value = new Date().toISOString().slice(0,10);
+  if (document.getElementById('st-pay-type')) document.getElementById('st-pay-type').value = 'hourly';
+  if (document.getElementById('st-rate-label')) document.getElementById('st-rate-label').textContent = 'Rate (R/hr)';
+  _commissionEnabled = false;
+  toggleCommission(false);
   document.getElementById('modal-staff-title').textContent = 'Add staff member';
   openModal('modal-staff');
 }
 
 function openEditStaff(id) {
-  const s = DB.get('staff').find(x=>x.id===id);
+  var s = (DB.get('staff')||[]).find(function(x){ return x.id===id; });
   if (!s) return;
-  document.getElementById('st-id').value = s.id;
-  document.getElementById('st-name').value = s.name||'';
-  document.getElementById('st-role').value = s.role||'cashier';
-  document.getElementById('st-pin').value = s.pin||'';
-  document.getElementById('st-phone').value = s.phone||'';
-  document.getElementById('st-email').value = s.email||'';
-  document.getElementById('st-rate').value = s.rate||'';
-  if (document.getElementById('st-pay-type')) document.getElementById('st-pay-type').value = s.payType||'hourly';
-  if (typeof updateRateLabel === 'function') updateRateLabel();
-  var hasComm = s.commission && s.commission.enabled;
-  if (typeof toggleCommission === 'function') toggleCommission(!!hasComm);
-  if (document.getElementById('st-comm-target')) document.getElementById('st-comm-target').value = (s.commission && s.commission.target) || 4000;
-  if (document.getElementById('st-comm-rate'))   document.getElementById('st-comm-rate').value   = (s.commission && s.commission.rate)   || 10;
-  // Also reset for new staff
-  _commissionEnabled = !!(s.commission && s.commission.enabled);
-  document.getElementById('st-start').value = s.startDate||'';
+
   document.getElementById('modal-staff-title').textContent = 'Edit staff member';
-  closeModal('modal-staff-profile');
+  try { closeModal('modal-staff-profile'); } catch(e) {}
   openModal('modal-staff');
+
+  setTimeout(function() {
+    var set = function(id, val) { var el=document.getElementById(id); if(el) el.value=val||''; };
+    set('st-id',    s.id);
+    set('st-name',  s.name);
+    set('st-role',  s.role||'cashier');
+    set('st-pin',   s.pin);
+    set('st-phone', s.phone);
+    set('st-email', s.email);
+    set('st-rate',  s.rate);
+    set('st-start', s.startDate);
+
+    var ptSel = document.getElementById('st-pay-type');
+    if (ptSel) { ptSel.value = s.payType||'hourly'; updateRateLabel(); }
+
+    _commissionEnabled = !!(s.commission && s.commission.enabled);
+    toggleCommission(_commissionEnabled);
+    set('st-comm-target', (s.commission&&s.commission.target)||4000);
+    set('st-comm-rate',   (s.commission&&s.commission.rate)||10);
+  }, 80);
 }
 
 function saveStaff() {
@@ -3876,7 +3887,7 @@ function saveStaff() {
   }
 
   DB.set('staff', staff);
-  closeModal('modal-add-staff');
+  closeModal('modal-staff');
   renderStaff();
   showToast('Staff member saved', 'success');
 }
