@@ -3021,6 +3021,7 @@ function deleteMember(id) {
 // ============================================================
 let saleCart = [];
 let saleSelectedMember = null;
+var _isDelivery = false;
 let saleDiscountVisible = false;
 
 // ── Member completeness check ──
@@ -3439,7 +3440,8 @@ function cartRemove(i) {
 }
 
 function completeSale() {
-  if (!saleCart.length) { alert('Cart is empty'); return; }
+  try {
+  if (!saleCart.length) { showToast('Cart is empty', 'error'); return; }
   const products = DB.get('products');
   // Check SHOP stock only (sales deduct from shop floor)
   // Stock check — warn if low but always allow sale (stock can go negative)
@@ -3487,8 +3489,9 @@ function completeSale() {
   const staffId = document.getElementById('sale-staff').value;
   const staffMember = DB.get('staff').find(s=>s.id===staffId);
 
+  const saleDate = new Date().toISOString();
   const sale = {
-    id: uid(), date: (today === localDateStr() ? new Date().toISOString() : today + 'T23:59:00.000Z'),
+    id: uid(), date: saleDate,
     memberId: saleSelectedMember?.id||null,
     memberName: saleSelectedMember?.name||null,
     memberNo: saleSelectedMember?.memberNo||null,
@@ -3523,6 +3526,10 @@ function completeSale() {
   renderInventory();
   checkReorderPoints();
   updatePOBadge();
+  } catch(err) {
+    alert('Sale error: ' + err.message);
+    console.error('completeSale error:', err);
+  }
 }
 
 function openSaleDetail(id) {
