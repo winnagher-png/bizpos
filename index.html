@@ -691,6 +691,7 @@ table.report-table .neg{color:var(--red)}
       <div class="card-header"><div class="card-title">2. Declare card &amp; EFT</div></div>
       <div class="text-xs text-muted" style="margin-bottom:10px">Enter actual totals from your card machine / Yoco</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label class="form-label">Cashup date <span style="font-size:10px;color:var(--text3)">(change for past dates)</span></label><input id="cashup-date" type="date"></div>
         <div><label class="form-label">Card / Yoco (R)</label><input id="cashup-card-declared" type="number" step="0.01" placeholder="0.00" oninput="updateCashupTotal()"></div>
         <div><label class="form-label">EFT received (R)</label><input id="cashup-eft-declared" type="number" step="0.01" placeholder="0.00" oninput="updateCashupTotal()"></div>
       </div>
@@ -3489,7 +3490,7 @@ function completeSale() {
   const staffMember = DB.get('staff').find(s=>s.id===staffId);
 
   const sale = {
-    id: uid(), date: new Date().toISOString(),
+    id: uid(), date: (today === localDateStr() ? new Date().toISOString() : today + 'T23:59:00.000Z'),
     memberId: saleSelectedMember?.id||null,
     memberName: saleSelectedMember?.name||null,
     memberNo: saleSelectedMember?.memberNo||null,
@@ -3908,6 +3909,20 @@ function saveStaff() {
   }
 }
 
+function calcCommission(staffId) {
+  var s = (DB.get('staff')||[]).find(function(x){ return x.id === staffId; });
+  if (!s || !s.commission || !s.commission.enabled) return 0;
+  var today = localDateStr();
+  var sales = (DB.get('sales')||[]).filter(function(sale){
+    return !sale.voided && sale.staffId === staffId && localDateStr(sale.date) === today;
+  });
+  var todayTotal = sales.reduce(function(a,s){ return a + s.total; }, 0);
+  var target = s.commission.target || 4000;
+  var rate   = s.commission.rate   || 10;
+  var over   = Math.max(0, todayTotal - target);
+  return over * (rate / 100);
+}
+
 function openStaffProfile(id) {
   try {
   const s = (DB.get('staff')||[]).find(x=>x.id===id);
@@ -4237,7 +4252,8 @@ function updateCashupTotal() {
 
 function renderCashupSummary(counted) {
   const sales = DB.get('sales');
-  const today = localDateStr();
+  var cuDateEl = document.getElementById('cashup-date');
+  const today = (cuDateEl && cuDateEl.value) ? cuDateEl.value : localDateStr();
   const todaySales = sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const cashSales  = todaySales.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const cardSales  = todaySales.filter(s=>s.paymentMethod==='card'||s.paymentMethod==='yoco').reduce((a,s)=>a+s.total,0);
@@ -4320,7 +4336,8 @@ function saveCashup() {
   });
 
   const sales = DB.get('sales');
-  const today = localDateStr();
+  var cuDateEl = document.getElementById('cashup-date');
+  const today = (cuDateEl && cuDateEl.value) ? cuDateEl.value : localDateStr();
   const todaySales = sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const cashSales  = todaySales.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const cardSales  = todaySales.filter(s=>s.paymentMethod==='card'||s.paymentMethod==='yoco').reduce((a,s)=>a+s.total,0);
@@ -4376,7 +4393,8 @@ function saveCashup() {
 
 function emailCashupReport() {
   const sales = DB.get('sales');
-  const today = localDateStr();
+  var cuDateEl = document.getElementById('cashup-date');
+  const today = (cuDateEl && cuDateEl.value) ? cuDateEl.value : localDateStr();
   const todaySales = sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const total = todaySales.reduce((a,s)=>a+s.total,0);
   const cash  = todaySales.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
@@ -5131,7 +5149,7 @@ function submitTransfer() {
   // Log transfer
   const transfers = DB.get('stockTransfers') || [];
   transfers.push({
-    id: uid(), date: new Date().toISOString(),
+    id: uid(), date: (today === localDateStr() ? new Date().toISOString() : today + 'T23:59:00.000Z'),
     productId: pid, productName: p.name,
     direction: dir, qty,
     shopBefore, shopAfter: p.qty,
@@ -8696,18 +8714,51 @@ function clearBCFile() {
 })();
 
 
-function calcCommission(staffId) {
-  var s = (DB.get('staff')||[]).find(function(x){ return x.id === staffId; });
-  if (!s || !s.commission || !s.commission.enabled) return 0;
-  var today = localDateStr();
-  var sales = (DB.get('sales')||[]).filter(function(sale){
-    return !sale.voided && sale.staffId === staffId && localDateStr(sale.date) === today;
+
+// Merge duplicate pending POs for same supplier into one
+function mergeDuplicatePOs() {
+  var pos = DB.get('purchaseOrders') || [];
+  var pendingBySupplier = {};
+
+  pos.forEach(function(po) {
+    if (po.status !== 'pending' && po.status !== 'draft') return;
+    var key = po.supplierId || '__none__';
+    if (!pendingBySupplier[key]) pendingBySupplier[key] = [];
+    pendingBySupplier[key].push(po);
   });
-  var todayTotal = sales.reduce(function(a,s){ return a + s.total; }, 0);
-  var target = s.commission.target || 4000;
-  var rate   = s.commission.rate   || 10;
-  var over   = Math.max(0, todayTotal - target);
-  return over * (rate / 100);
+
+  var changed = false;
+  Object.keys(pendingBySupplier).forEach(function(supId) {
+    var group = pendingBySupplier[supId];
+    if (group.length <= 1) return;
+
+    // Keep first PO, merge others into it
+    var master = group[0];
+    var toRemove = [];
+
+    group.slice(1).forEach(function(po) {
+      po.items.forEach(function(item) {
+        var existing = master.items.find(function(i){ return i.productId === item.productId; });
+        if (existing) {
+          existing.qty = Math.max(existing.qty, item.qty);
+        } else {
+          master.items.push(item);
+        }
+      });
+      toRemove.push(po.id);
+      changed = true;
+    });
+
+    master.total = master.items.reduce(function(a,i){ return a + i.qty * i.unitCost; }, 0);
+    pos = pos.filter(function(po){ return toRemove.indexOf(po.id) === -1; });
+  });
+
+  if (changed) {
+    DB.set('purchaseOrders', pos);
+    renderPO && renderPO();
+    showToast('Duplicate POs merged by supplier', 'success');
+  }
+  return changed;
 }
 
 // ============================================================
