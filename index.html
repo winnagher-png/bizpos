@@ -3330,7 +3330,8 @@ function searchSaleProduct() {
       : (whQty > 0
         ? '<span style="color:var(--amber);font-size:11px">🏭 ' + whQty + ' in warehouse</span>'
         : '<span style="color:var(--red);font-size:11px">⚠️ 0 stock</span>');
-    return '<div onclick="addToCart(" + JSON.stringify(p.id) + ")" style="padding:10px 12px;background:var(--bg3);border-radius:8px;margin-bottom:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
+    var clickFn = 'addToCart(\'' + p.id + '\')';
+    return '<div onclick="' + clickFn + '" style="padding:10px 12px;background:var(--bg3);border-radius:8px;margin-bottom:4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
       + '<div><div style="font-size:14px;font-weight:700">' + p.name + '</div>'
       + '<div style="margin-top:2px">' + stockLabel + '</div></div>'
       + '<div style="font-size:15px;font-weight:800;color:var(--accent)">' + fmt(p.price) + '</div>'
