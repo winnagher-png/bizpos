@@ -1018,7 +1018,7 @@ table.report-table .neg{color:var(--red)}
 
 <!-- Add Staff Modal -->
 <div class="modal-overlay" id="modal-staff">
-  <div class="modal-sheet">
+  <div class="modal-sheet" style="max-height:92vh;overflow-y:auto">
     <div class="modal-handle"></div>
     <div class="modal-title-row">
       <div class="modal-title" id="modal-staff-title">Add staff</div>
@@ -1034,7 +1034,7 @@ table.report-table .neg{color:var(--red)}
           <option value="sales">Sales assistant</option>
         </select>
       </div>
-      <div class="form-group"><label class="form-label">PIN (4 digits)</label><input id="st-pin" type="password" maxlength="4" placeholder="••••"></div>
+      <div class="form-group"><label class="form-label">PIN (4 digits)</label><input id="st-pin" type="number" maxlength="4" placeholder="1234" pattern="[0-9]{4}" inputmode="numeric"></div>
     </div>
     <div class="form-group"><label class="form-label">Phone</label><input id="st-phone" type="tel"></div>
     <div class="form-group"><label class="form-label">Email</label><input id="st-email" type="email"></div>
@@ -3839,10 +3839,12 @@ function openEditStaff(id) {
 }
 
 function saveStaff() {
-  const name = document.getElementById('st-name').value.trim();
-  const pin  = document.getElementById('st-pin').value.trim();
-  if (!name) { showToast('Name required', 'error'); return; }
-  if (!pin || pin.length !== 4) { showToast('4-digit PIN required', 'error'); return; }
+  var nameEl = document.getElementById('st-name');
+  var pinEl  = document.getElementById('st-pin');
+  const name = nameEl ? nameEl.value.trim() : '';
+  const pin  = pinEl  ? String(pinEl.value).trim() : '';
+  if (!name) { showToast('Name is required', 'error'); return; }
+  if (!pin || pin.length < 4) { showToast('PIN must be 4 digits (entered: "' + pin + '")', 'error'); return; }
 
   const staff = DB.get('staff');
   const id    = document.getElementById('st-id').value;
