@@ -3890,9 +3890,15 @@ function saveStaff() {
   }
 
   DB.set('staff', staff);
+  // Block pull for 60s so Firebase doesn't overwrite our save
+  window._blockPullUntil = Date.now() + 60000;
+  // Force immediate push
+  JJ.pushing = false;
+  clearTimeout(JJ.timer);
+  setTimeout(function(){ jjPush(true); }, 200);
   closeModal('modal-staff');
   renderStaff();
-  showToast('Staff member saved', 'success');
+  showToast('Staff member saved ✓', 'success');
   } catch(err) {
     alert('ERROR saving staff: ' + err.message);
     console.error('saveStaff error:', err);
@@ -3900,8 +3906,9 @@ function saveStaff() {
 }
 
 function openStaffProfile(id) {
-  const s = DB.get('staff').find(x=>x.id===id);
-  if (!s) return;
+  try {
+  const s = (DB.get('staff')||[]).find(x=>x.id===id);
+  if (!s) { showToast('Staff member not found: ' + id, 'error'); return; }
   const staffSales = DB.get('sales').filter(sale=>sale.staffId===id&&!sale.voided);
   const totalRev = staffSales.reduce((a,s)=>a+s.total,0);
   const weekWages = calcWages(s,'week');
@@ -3944,14 +3951,14 @@ function openStaffProfile(id) {
 
     <div class="section-title">Shift log</div>
     <div style="max-height:180px;overflow-y:auto">
-      ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map(sh=>`
+      ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map((sh,shIdx)=>`
         <div class="shift-row" style="align-items:center">
           <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
           <div style="text-align:right;margin-right:8px">
             <div class="text-sm">${sh.out?((new Date(sh.out)-new Date(sh.in))/3600000).toFixed(1)+'h':'—'}</div>
             ${s.rate&&sh.out?`<div class="text-xs amber">${fmt(calcShiftWages(s,sh.in,sh.out))}</div>`:''}
           </div>
-          <button onclick="deleteShift('${s.id}',${(s.shifts||[]).length-1-i})" style="padding:3px 7px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:10px;font-weight:700;color:var(--red);cursor:pointer">✕</button>
+          <button onclick="deleteShift('${s.id}',${(s.shifts||[]).length-1-shIdx})" style="padding:3px 7px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:10px;font-weight:700;color:var(--red);cursor:pointer">✕</button>
         </div>`).join('') : '<div class="text-sm text-muted">No shifts logged</div>'}
     </div>
 
@@ -3964,6 +3971,10 @@ function openStaffProfile(id) {
     <button class="btn btn-secondary btn-sm" style="margin-top:8px;width:100%" onclick="openWageRecords('${s.id}')">💰 View & edit wage records</button>
     <button class="btn btn-danger btn-sm" style="margin-top:8px;width:100%" onclick="deleteStaff('${s.id}')">Remove staff member</button>`;
   openModal('modal-staff-profile');
+  } catch(err) {
+    alert('Staff profile error: ' + err.message);
+    console.error('openStaffProfile error:', err);
+  }
 }
 
 function deleteStaff(id) {
@@ -5342,22 +5353,30 @@ function jjWrite(remote) {
       if (k === 'staff') {
         var remoteStaff = remote[k] || [];
         var localStaff  = local || [];
-        // If remote has real staff, use them (always trust Firebase for staff list)
-        if (!remoteStaff.length) return; // nothing in Firebase yet
+        if (!remoteStaff.length) return;
+
+        // If we just saved staff (pull blocked), keep local completely
+        if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
+
         var merged = remoteStaff.map(function(rs) {
           var ls = localStaff.find(function(x){ return x.id === rs.id; });
           if (ls) {
+            // Keep local name/pin/rate if they were recently edited
+            // Use local data as it's more likely to be correct (just saved)
+            rs.name      = ls.name      || rs.name;
+            rs.pin       = ls.pin       || rs.pin;
+            rs.role      = ls.role      || rs.role;
+            rs.payType   = ls.payType   || rs.payType;
+            rs.rate      = ls.rate      !== undefined ? ls.rate : rs.rate;
+            rs.commission= ls.commission|| rs.commission;
             rs.clockedIn   = ls.clockedIn   || false;
             rs.clockedInAt = ls.clockedInAt || null;
             rs.shifts      = ls.shifts      || rs.shifts || [];
           }
           return rs;
         });
-        // Keep local-only staff
         localStaff.forEach(function(ls) {
-          if (!merged.find(function(ms){ return ms.id === ls.id; })) {
-            merged.push(ls);
-          }
+          if (!merged.find(function(ms){ return ms.id === ls.id; })) merged.push(ls);
         });
         localStorage.setItem('staff', JSON.stringify(merged));
         return;
@@ -8517,6 +8536,135 @@ function clearBCFile() {
   if (preview) { preview.style.display='none'; preview.innerHTML=''; }
   if (input)   input.value = '';
 }
+
+
+// ── Seed staff if not yet set ──
+(function seedStaff() {
+  var existing = DB.get('staff') || [];
+  // Only seed if no real staff yet (or only the old mgr-001 fake)
+  var realStaff = existing.filter(function(s){ return s.id !== 'mgr-001' && s.name && s.pin; });
+  if (realStaff.length >= 3) return; // already set up
+
+  var seeded = [
+  {
+    "id": "7wxwd4jy",
+    "name": "Charne",
+    "role": "manager",
+    "pin": "9921",
+    "phone": "",
+    "email": "",
+    "payType": "daily",
+    "rate": 350,
+    "startDate": "2026-02-01",
+    "clockedIn": false,
+    "clockedInAt": null,
+    "shifts": [],
+    "onLeave": false,
+    "commission": {
+      "enabled": false,
+      "target": 4000,
+      "rate": 10
+    }
+  },
+  {
+    "id": "szrmgrw0",
+    "name": "Tania",
+    "role": "manager",
+    "pin": "1987",
+    "phone": "",
+    "email": "",
+    "payType": "weekly",
+    "rate": 500,
+    "startDate": "2026-12-09",
+    "clockedIn": false,
+    "clockedInAt": null,
+    "shifts": [],
+    "onLeave": false,
+    "commission": {
+      "enabled": false,
+      "target": 4000,
+      "rate": 10
+    }
+  },
+  {
+    "id": "9b70xobf",
+    "name": "Mike",
+    "role": "supervisor",
+    "pin": "1234",
+    "phone": "",
+    "email": "",
+    "payType": "weekly",
+    "rate": 500,
+    "startDate": "2026-01-01",
+    "clockedIn": false,
+    "clockedInAt": null,
+    "shifts": [],
+    "onLeave": false,
+    "commission": {
+      "enabled": false,
+      "target": 4000,
+      "rate": 10
+    }
+  },
+  {
+    "id": "tvox4dgz",
+    "name": "Jordan",
+    "role": "cashier",
+    "pin": "6420",
+    "phone": "",
+    "email": "",
+    "payType": "hourly",
+    "rate": 27,
+    "startDate": "2026-02-15",
+    "clockedIn": false,
+    "clockedInAt": null,
+    "shifts": [],
+    "onLeave": false,
+    "commission": {
+      "enabled": false,
+      "target": 4000,
+      "rate": 10
+    }
+  },
+  {
+    "id": "zujngnhz",
+    "name": "Trainee",
+    "role": "cashier",
+    "pin": "1234",
+    "phone": "",
+    "email": "",
+    "payType": "hourly",
+    "rate": 27,
+    "startDate": "2026-01-01",
+    "clockedIn": false,
+    "clockedInAt": null,
+    "shifts": [],
+    "onLeave": false,
+    "commission": {
+      "enabled": false,
+      "target": 4000,
+      "rate": 10
+    }
+  }
+];
+
+  // Preserve any existing shifts from current staff
+  seeded = seeded.map(function(ns) {
+    var old = existing.find(function(os){ return os.name === ns.name || os.pin === ns.pin; });
+    if (old) {
+      ns.id        = old.id        || ns.id;
+      ns.shifts    = old.shifts    || [];
+      ns.clockedIn = old.clockedIn || false;
+    }
+    return ns;
+  });
+
+  DB.set('staff', seeded);
+  // Push to Firebase
+  clearTimeout(JJ.timer);
+  JJ.timer = setTimeout(function(){ jjPush(true); }, 1000);
+  console.log('BizPOS: Staff seeded', seeded.length, 'members');
+})();
 
 // ============================================================
 // INIT
