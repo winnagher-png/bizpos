@@ -1283,12 +1283,39 @@ table.report-table .neg{color:var(--red)}
         <span class="text-muted">🚚 Delivery fee</span>
         <span id="delivery-fee-display">R0.00</span>
       </div>
+      <div class="flex-between text-sm" id="tip-row" style="display:none;margin-bottom:6px">
+        <span style="color:var(--green)">💚 Tip</span>
+        <span style="color:var(--green)" id="tip-display">R0.00</span>
+      </div>
       <div class="flex-between">
         <span class="bold">Total</span>
         <span class="bold accent" id="sale-total-display">R0.00</span>
       </div>
     </div>
 
+    <!-- Tip selector -->
+    <div id="tip-section" style="display:none;background:var(--bg3);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+      <div class="flex-between" style="margin-bottom:8px">
+        <span class="text-sm bold">💚 Add tip</span>
+        <button onclick="hideTip()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
+        <button onclick="setTipPercent(10)" class="tip-pct-btn" id="tip-btn-10" style="padding:8px 4px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);font-size:12px;font-weight:700;cursor:pointer">10%</button>
+        <button onclick="setTipPercent(15)" class="tip-pct-btn" id="tip-btn-15" style="padding:8px 4px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);font-size:12px;font-weight:700;cursor:pointer">15%</button>
+        <button onclick="setTipPercent(20)" class="tip-pct-btn" id="tip-btn-20" style="padding:8px 4px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);font-size:12px;font-weight:700;cursor:pointer">20%</button>
+        <button onclick="setTipPercent(0)" class="tip-pct-btn" id="tip-btn-0" style="padding:8px 4px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);font-size:12px;font-weight:700;cursor:pointer;color:var(--text3)">None</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="text-sm text-muted">Custom R</span>
+        <input id="tip-custom" type="number" min="0" step="1" placeholder="0.00"
+          oninput="setTipCustom()"
+          style="flex:1;padding:8px;border-radius:8px;border:1.5px solid var(--border);font-size:14px;font-weight:700">
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:10px" id="sale-action-btns">
+      <button id="tip-toggle-btn" class="btn btn-secondary" style="flex:1" onclick="toggleTip()">💚 Add tip</button>
+    </div>
     <button class="btn btn-success btn-full" onclick="completeSale()">Complete sale</button>
   </div>
 </div>
@@ -3158,6 +3185,7 @@ function openNewSale() {
   saleCart = [];
   saleSelectedMember = null;
   saleDiscountVisible = false;
+  hideTip();
   document.getElementById('sale-member-search').value = '';
   document.getElementById('sale-product-search').value = '';
   document.getElementById('sale-member-results').style.display = 'none';
@@ -3434,21 +3462,101 @@ function getDiscountAmount(subtotal) {
   return Math.min(subtotal, val);
 }
 
-function updateCartTotals() {
+var _saleTip = 0; // current tip amount in rands
+
+function getTipAmount() { return _saleTip; }
+
+function setTipPercent(pct) {
   const subtotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
   const discount = getDiscountAmount(subtotal);
-  const total = Math.max(0, subtotal - discount);
-  document.getElementById('sale-total-display').textContent = fmt(total);
-  // Show/hide subtotal and discount rows
-  const showDiscount = discount > 0;
-  document.getElementById('sale-subtotal-row').style.display = showDiscount ? 'flex' : 'none';
-  document.getElementById('sale-discount-display-row').style.display = showDiscount ? 'flex' : 'none';
-  if (showDiscount) {
-    document.getElementById('sale-subtotal-display').textContent = fmt(subtotal);
-    document.getElementById('sale-discount-display').textContent = '-' + fmt(discount);
+  const base = Math.max(0, subtotal - discount);
+  _saleTip = pct > 0 ? Math.round(base * pct / 100 * 100) / 100 : 0;
+  document.getElementById('tip-custom').value = _saleTip > 0 ? _saleTip.toFixed(2) : '';
+  // Highlight active button
+  [0,10,15,20].forEach(function(p){
+    var btn = document.getElementById('tip-btn-' + p);
+    if (btn) {
+      btn.style.background = (p === pct) ? 'var(--accent)' : 'var(--bg)';
+      btn.style.color      = (p === pct) ? '#fff'         : (p===0 ? 'var(--text3)' : 'var(--text1)');
+      btn.style.borderColor= (p === pct) ? 'var(--accent)': 'var(--border)';
+    }
+  });
+  updateCartTotals();
+}
+
+function setTipCustom() {
+  var val = parseFloat(document.getElementById('tip-custom').value) || 0;
+  _saleTip = val > 0 ? val : 0;
+  // Clear pct button highlights
+  [0,10,15,20].forEach(function(p){
+    var btn = document.getElementById('tip-btn-' + p);
+    if (btn) { btn.style.background='var(--bg)'; btn.style.color='var(--text1)'; btn.style.borderColor='var(--border)'; }
+  });
+  var noneBtn = document.getElementById('tip-btn-0');
+  if (noneBtn && val <= 0) { noneBtn.style.color='var(--text3)'; }
+  updateCartTotals();
+}
+
+function toggleTip() {
+  var sec = document.getElementById('tip-section');
+  var btn = document.getElementById('tip-toggle-btn');
+  if (!sec) return;
+  var showing = sec.style.display !== 'none';
+  if (showing) {
+    hideTip();
+  } else {
+    sec.style.display = 'block';
+    if (btn) btn.textContent = '✕ Remove tip';
   }
+}
+
+function hideTip() {
+  _saleTip = 0;
+  var sec = document.getElementById('tip-section');
+  var btn = document.getElementById('tip-toggle-btn');
+  if (sec) sec.style.display = 'none';
+  if (btn) btn.textContent = '💚 Add tip';
+  var inp = document.getElementById('tip-custom');
+  if (inp) inp.value = '';
+  [0,10,15,20].forEach(function(p){
+    var b = document.getElementById('tip-btn-'+p);
+    if (b) { b.style.background='var(--bg)'; b.style.color=(p===0?'var(--text3)':'var(--text1)'); b.style.borderColor='var(--border)'; }
+  });
+  updateCartTotals();
+}
+
+function updateCartTotals() {
+  const subtotal  = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
+  const discount  = getDiscountAmount(subtotal);
+  const delivery  = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
+  const tip       = getTipAmount();
+  const total     = Math.max(0, subtotal - discount + delivery + tip);
+  document.getElementById('sale-total-display').textContent = fmt(total);
+
+  // Subtotal row — show whenever discount OR delivery OR tip makes things non-trivial
+  const showBreakdown = discount > 0 || delivery > 0 || tip > 0;
+  document.getElementById('sale-subtotal-row').style.display = showBreakdown ? 'flex' : 'none';
+  document.getElementById('sale-discount-display-row').style.display = discount > 0 ? 'flex' : 'none';
+  const tipRow = document.getElementById('tip-row');
+  if (tipRow) tipRow.style.display = tip > 0 ? 'flex' : 'none';
+  if (showBreakdown) {
+    document.getElementById('sale-subtotal-display').textContent = fmt(subtotal);
+    if (discount > 0) document.getElementById('sale-discount-display').textContent = '-' + fmt(discount);
+    if (tipRow && tip > 0) document.getElementById('tip-display').textContent = '+' + fmt(tip);
+  }
+  // Delivery fee display (already handled by setDelivery but keep in sync)
+  var dfRow = document.getElementById('delivery-fee-row');
+  if (dfRow) dfRow.style.display = delivery > 0 ? 'flex' : 'none';
+  var dfDisp = document.getElementById('delivery-fee-display');
+  if (dfDisp && delivery > 0) dfDisp.textContent = fmt(delivery);
+
   // Show add-discount button only when cart has items and discount panel hidden
   document.getElementById('sale-add-discount-btn').style.display = saleCart.length > 0 && !saleDiscountVisible ? 'block' : 'none';
+
+  // Show/hide tip toggle button
+  var tipBtn = document.getElementById('tip-toggle-btn');
+  var actionBtns = document.getElementById('sale-action-btns');
+  if (actionBtns) actionBtns.style.display = saleCart.length > 0 ? 'flex' : 'none';
 }
 
 function toggleDiscountRow() {
@@ -3540,7 +3648,7 @@ function completeSale() {
     const sk = parseFloat(document.getElementById('split-card').value)||0;
     const se = parseFloat(document.getElementById('split-eft').value)||0;
     const splitSum = sc + sk + se;
-    const cartTotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0) + deliveryFee;
+    const cartTotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0) + deliveryFee + getTipAmount();
     if (Math.abs(splitSum - cartTotal) > 0.05) {
       showToast('Split amounts must add up to R' + cartTotal.toFixed(2), 'error');
       return;
@@ -3549,7 +3657,8 @@ function completeSale() {
 
   const subtotal = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
   const discountAmt = getDiscountAmount(subtotal);
-  const total = Math.max(0, subtotal - discountAmt + deliveryFee);
+  const tipAmt = getTipAmount();
+  const total = Math.max(0, subtotal - discountAmt + deliveryFee + tipAmt);
   const staffId = document.getElementById('sale-staff').value;
   const staffMember = DB.get('staff').find(s=>s.id===staffId);
 
@@ -3571,6 +3680,7 @@ function completeSale() {
     total,
     paymentMethod: document.getElementById('sale-payment').value,
     note: document.getElementById('sale-note').value.trim(),
+    tip: tipAmt > 0 ? tipAmt : 0,
     isDelivery: _isDelivery,
     deliveryFee: deliveryFee,
     deliveryAddress: deliveryAddress,
@@ -3628,6 +3738,16 @@ function openSaleDetail(id) {
     <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div class="text-sm" style="color:var(--amber)">Discount ${s.discount.type==='percent'?'('+s.discount.value+'%)':'(fixed)'}${s.discount.reason?' · '+s.discount.reason:''}</div>
       <div class="text-sm" style="color:var(--amber)">-${fmt(discountAmt)}</div>
+    </div>` : ''}
+    ${s.tip > 0 ? `
+    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div class="text-sm" style="color:var(--green)">💚 Tip</div>
+      <div class="text-sm bold" style="color:var(--green)">+${fmt(s.tip)}</div>
+    </div>` : ''}
+    ${s.deliveryFee > 0 ? `
+    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div class="text-sm text-muted">🚚 Delivery</div>
+      <div class="text-sm bold">${fmt(s.deliveryFee)}</div>
     </div>` : ''}
     <div class="flex-between" style="margin-top:12px;padding-top:8px">
       <span class="bold">Total</span><span class="bold accent">${fmt(s.total)}</span>
@@ -6743,34 +6863,104 @@ function sendBroadcast() {
   var members = DB.get('members') || [];
   var selected = members.filter(function(m){ return _broadcastSelected[m.id] && m.marketingOptIn !== false && m.phone && m.phone.trim(); });
 
-  if (!msg && !link) { showToast('Enter a message or link first', 'error'); return; }
-  if (!selected.length) { showToast('No members selected (or none have phone numbers)', 'error'); return; }
+  if (!msg && !link && !_bcFileData) { showToast('Enter a message, link or image first', 'error'); return; }
+  if (!selected.length) { showToast('No opted-in members with phone numbers selected', 'error'); return; }
 
-  var fullMsg = msg + (link ? '\n\n' + link : '');
-  if (_bcFileData && _bcFileData.isImage) {
-    showToast('Image attached — share from gallery after WhatsApp opens', 'warning', 5000);
+  // Build the text part — emojis included as-is, NO extra encoding here
+  var fullMsg = (msg || '') + (link ? '\n\n' + link : '');
+
+  var remaining = document.getElementById('bc-remaining');
+  if (!remaining) return;
+  remaining.style.display = 'block';
+
+  // ── If there is an image AND the browser supports Web Share API with files ──
+  // This is the ONLY way to send an image via WhatsApp from a browser.
+  // It opens the native share sheet on Android/iOS so the user picks WhatsApp.
+  if (_bcFileData && _bcFileData.isImage && navigator.canShare) {
+    // Convert base64 dataUrl back to a File object
+    var byteStr = atob(_bcFileData.dataUrl.split(',')[1]);
+    var ab = new ArrayBuffer(byteStr.length);
+    var ia = new Uint8Array(ab);
+    for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+    var imgFile = new File([ab], _bcFileData.name || 'image.jpg', { type: _bcFileData.type });
+
+    if (navigator.canShare({ files: [imgFile] })) {
+      // Show instructions + per-member links for the text
+      remaining.innerHTML =
+        '<div style="background:#dcfce7;border-radius:10px;padding:12px;margin-bottom:10px;font-size:13px;font-weight:600;color:#15803d">'
+        + '📸 Image broadcast — two steps:<br>'
+        + '<b>Step 1:</b> Tap the button below — your phone&#39;s share sheet opens. Choose WhatsApp and paste the contact name.<br>'
+        + '<b>Step 2:</b> Use the text links below to send the message text individually.'
+        + '</div>'
+        + '<button onclick="shareBCImageNow()" style="width:100%;padding:12px;background:#25D366;border:none;border-radius:10px;'
+        + 'font-size:14px;font-weight:800;color:#fff;cursor:pointer;margin-bottom:12px">📸 Share image via WhatsApp</button>'
+        + '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px">💬 Text links (' + selected.length + ' members):</div>'
+        + _buildWALinks(selected, fullMsg);
+      showToast('Tap "Share image" — then use the text links below', 'success', 6000);
+      return;
+    }
   }
 
-  // Build a scrollable list of WhatsApp links — one per member
-  var remaining = document.getElementById('bc-remaining');
-  if (remaining) {
-    remaining.style.display = 'block';
+  // ── No image, or Web Share not supported — plain text links only ──
+  if (_bcFileData && _bcFileData.isImage) {
+    // Show image save reminder
+    remaining.innerHTML =
+      '<div style="background:#fef9c3;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#854d0e">'
+      + '⚠️ Your browser can&#39;t share images directly. Save the image to your gallery first, then open WhatsApp and attach it manually when sending.'
+      + '</div>'
+      + '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px">💬 Tap each member to send the text message:</div>'
+      + _buildWALinks(selected, fullMsg);
+    // Also trigger image download so it's ready in gallery
+    var a = document.createElement('a');
+    a.href = _bcFileData.dataUrl;
+    a.download = _bcFileData.name || 'broadcast-image.jpg';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    showToast('Image saved to downloads — attach it manually in WhatsApp', 'warning', 7000);
+  } else {
     remaining.innerHTML =
       '<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:8px">'
       + '💬 Tap each name to open WhatsApp — ' + selected.length + ' recipient' + (selected.length > 1 ? 's' : '') + ':</div>'
-      + selected.map(function(m) {
-          var waNum = normalisePhone(m.phone);
-          var waUrl = 'https://wa.me/' + waNum + '?text=' + encodeURIComponent(fullMsg.replace('{name}', m.name || ''));
-          return '<a href="' + waUrl + '" target="_blank" '
-            + 'style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:10px;'
-            + 'margin-bottom:6px;font-size:13px;font-weight:600;color:#25D366;text-decoration:none;border:1px solid #e0e0e0">'
-            + '<span style="font-size:18px">💬</span>'
-            + '<span style="flex:1;color:var(--text1)">' + (m.name || 'Member') + '</span>'
-            + '<span style="font-size:11px;color:var(--text3)">0' + waNum.slice(2) + '</span>'
-            + '</a>';
-        }).join('');
+      + _buildWALinks(selected, fullMsg);
+    showToast(selected.length + ' WhatsApp links ready — tap each member to send', 'success', 5000);
   }
-  showToast(selected.length + ' WhatsApp links ready — tap each member to send', 'success', 5000);
+}
+
+// Build the per-member wa.me link HTML — reused in multiple paths above
+function _buildWALinks(selected, fullMsg) {
+  return selected.map(function(m) {
+    var waNum = normalisePhone(m.phone);
+    // Use the message as-is — emojis are safe in WhatsApp URLs
+    var personalMsg = fullMsg.replace(/\{name\}/g, m.name || '');
+    var waUrl = 'https://wa.me/' + waNum + '?text=' + encodeURIComponent(personalMsg);
+    var displayPhone = waNum.length >= 11 ? '0' + waNum.slice(2) : waNum;
+    return '<a href="' + waUrl + '" target="_blank" '
+      + 'style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:10px;'
+      + 'margin-bottom:6px;font-size:13px;font-weight:600;text-decoration:none;border:1px solid #e0e0e0">'
+      + '<span style="font-size:18px">💬</span>'
+      + '<span style="flex:1;color:var(--text1)">' + (m.name || 'Member') + '</span>'
+      + '<span style="font-size:11px;color:var(--text3)">' + displayPhone + '</span>'
+      + '</a>';
+  }).join('');
+}
+
+// Called by the "Share image" button — uses Web Share API with the image file
+function shareBCImageNow() {
+  if (!_bcFileData || !_bcFileData.isImage) return;
+  var msg     = document.getElementById('bc-message').value.trim();
+  var link    = document.getElementById('bc-link').value.trim();
+  var txt = (msg || '') + (link ? '\n\n' + link : '');
+  try {
+    var byteStr = atob(_bcFileData.dataUrl.split(',')[1]);
+    var ab = new ArrayBuffer(byteStr.length);
+    var ia = new Uint8Array(ab);
+    for (var i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i);
+    var imgFile = new File([ab], _bcFileData.name || 'image.jpg', { type: _bcFileData.type });
+    navigator.share({ files: [imgFile], text: txt }).catch(function(e){
+      if (e.name !== 'AbortError') showToast('Share failed: ' + e.message, 'error');
+    });
+  } catch(e) {
+    showToast('Could not share image: ' + e.message, 'error');
+  }
 }
 
 function sendEmailBroadcast() {
@@ -8751,6 +8941,9 @@ function handleBCFile(input) {
   var reader = new FileReader();
   reader.onload = function(e) {
     _bcFileData = { type: file.type, name: file.name, dataUrl: e.target.result, isImage: file.type.startsWith('image/') };
+    // Show the image tip when an image is attached
+    var tip = document.getElementById('bc-image-tip');
+    if (tip) tip.style.display = _bcFileData.isImage ? 'block' : 'none';
     if (preview) {
       preview.style.display = 'block';
       if (_bcFileData.isImage) {
@@ -8768,6 +8961,8 @@ function handleBCFile(input) {
 
 function clearBCFile() {
   _bcFileData = null;
+  var tip = document.getElementById('bc-image-tip');
+  if (tip) tip.style.display = 'none';
   var label   = document.getElementById('bc-file-label');
   var preview = document.getElementById('bc-file-preview');
   var input   = document.getElementById('bc-file-upload');
@@ -9867,13 +10062,16 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
 
     <!-- File/Image upload -->
     <div class="form-group">
-      <label class="form-label">Attach image or document <span style="font-size:10px;color:var(--text3)">(optional)</span></label>
+      <label class="form-label">Attach image <span style="font-size:10px;color:var(--text3)">(optional — tap "Share image" after sending to send via WhatsApp share sheet)</span></label>
       <label for="bc-file-upload" style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border:1.5px dashed var(--border2);border-radius:10px;cursor:pointer;font-size:13px;color:var(--text2)">
         <span style="font-size:20px">📎</span>
         <span id="bc-file-label">Tap to choose image or PDF</span>
         <input type="file" id="bc-file-upload" accept="image/*,application/pdf" style="display:none" onchange="handleBCFile(this)">
       </label>
       <div id="bc-file-preview" style="display:none;margin-top:8px"></div>
+      <div id="bc-image-tip" style="display:none;margin-top:6px;padding:8px 10px;background:#fef9c3;border-radius:8px;font-size:11px;color:#854d0e">
+        💡 <b>On Android/iOS:</b> tap "Send via WhatsApp" and a "📸 Share image" button will appear — this opens your phone's share sheet so you can send the image + text together to each member.
+      </div>
     </div>
 
     <div class="form-group">
