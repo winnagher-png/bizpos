@@ -2118,27 +2118,51 @@ function populateSupplierSelect(sel='') {
 }
 
 function saveProduct() {
-  const name = document.getElementById('p-name').value.trim();
-  if (!name) { alert('Product name required'); return; }
-  const products = DB.get('products');
-  const id = document.getElementById('p-id').value;
-  const data = {
-    name, sku: document.getElementById('p-sku').value.trim(),
-    category: document.getElementById('p-cat').value.trim(),
-    price: parseFloat(document.getElementById('p-price').value)||0,
-    cost: parseFloat(document.getElementById('p-cost').value)||0,
-    qty: parseInt(document.getElementById('p-qty').value)||0,
-    lowAt: parseInt(document.getElementById('p-low').value)||5,
-    reorderAt: parseInt(document.getElementById('p-reorder').value)||0,
-    reorderQty: parseInt(document.getElementById('p-reorder-qty')?.value)||0,
-    supplierId: document.getElementById('p-supplier').value
+  var name = (document.getElementById('p-name').value || '').trim();
+  if (!name) { showToast('Product name required', 'error'); return; }
+
+  // Read directly from localStorage to avoid stale data
+  var products = JSON.parse(localStorage.getItem('products') || '[]');
+  var id = document.getElementById('p-id').value;
+
+  var data = {
+    name:      name,
+    sku:       (document.getElementById('p-sku')      ? document.getElementById('p-sku').value.trim()      : ''),
+    category:  (document.getElementById('p-cat')      ? document.getElementById('p-cat').value.trim()      : ''),
+    price:     parseFloat(document.getElementById('p-price')    ? document.getElementById('p-price').value    : 0) || 0,
+    cost:      parseFloat(document.getElementById('p-cost')     ? document.getElementById('p-cost').value     : 0) || 0,
+    qty:       parseInt(document.getElementById('p-qty')        ? document.getElementById('p-qty').value        : 0) || 0,
+    qtyWh:     parseInt(document.getElementById('p-qty-wh')     ? document.getElementById('p-qty-wh').value     : 0) || 0,
+    lowAt:     parseInt(document.getElementById('p-low')        ? document.getElementById('p-low').value        : 5) || 5,
+    reorderAt: parseInt(document.getElementById('p-reorder')    ? document.getElementById('p-reorder').value    : 0) || 0,
+    reorderQty:parseInt(document.getElementById('p-reorder-qty')? document.getElementById('p-reorder-qty').value: 0) || 0,
+    supplierId:(document.getElementById('p-supplier')           ? document.getElementById('p-supplier').value    : '')
   };
-  if (id) { const i = products.findIndex(p=>p.id===id); if(i>-1) products[i]={...products[i],...data}; }
-  else { products.push({id:uid(),...data}); }
+
+  if (id) {
+    var idx = products.findIndex(function(p){ return p.id === id; });
+    if (idx > -1) {
+      products[idx] = Object.assign({}, products[idx], data);
+    }
+  } else {
+    data.id = uid();
+    products.push(data);
+  }
+
+  // Write directly to localStorage AND DB
+  localStorage.setItem('products', JSON.stringify(products));
   DB.set('products', products);
+
+  // Block pull for 30s then push immediately
+  window._blockPullUntil = Date.now() + 30000;
+  JJ.pushing = false;
+  clearTimeout(JJ.timer);
+  setTimeout(function(){ jjPush(true); }, 100);
+
   closeModal('modal-product');
   renderInventory();
   checkReorderPoints();
+  showToast(name + ' saved ✓', 'success');
 }
 
 // ============================================================
@@ -7451,21 +7475,40 @@ function openWageRecords(staffId) {
       var rec  = recs.find(function(w){ return w.id === wid; });
       if (!rec) return;
 
-      var newHours = parseFloat(prompt('Hours worked:', rec.hours.toFixed(2)));
-      if (isNaN(newHours)) return;
-      var newWages = parseFloat(prompt('Wages (R):', rec.wages.toFixed(2)));
-      if (isNaN(newWages)) return;
-      var newComm  = parseFloat(prompt('Commission (R):', rec.commission.toFixed(2)));
-      if (isNaN(newComm)) return;
+      // Replace the row with an inline edit form
+      var row = editBtn.closest('div[style*="border-bottom"]');
+      if (!row) return;
+      row.innerHTML = '<div style="padding:8px 0">'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
+        + '<div><label style="font-size:10px;color:var(--text3)">Hours</label>'
+        + '<input id="we-hours" type="number" step="0.25" value="' + rec.hours.toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
+        + '<div><label style="font-size:10px;color:var(--text3)">Wages (R)</label>'
+        + '<input id="we-wages" type="number" step="0.01" value="' + rec.wages.toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
+        + '<div><label style="font-size:10px;color:var(--text3)">Commission (R)</label>'
+        + '<input id="we-comm" type="number" step="0.01" value="' + (rec.commission||0).toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px">'
+        + '<button id="we-save-btn" style="flex:1;padding:8px;background:var(--green);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">Save</button>'
+        + '<button id="we-cancel-btn" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
+        + '</div></div>';
 
-      rec.hours      = newHours;
-      rec.wages      = newWages;
-      rec.commission = newComm;
-      rec.totalPay   = newWages + newComm;
-      localStorage.setItem('wageRecords', JSON.stringify(recs));
-      modal.remove();
-      openWageRecords(sid);
-      showToast('Wage record updated', 'success');
+      document.getElementById('we-save-btn').onclick = function() {
+        var newHours = parseFloat(document.getElementById('we-hours').value) || 0;
+        var newWages = parseFloat(document.getElementById('we-wages').value) || 0;
+        var newComm  = parseFloat(document.getElementById('we-comm').value)  || 0;
+        rec.hours      = newHours;
+        rec.wages      = newWages;
+        rec.commission = newComm;
+        rec.totalPay   = newWages + newComm;
+        localStorage.setItem('wageRecords', JSON.stringify(recs));
+        modal.remove();
+        openWageRecords(sid);
+        showToast('Wage record updated', 'success');
+      };
+      document.getElementById('we-cancel-btn').onclick = function() {
+        modal.remove();
+        openWageRecords(sid);
+      };
     }
   });
 }
