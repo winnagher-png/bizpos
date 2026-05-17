@@ -9827,7 +9827,8 @@ function setDelivery(isDelivery) {
 // ============================================================
 // Check device mode first
 // Version bump forces re-selection on all devices after redeploy
-var _APP_VERSION = '2.2';
+var _APP_VERSION = '2.3';
+console.log('BizPOS v2.3 loaded — cashup fix: variance = counted - (cashSales - expenses)');
 var _savedVersion = null;
 try { _savedVersion = localStorage.getItem('bizpos_version'); } catch(e) {}
 var _savedMode = loadDeviceMode();
