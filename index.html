@@ -769,6 +769,21 @@ table.report-table .neg{color:var(--red)}
           <div><label class="form-label">Description</label><input id="cue-desc" type="text" placeholder="e.g. Delivery"></div>
           <div><label class="form-label">Amount (R)</label><input id="cue-amount" type="number" step="0.01" placeholder="0.00"></div>
         </div>
+        <div style="margin-bottom:8px">
+          <label class="form-label">Category</label>
+          <select id="cue-cat" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+            <option value="Till expense">Till expense (general)</option>
+            <option value="Salaries">Salaries / Wages</option>
+            <option value="Transport">Transport / Delivery</option>
+            <option value="Stock purchase">Stock purchase</option>
+            <option value="Office & Admin">Office & Admin</option>
+            <option value="Cleaning">Cleaning</option>
+            <option value="Utilities">Utilities</option>
+            <option value="Marketing">Marketing</option>
+            <option value="Equipment">Equipment / Maintenance</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-sm" onclick="document.getElementById('cashup-expense-form').style.display='none'">Cancel</button>
           <button class="btn btn-primary btn-sm" style="flex:1" onclick="addCashupExpenseItem()">Add</button>
@@ -4548,8 +4563,9 @@ function showCashupExpenseForm() {
 function addCashupExpenseItem() {
   const desc = document.getElementById('cue-desc').value.trim();
   const amount = parseFloat(document.getElementById('cue-amount').value)||0;
+  const category = (document.getElementById('cue-cat')||{}).value || 'Till expense';
   if (!desc||!amount) { showToast('Enter description and amount','error'); return; }
-  cashupExpenseItems.push({id:uid(),desc,amount});
+  cashupExpenseItems.push({id:uid(),desc,amount,category});
   document.getElementById('cashup-expense-form').style.display='none';
   renderCashupExpenseList();
   updateCashupTotal();
@@ -4570,7 +4586,10 @@ function renderCashupExpenseList() {
   } else {
     el.innerHTML = cashupExpenseItems.map(e=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f2f4f1">
-        <span class="text-sm">${e.desc}</span>
+        <div>
+          <div class="text-sm">${e.desc}</div>
+          <div style="font-size:10px;color:var(--text3)">${e.category||'Till expense'}</div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="bold red">${fmt(e.amount)}</span>
           <button onclick="removeCashupExpense('${e.id}')" style="color:var(--text3);background:none;border:none;font-size:16px;cursor:pointer">✕</button>
@@ -4719,14 +4738,22 @@ function saveCashup() {
   const cardDeclared = parseFloat(document.getElementById('cashup-card-declared')?.value)||0;
   const eftDeclared  = parseFloat(document.getElementById('cashup-eft-declared')?.value)||0;
 
-  // Save cash expenses as expense records
+  // Save till cash expenses as expense records with their chosen category
   const allExps = DB.get('expenses');
+  var cuDate = (document.getElementById('cashup-date')?.value) || new Date().toISOString().slice(0,10);
   cashupExpenseItems.forEach(e=>{
-    allExps.push({id:e.id,desc:e.desc,amount:e.amount,
-      category:'Till expense',payMethod:'Cash Sales',
-      date:new Date().toISOString().slice(0,10),notes:'Declared at cash-up'});
+    allExps.push({
+      id: e.id,
+      desc: e.desc,
+      amount: e.amount,
+      category: e.category || 'Till expense',   // use the category chosen by staff
+      payMethod: 'Cash Sales',                   // always paid from till cash
+      date: cuDate,
+      status: 'paid',
+      notes: 'Declared at cash-up'
+    });
   });
-  DB.set('expenses',allExps);
+  DB.set('expenses', allExps);
 
   // Top up petty cash with banked amount
   updatePettyCash(toBank, 'Cashup banked — '+new Date().toLocaleDateString('en-ZA'), 'cashup');
@@ -7534,6 +7561,41 @@ function openPettyCashSetter() {
   openModal('modal-petty-cash-setter');
 }
 
+// Called from the inline "Set balance" button on the cashup tab
+function setPettyCashBalance() {
+  var amountEl = document.getElementById('cashup-pc-set-amount');
+  var amount = parseFloat(amountEl ? amountEl.value : 0);
+  if (isNaN(amount) || amount < 0) { showToast('Enter a valid amount', 'error'); return; }
+  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+  var oldBal = pc.balance || 0;
+  pc.balance = amount;
+  if (!pc.history) pc.history = [];
+  pc.history.push({
+    id: uid(),
+    date: new Date().toISOString(),
+    type: 'set',
+    reason: 'Balance manually set',
+    category: '',
+    delta: amount - oldBal,
+    oldBalance: oldBal,
+    newBalance: amount
+  });
+  DB.setObj('pettyCash', pc);
+  // Update all displays
+  var dispEl = document.getElementById('cashup-pc-display');
+  if (dispEl) dispEl.textContent = fmt(amount);
+  var statusEl = document.getElementById('cashup-pc-set-status');
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = 'Balance set to ' + fmt(amount) + ' ✓';
+    setTimeout(function(){ statusEl.style.display='none'; }, 3000);
+  }
+  // Refresh banking summary
+  updateCashupTotal();
+  showToast('Petty cash balance set to ' + fmt(amount), 'success');
+}
+
 function quickSetPettyCash() {
   var amount = parseFloat(document.getElementById('pc-setter-amount').value);
   if (isNaN(amount) || amount < 0) { showToast('Enter a valid amount', 'error'); return; }
@@ -8496,15 +8558,47 @@ function openQuickNewProduct(defaultName, callback) {
     "id": "56nvw7c7",
     "date": "2026-05-14T18:00:00.000Z",
     "staffName": "Jordan & Charne",
-    "totalSales": 0.0,
-    "counted": 0.0,
-    "tillExpenses": 0.0,
+    "totalSales": 880.0,
+    "counted": 489.0,
+    "tillExpenses": 400.0,
     "cardTotal": 0,
     "eftTotal": 0,
-    "toBank": 0.0,
-    "variance": 0,
-    "pettyCashBefore": 1746.0,
-    "pettyCashAfter": 1746.0,
+    "toBank": 489.0,
+    "variance": 89.0,
+    "pettyCashBefore": 540.3,
+    "pettyCashAfter": 1029.3,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "cu15may26",
+    "date": "2026-05-15T18:00:00.000Z",
+    "staffName": "Jordan & Charne",
+    "totalSales": 1000.0,
+    "counted": 540.0,
+    "tillExpenses": 460.0,
+    "cardTotal": 0,
+    "eftTotal": 0,
+    "toBank": 540.0,
+    "variance": 80.0,
+    "pettyCashBefore": 1029.3,
+    "pettyCashAfter": 1569.3,
+    "txnCount": 0,
+    "notes": "Imported historical record"
+  },
+  {
+    "id": "cu16may26",
+    "date": "2026-05-16T18:00:00.000Z",
+    "staffName": "Jordan & Charne",
+    "totalSales": 730.0,
+    "counted": 107.0,
+    "tillExpenses": 623.0,
+    "cardTotal": 2790,
+    "eftTotal": 0,
+    "toBank": 107.0,
+    "variance": 0.0,
+    "pettyCashBefore": 169.3,
+    "pettyCashAfter": 276.3,
     "txnCount": 0,
     "notes": "Imported historical record"
   }
@@ -8739,6 +8833,56 @@ function openQuickNewProduct(defaultName, callback) {
     "payMethod": "petty_cash",
     "status": "paid",
     "notes": "Paid from petty cash"
+  },
+  {
+    "id": "exp14may_till",
+    "date": "2026-05-14",
+    "desc": "Till cash expenses",
+    "amount": 400.0,
+    "category": "Till expense",
+    "payMethod": "Cash Sales",
+    "status": "paid",
+    "notes": "Declared at cash-up - Jordan & Charne"
+  },
+  {
+    "id": "exp15may_till",
+    "date": "2026-05-15",
+    "desc": "Till cash expenses",
+    "amount": 460.0,
+    "category": "Till expense",
+    "payMethod": "Cash Sales",
+    "status": "paid",
+    "notes": "Declared at cash-up - Jordan & Charne"
+  },
+  {
+    "id": "exp15may_wages",
+    "date": "2026-05-15",
+    "desc": "Charne wages Wed+Thurs",
+    "amount": 700.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "exp16may_wages",
+    "date": "2026-05-16",
+    "desc": "Charne wages Fri+Sat",
+    "amount": 700.0,
+    "category": "Salaries",
+    "payMethod": "petty_cash",
+    "status": "paid",
+    "notes": "Paid from petty cash"
+  },
+  {
+    "id": "exp16may_till",
+    "date": "2026-05-16",
+    "desc": "Till cash expenses",
+    "amount": 623.0,
+    "category": "Till expense",
+    "payMethod": "Cash Sales",
+    "status": "paid",
+    "notes": "Declared at cash-up - Jordan & Charne"
   }
 ];
 
@@ -8756,7 +8900,7 @@ function openQuickNewProduct(defaultName, callback) {
   // Set petty cash balance and history
   var pc = DB.getObj('pettyCash', {balance:0, history:[]});
   if (!pc.history || pc.history.length < 5) {
-    pc.balance = 540.3;
+    pc.balance = 276.3;  // correct balance after 16 May cashup
     pc.history = [
   {
     "date": "2026-05-01T18:00:00.000Z",
@@ -8993,15 +9137,6 @@ function openQuickNewProduct(defaultName, callback) {
     "by": "import"
   },
   {
-    "date": "2026-05-14T18:00:00.000Z",
-    "type": "cashup",
-    "oldBalance": 1746.0,
-    "newBalance": 1746.0,
-    "delta": 0.0,
-    "reason": "Cash banked - Jordan & Charne",
-    "by": "import"
-  },
-  {
     "date": "2026-05-14T20:00:00.000Z",
     "type": "expense",
     "oldBalance": 1746.0,
@@ -9009,8 +9144,54 @@ function openQuickNewProduct(defaultName, callback) {
     "delta": -1205.7,
     "reason": "Trink Consumables, stationery, cleaning, ink",
     "by": "import"
+  },
+  {
+    "date": "2026-05-14T23:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 540.3,
+    "newBalance": 1029.3,
+    "delta": 489.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-15T23:00:00.000Z",
+    "type": "cashup",
+    "oldBalance": 1029.3,
+    "newBalance": 1569.3,
+    "delta": 540.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-15T23:30:00.000Z",
+    "type": "expense",
+    "oldBalance": 1569.3,
+    "newBalance": 869.3,
+    "delta": -700.0,
+    "reason": "Charne wages Wed+Thurs",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-16T23:00:00.000Z",
+    "type": "expense",
+    "oldBalance": 869.3,
+    "newBalance": 169.3,
+    "delta": -700.0,
+    "reason": "Charne wages Fri+Sat",
+    "by": "import"
+  },
+  {
+    "date": "2026-05-16T23:30:00.000Z",
+    "type": "cashup",
+    "oldBalance": 169.3,
+    "newBalance": 276.3,
+    "delta": 107.0,
+    "reason": "Cash banked - Jordan & Charne",
+    "by": "import"
   }
 ];
+    pc.balance = 276.3;
     DB.setObj('pettyCash', pc);
   }
 
