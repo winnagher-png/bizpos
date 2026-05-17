@@ -411,6 +411,23 @@ table.report-table .neg{color:var(--red)}
   border-radius:20px;font-size:10px;font-weight:700;pointer-events:none}
 #mode-badge.pos{background:var(--accent-bg);border:1px solid #1f7a6e;color:var(--accent)}
 #mode-badge.mgr{background:#f0e8ff;border:1px solid #7c3aed;color:#6b21a8}
+
+.sale-method-pill {
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: var(--bg3);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+}
+.sale-method-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 </style><!-- Prevent zoom on input focus -->
   </head>
 <body>
@@ -598,7 +615,31 @@ table.report-table .neg{color:var(--red)}
     <button class="btn btn-primary btn-full mb-12" style="margin-bottom:12px" onclick="openNewSale()">
       + New Sale
     </button>
-    <div class="section-title">Recent sales</div>
+
+    <!-- Date filter -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <input type="date" id="sales-date-filter"
+        style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg3);color:var(--text)"
+        oninput="renderSales()">
+      <button onclick="document.getElementById('sales-date-filter').value='';renderSales()"
+        style="padding:8px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:12px;font-weight:700;color:var(--text3);cursor:pointer"
+        title="Clear date filter">All dates</button>
+    </div>
+
+    <!-- Payment method filter pills -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px" id="sales-method-pills">
+      <button class="sale-method-pill active" data-method="" onclick="setSaleMethodFilter('')">All</button>
+      <button class="sale-method-pill" data-method="cash" onclick="setSaleMethodFilter('cash')">💵 Cash</button>
+      <button class="sale-method-pill" data-method="card" onclick="setSaleMethodFilter('card')">💳 Card</button>
+      <button class="sale-method-pill" data-method="eft" onclick="setSaleMethodFilter('eft')">🏦 EFT</button>
+      <button class="sale-method-pill" data-method="split" onclick="setSaleMethodFilter('split')">⚡ Split</button>
+    </div>
+
+    <!-- Filtered totals summary -->
+    <div id="sales-filter-summary" style="display:none;background:var(--bg3);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px">
+    </div>
+
+    <div class="section-title" id="sales-list-title">Recent sales</div>
     <div id="sales-list"></div>
   </div>
 
@@ -681,6 +722,15 @@ table.report-table .neg{color:var(--red)}
   <!-- CASHUP TAB -->
   <div class="tab-pane" id="tab-cashup">
     <div class="section-title">Cash Up</div>
+
+    <!-- Float reminder banner -->
+    <div style="background:#fff3cd;border:2px solid #f59e0b;border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px">
+      <span style="font-size:24px;line-height:1">⚠️</span>
+      <div>
+        <div style="font-weight:800;color:#92400e;font-size:14px;margin-bottom:3px">Remove your R500 float BEFORE counting</div>
+        <div style="font-size:12px;color:#78350f;line-height:1.5">Take out the R500 float cash first and set it aside. <strong>Only count what will go to the bank.</strong> Do not include the float in your count below.</div>
+      </div>
+    </div>
 
     <!-- Step 1: Who is cashing up -->
     <div class="card" style="margin-bottom:12px">
@@ -2660,86 +2710,40 @@ function filterPO(f, btn) {
   renderPO();
 }
 
+// ── PO number generator ─────────────────────────────────────────────────────
+// Format: PO{DD/MM/YY}-{ABBREV}  e.g. PO16/05/26-DynDist
+function generatePONumber(supplierName) {
+  var d  = new Date();
+  var dd = String(d.getDate()).padStart(2,'0');
+  var mm = String(d.getMonth()+1).padStart(2,'0');
+  var yy = String(d.getFullYear()).slice(-2);
+  // Abbreviation: capitalise first letter of each word, max 8 chars
+  var raw = (supplierName || 'NoSup').replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+  var abbrev = raw.split(/\s+/).map(function(w){ return w.charAt(0).toUpperCase() + w.slice(1,4); }).join('').slice(0,8);
+  return 'PO' + dd + '/' + mm + '/' + yy + '-' + abbrev;
+}
+
+// Find the single open (pending/draft) PO for a supplier, or return null
+function findOpenPOForSupplier(supplierId) {
+  var pos = DB.get('purchaseOrders') || [];
+  return pos.find(function(po) {
+    return (po.status === 'pending' || po.status === 'draft') &&
+           po.supplierId === supplierId;
+  }) || null;
+}
+
 function checkReorderPoints() {
-  var products  = DB.get('products')  || [];
-  var pos       = DB.get('purchaseOrders') || [];
-  var suppliers = DB.get('suppliers') || [];
-  var added = [];
+  var products = DB.get('products') || [];
 
-  // Products already on a pending/draft PO — skip them
-  var pendingProductIds = {};
-  pos.forEach(function(po) {
-    if (po.status === 'pending' || po.status === 'draft') {
-      (po.items||[]).forEach(function(item){ pendingProductIds[item.productId] = true; });
-    }
-  });
-
-  // Group reorder products by supplier
-  var bySupplier = {};
+  // Only show low-stock alerts — no auto PO creation
+  var lowStock = [];
   products.forEach(function(p) {
     if (!p.reorderAt || p.reorderAt <= 0) return;
-    if ((p.qty||0) > p.reorderAt) return;
-    if (pendingProductIds[p.id]) return; // already on a PO
-
-    var supId = p.supplierId || '__none__';
-    if (!bySupplier[supId]) bySupplier[supId] = [];
-    bySupplier[supId].push(p);
-    added.push(p.name);
+    if ((p.qty||0) <= p.reorderAt) lowStock.push(p.name);
   });
 
-  // For each supplier group: add to existing pending PO or create one
-  Object.keys(bySupplier).forEach(function(supId) {
-    var prods = bySupplier[supId];
-    var sup   = suppliers.find(function(s){ return s.id === supId; });
-
-    // Find existing pending PO for this supplier
-    var existingPO = pos.find(function(po) {
-      return (po.status === 'pending' || po.status === 'draft') &&
-             po.supplierId === supId;
-    });
-
-    var newItems = prods.map(function(p) {
-      var reorderQty = p.reorderQty || Math.max((p.reorderAt||5) * 3, 10);
-      return { productId: p.id, productName: p.name, qty: reorderQty, unitCost: p.cost||0 };
-    });
-
-    if (existingPO) {
-      // Add to existing PO
-      newItems.forEach(function(ni) {
-        var exists = existingPO.items.find(function(i){ return i.productId === ni.productId; });
-        if (!exists) existingPO.items.push(ni);
-      });
-      existingPO.total = existingPO.items.reduce(function(a,i){ return a+i.qty*i.unitCost; }, 0);
-    } else {
-      // Create new PO for this supplier
-      var total = newItems.reduce(function(a,i){ return a+i.qty*i.unitCost; }, 0);
-      var d = new Date();
-      var dd = String(d.getDate()).padStart(2,'0');
-      var mm = String(d.getMonth()+1).padStart(2,'0');
-      var yyyy = d.getFullYear();
-      var supName = sup ? sup.name : 'No supplier';
-      pos.push({
-        id: uid(),
-        status: 'pending',
-        stockStatus: 'awaiting',
-        payStatus: 'unpaid',
-        date: d.toISOString(),
-        poNumber: 'PO-' + dd + mm + yyyy + '-' + supName.replace(/[^a-zA-Z0-9]/g,'-').slice(0,15),
-        supplierId: supId === '__none__' ? '' : supId,
-        supplierName: supName,
-        items: newItems,
-        total: total,
-        notes: 'Auto-generated reorder'
-      });
-    }
-  });
-
-  if (added.length) {
-    DB.set('purchaseOrders', pos);
-    updatePOBadge();
-    renderPO && renderPO();
-    // Show notification
-    showReorderNotification(added);
+  if (lowStock.length) {
+    showReorderNotification(lowStock);
   }
 }
 
@@ -2759,7 +2763,7 @@ function showReorderNotification(productNames) {
     + '<div style="font-weight:800;color:var(--amber);margin-bottom:4px">Reorder alert!</div>'
     + '<div style="font-size:13px;color:var(--text2)">' + productNames.slice(0,3).join(', ')
     + (productNames.length > 3 ? ' + ' + (productNames.length-3) + ' more' : '') + '</div>'
-    + '<div style="font-size:12px;color:var(--text3);margin-top:4px">Draft POs created — check Purchase Orders</div>'
+    + '<div style="font-size:12px;color:var(--text3);margin-top:4px">Low stock — check inventory and create a purchase order when ready</div>'
     + '</div>'
     + '<button id="reorder-close" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--text3)">✕</button>'
     + '</div>';
@@ -2788,8 +2792,14 @@ function renderPO() {
   if (!filtered.length) { el.innerHTML = '<div class="empty"><p>No purchase orders</p></div>'; return; }
   el.innerHTML = filtered.map(po => `<div class="po-row ${po.status}" onclick="openPODetail('${po.id}')">
     <div class="flex-between">
-      <div class="bold">${po.supplierName}</div>
-      <span class="badge ${po.status==='pending'?'badge-amber':po.status==='confirmed'?'badge-green':'badge-accent'}">${po.status}</span>
+      <div>
+        <div class="bold" style="font-size:13px">${po.poNumber||po.supplierName}</div>
+        <div class="text-xs text-muted">${po.supplierName}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+        <span class="badge ${po.status==='pending'?'badge-amber':po.status==='confirmed'?'badge-green':'badge-accent'}">${po.status}</span>
+        ${po.stockStatus && po.stockStatus !== 'awaiting' ? `<span class="badge badge-blue" style="font-size:10px">${po.stockStatus}</span>` : ''}
+      </div>
     </div>
     <div class="text-sm text-muted mt-4">${po.items.length} item(s) · ${fmt(po.total)}</div>
     <div class="text-xs text-muted mt-4">${fmtDate(po.date)}</div>
@@ -2844,6 +2854,23 @@ function openPODetail(id) {
   h += '<span style="font-size:20px;font-weight:800;color:var(--accent)">' + fmt(po.total||0) + '</span></div>';
 
   if (po.notes) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Note: ' + po.notes + '</div>';
+
+  // Show linked GRV receipts
+  var grvRecs = DB.get('grvRecords') || [];
+  var linkedGRVs = grvRecs.filter(function(g){ return g.linkedPOId === id; });
+  if (linkedGRVs.length) {
+    h += '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Linked GRV receipts</div>';
+    linkedGRVs.forEach(function(g) {
+      h += '<div style="background:var(--bg3);border-radius:8px;padding:8px 12px;margin-bottom:4px;font-size:12px">'
+        + '<span style="font-weight:700">' + (g.grvNumber||'GRV') + '</span>'
+        + ' · ' + (g.date||'').slice(0,10)
+        + ' · ' + (g.location==='warehouse'?'🏭 Warehouse':'🏪 Shop floor')
+        + ' · ' + fmt(g.totalValue||0)
+        + (g.receivedBy ? ' · by ' + g.receivedBy : '')
+        + '</div>';
+    });
+    h += '</div>';
+  }
 
   // Payment status buttons
   h += '<div style="margin-bottom:12px">';
@@ -3134,34 +3161,108 @@ function memberMissingFields(m) {
   return missing;
 }
 
+var _saleMethodFilter = '';
+
+function setSaleMethodFilter(method) {
+  _saleMethodFilter = method;
+  // Update pill active state
+  document.querySelectorAll('.sale-method-pill').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.method === method);
+  });
+  renderSales();
+}
+
 function renderSales() {
   const sales = DB.get('sales');
   const today = localDateStr();
   const thisMonth = new Date().getMonth();
+
+  // Always update the summary stat tiles (unfiltered)
   const todayTotal = sales.filter(s=>!s.voided&&localDateStr(s.date)===today).reduce((a,s)=>a+s.total,0);
   const monthTotal = sales.filter(s=>!s.voided&&new Date(s.date).getMonth()===thisMonth).reduce((a,s)=>a+s.total,0);
-  const allTotal = sales.filter(s=>!s.voided).reduce((a,s)=>a+s.total,0);
+  const allTotal   = sales.filter(s=>!s.voided).reduce((a,s)=>a+s.total,0);
   document.getElementById('sales-today').textContent = fmt(todayTotal);
   document.getElementById('sales-month').textContent = fmt(monthTotal);
-  document.getElementById('sales-all').textContent = fmt(allTotal);
+  document.getElementById('sales-all').textContent   = fmt(allTotal);
+
+  // ── Apply filters ──
+  var dateFilter   = (document.getElementById('sales-date-filter')||{}).value || '';
+  var methodFilter = _saleMethodFilter || '';
+
+  var activeSales = sales.filter(function(s) {
+    if (s.voided) return false;
+    if (dateFilter && localDateStr(s.date) !== dateFilter) return false;
+    if (methodFilter) {
+      // 'card' should also match 'yoco'
+      var m = (s.paymentMethod||'').toLowerCase();
+      if (methodFilter === 'card' && (m === 'card' || m === 'yoco')) return true;
+      if (methodFilter !== 'card' && m !== methodFilter) return false;
+    }
+    return true;
+  });
+
+  // ── Filtered summary strip ──
+  var summaryEl = document.getElementById('sales-filter-summary');
+  var titleEl   = document.getElementById('sales-list-title');
+  var isFiltered = dateFilter || methodFilter;
+  if (summaryEl) {
+    if (isFiltered && activeSales.length) {
+      var filtTotal  = activeSales.reduce(function(a,s){ return a+s.total; }, 0);
+      var filtCash   = activeSales.filter(function(s){ return (s.paymentMethod||'').toLowerCase()==='cash'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var filtCard   = activeSales.filter(function(s){ var m=(s.paymentMethod||'').toLowerCase(); return m==='card'||m==='yoco'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var filtEft    = activeSales.filter(function(s){ return (s.paymentMethod||'').toLowerCase()==='eft'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var filtSplit  = activeSales.filter(function(s){ return (s.paymentMethod||'').toLowerCase()==='split'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      summaryEl.style.display = 'block';
+      var _sCount = activeSales.length;
+      var _sPlural = _sCount !== 1 ? ' sales' : ' sale';
+      var _sDate = dateFilter ? ' on ' + dateFilter : '';
+      var _sMethod = methodFilter ? ' · ' + methodFilter : '';
+      var _sBreakdown = '';
+      if (filtCash  > 0) _sBreakdown += '<span>Cash: <b>' + fmt(filtCash)  + '</b></span> ';
+      if (filtCard  > 0) _sBreakdown += '<span>Card: <b>' + fmt(filtCard)  + '</b></span> ';
+      if (filtEft   > 0) _sBreakdown += '<span>EFT: <b>'  + fmt(filtEft)   + '</b></span> ';
+      if (filtSplit > 0) _sBreakdown += '<span>Split: <b>' + fmt(filtSplit) + '</b></span>';
+      summaryEl.innerHTML =
+        '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
+        + '<span style="font-weight:700">' + _sCount + _sPlural + _sDate + _sMethod + '</span>'
+        + '<span style="font-weight:800;color:var(--accent)">' + fmt(filtTotal) + '</span>'
+        + '</div>'
+        + '<div style="display:flex;gap:10px;font-size:12px;color:var(--text3);flex-wrap:wrap">'
+        + _sBreakdown
+        + '</div>';
+    } else {
+      summaryEl.style.display = 'none';
+    }
+  }
+  if (titleEl) {
+    titleEl.textContent = isFiltered
+      ? (activeSales.length + (activeSales.length!==1?' sales':' sale') + ' found')
+      : 'Recent sales';
+  }
 
   const el = document.getElementById('sales-list');
-  var activeSales = sales.filter(function(s){ return !s.voided; });
-  if (!activeSales.length) { el.innerHTML = '<div class="empty"><p>No sales yet</p></div>'; return; }
-  el.innerHTML = [...activeSales].reverse().slice(0,50).map(s => `<div class="card" onclick="openSaleDetail('${s.id}')">
-    <div class="flex-between">
-      <div>
-        <div class="bold text-sm">${s.memberName || 'Walk-in'}</div>
-        <div class="text-xs text-muted mt-4">${s.items.map(i=>i.name).join(', ').slice(0,50)}</div>
-      </div>
-      <div style="text-align:right">
-        <div class="bold accent">${fmt(s.total)}</div>
-        <div class="text-xs text-muted mt-4">${s.paymentMethod}</div>
-      </div>
-    </div>
-    <div class="text-xs text-muted mt-4">${fmtDateTime(s.date)}${s.staffName?' · '+s.staffName:''}</div>
-    ${s.voided?'<span class="badge badge-red mt-4">Voided</span>':''}
-  </div>`).join('');
+  if (!activeSales.length) {
+    el.innerHTML = '<div class="empty"><p>No sales' + (isFiltered?' matching these filters':'') + '</p></div>';
+    return;
+  }
+
+  var methodIcon = {cash:'&#x1F4B5;',card:'&#x1F4B3;',yoco:'&#x1F4B3;',eft:'&#x1F3E6;',split:'&#9889;'};
+
+  el.innerHTML = [...activeSales].reverse().slice(0,100).map(function(s) {
+    var mIcon = methodIcon[(s.paymentMethod||'').toLowerCase()] || '';
+    return '<div class="card" onclick="openSaleDetail(\'' + s.id + '\')">'
+      + '<div class="flex-between">'
+      + '<div>'
+      + '<div class="bold text-sm">' + (s.memberName || 'Walk-in') + '</div>'
+      + '<div class="text-xs text-muted mt-4">' + (s.items||[]).map(function(i){ return i.name; }).join(', ').slice(0,50) + '</div>'
+      + '</div>'
+      + '<div style="text-align:right">'
+      + '<div class="bold accent">' + fmt(s.total) + '</div>'
+      + '<div class="text-xs text-muted mt-4">' + mIcon + ' ' + (s.paymentMethod||'') + '</div>'
+      + '</div></div>'
+      + '<div class="text-xs text-muted mt-4">' + fmtDateTime(s.date) + (s.staffName?' · '+s.staffName:'') + '</div>'
+      + '</div>';
+  }).join('');
 }
 
 function openNewSale() {
@@ -3907,7 +4008,8 @@ function showClockOutSummary(s, shiftIn, shiftOut) {
     + '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Shift summary</div>'
     + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Clock in</span><span style="font-weight:600">'+new Date(shiftIn).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})+'</span></div>'
     + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Clock out</span><span style="font-weight:600">'+new Date(shiftOut).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})+'</span></div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Hours worked</span><span style="font-weight:600">'+hours.toFixed(2)+'h</span></div>'
+    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Hours worked</span><span style="font-weight:600">'+(payType==='hourly'?roundToHalf(hours)+'h (from '+hours.toFixed(1)+'h)':hours.toFixed(1)+'h')+'</span></div>'
+    + (payType==='daily'?'<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Shift type</span><span style="font-weight:700;color:var(--accent)">'+(hours>=5?'Full day':'Half day')+'</span></div>':'')
     + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Pay rate</span><span>'+rateLabel+'</span></div>'
     + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Sales today</span><span style="color:var(--blue)">'+fmt(todaySalesTotal)+' ('+todaySalesArr.length+' txns)</span></div>'
     + '</div>'
@@ -3930,9 +4032,11 @@ function showClockOutSummary(s, shiftIn, shiftOut) {
 
   // Log daily wage record
   var wageRecords = JSON.parse(localStorage.getItem('wageRecords')||'[]');
+  var billedHours = payType === 'hourly' ? roundToHalf(hours) : hours;
   wageRecords.push({
     id: uid(), date: localDateStr(), staffId: s.id, staffName: s.name,
-    shiftIn: shiftIn, shiftOut: shiftOut, hours: hours,
+    shiftIn: shiftIn, shiftOut: shiftOut,
+    hours: billedHours, rawHours: hours, payType: payType,
     wages: shiftWages, commission: commission, totalPay: totalPay,
     salesTotal: todaySalesTotal, salesCount: todaySalesArr.length
   });
@@ -3965,24 +4069,52 @@ function calcWages(s, period) {
   });
 
   var hours = totalMins / 60;
-  if (payType === 'hourly')  return hours * rate;
-  if (payType === 'daily')   return (hours / 8) * rate;   // 8hr workday
-  if (payType === 'weekly')  return (hours / 40) * rate;  // 40hr work week
-  if (payType === 'monthly') return (hours / 160) * rate; // 160hr work month
-  return hours * rate;
+  if (payType === 'hourly') {
+    return roundToHalf(hours) * rate;  // rounded to nearest 0.5h
+  }
+  if (payType === 'daily') {
+    // Count actual shifts in period; each shift = full or half day
+    var dayPay = 0;
+    s.shifts.forEach(function(sh) {
+      if (!sh.out) return;
+      var inDate = new Date(sh.in);
+      if (period === 'today'  && localDateStr(sh.in) !== localDateStr()) return;
+      if (period === 'week')  { var ws=new Date(now); ws.setDate(now.getDate()-now.getDay()); ws.setHours(0,0,0,0); if(inDate<ws) return; }
+      if (period === 'month') { if(inDate.getMonth()!==now.getMonth()||inDate.getFullYear()!==now.getFullYear()) return; }
+      var shHours = (new Date(sh.out) - new Date(sh.in)) / 3600000;
+      dayPay += shHours >= 5 ? rate : rate / 2;
+    });
+    return dayPay;
+  }
+  if (payType === 'weekly')  return rate;              // flat weekly
+  if (payType === 'monthly') return (hours/160)*rate;
+  return roundToHalf(hours) * rate;
+}
+
+// Round hours to nearest half-hour (0.5h increments)
+function roundToHalf(hours) {
+  return Math.round(hours * 2) / 2;
 }
 
 // Calculate wages for a single shift
 function calcShiftWages(s, shiftIn, shiftOut) {
   if (!s || !s.rate) return 0;
-  var payType = s.payType || 'hourly';
-  var rate    = s.rate || 0;
-  var hours   = (new Date(shiftOut) - new Date(shiftIn)) / 3600000;
-  if (payType === 'hourly')  return hours * rate;
-  if (payType === 'daily')   return (hours / 8) * rate;
-  if (payType === 'weekly')  return (hours / 40) * rate;
-  if (payType === 'monthly') return (hours / 160) * rate;
-  return hours * rate;
+  var payType  = s.payType || 'hourly';
+  var rate     = s.rate || 0;
+  var rawHours = (new Date(shiftOut) - new Date(shiftIn)) / 3600000;
+
+  if (payType === 'hourly') {
+    // Round to nearest full hour or half hour (1h or 1.5h increments)
+    var rounded = roundToHalf(rawHours);
+    return rounded * rate;
+  }
+  if (payType === 'daily') {
+    // Full day if ≥ 5 hours worked, half day if < 5 hours
+    return rawHours >= 5 ? rate : rate / 2;
+  }
+  if (payType === 'weekly')  return rate; // flat weekly — always full rate per shift record
+  if (payType === 'monthly') return (rawHours / 160) * rate;
+  return rawHours * rate;
 }
 
 function openAddStaff() {
@@ -4297,9 +4429,29 @@ function saveExpense() {
   const exps = DB.get('expenses');
   const id = document.getElementById('ex-id').value;
   const data = { desc, amount, date: document.getElementById('ex-date').value, category: document.getElementById('ex-cat').value, payMethod: document.getElementById('ex-pay').value, status: document.getElementById('ex-status')?.value||'paid', notes: document.getElementById('ex-notes').value.trim() };
-  if (id) { const i=exps.findIndex(e=>e.id===id); if(i>-1) exps[i]={...exps[i],...data}; }
-  else { exps.push({id:uid(),...data}); }
+  var isNew = !id;
+  var isPettyCash = (data.payMethod === 'petty_cash' || data.payMethod === 'Petty Cash');
+  var oldPayMethod = '';
+  if (id) {
+    const i=exps.findIndex(e=>e.id===id);
+    if(i>-1) {
+      oldPayMethod = exps[i].payMethod || '';
+      exps[i]={...exps[i],...data};
+    }
+  } else {
+    exps.push({id:uid(),...data});
+  }
   DB.set('expenses', exps);
+
+  // Deduct from petty cash balance when paid from petty cash
+  // Only for NEW expenses or if pay method changed TO petty_cash
+  if (isPettyCash && (isNew || (oldPayMethod !== 'petty_cash' && oldPayMethod !== 'Petty Cash'))) {
+    updatePettyCash(-data.amount, data.desc || 'Expense', 'expense', data.category);
+  } else if (!isPettyCash && !isNew && (oldPayMethod === 'petty_cash' || oldPayMethod === 'Petty Cash')) {
+    // Changed FROM petty_cash — refund it back
+    updatePettyCash(data.amount, 'Expense payment method changed: '+data.desc, 'refund', data.category);
+  }
+
   closeModal('modal-expense');
   renderExpenses();
 }
@@ -4364,7 +4516,10 @@ function renderCashup() {
 function renderCashupStaffGrid() {
   const grid = document.getElementById('cashup-staff-grid');
   if (!grid) return;
-  const staff = DB.get('staff').filter(s=>s&&s.name&&s.pin);
+  // Deduplicate staff by id to prevent double entries from sync
+  const _allStaff = DB.get('staff').filter(s=>s&&s.name&&s.pin);
+  const _seen = {};
+  const staff = _allStaff.filter(s=>{ if(_seen[s.id]) return false; _seen[s.id]=true; return true; });
   grid.innerHTML = '';
   staff.forEach(s => {
     const sel = cashupStaffSelected.some(x=>x.id===s.id);
@@ -4451,12 +4606,18 @@ function renderCashupSummary(counted) {
 
   const cardDeclared = parseFloat(document.getElementById('cashup-card-declared')?.value)||0;
   const eftDeclared  = parseFloat(document.getElementById('cashup-eft-declared')?.value)||0;
-  const cashExpTotal = cashupExpenseItems.reduce((a,e)=>a+e.amount,0);
-  const counted_val  = counted||0;
-  const toBank       = Math.max(0, counted_val - FLOAT_AMOUNT - cashExpTotal);
-  const variance     = counted_val - cashSales;
-  const cardVar      = cardDeclared - cardSales;
-  const eftVar       = eftDeclared - eftSales;
+  const cashExpTotal  = cashupExpenseItems.reduce((a,e)=>a+e.amount,0);
+  const counted_val   = counted||0;
+  // Expenses were already paid OUT of the till during the day.
+  // What you count NOW is what remains AFTER those payouts.
+  // Amount to bank = exactly what you counted (float already physically removed by staff).
+  const toBank        = Math.max(0, counted_val);
+  // Variance = what you counted vs what you EXPECTED to be left in till
+  // Expected = cash sales − expenses already paid out
+  const expectedCash  = Math.max(0, cashSales - cashExpTotal);
+  const variance      = counted_val - expectedCash;
+  const cardVar       = cardDeclared - cardSales;
+  const eftVar        = eftDeclared - eftSales;
 
   const pc = getPettyCash ? getPettyCash() : {balance:0};
 
@@ -4480,16 +4641,17 @@ function renderCashupSummary(counted) {
 
     <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
       <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Cash calculation</div>
-      <div class="flex-between text-sm" style="margin-bottom:5px"><span class="text-muted">Counted in till</span><span class="bold">${fmt(counted_val)}</span></div>
-
-      ${cashExpTotal>0?`<div class="flex-between text-sm" style="margin-bottom:5px"><span class="text-muted">− Cash expenses</span><span style="color:var(--red)">−${fmt(cashExpTotal)}</span></div>`:''}
-      <div class="flex-between" style="padding-top:8px;border-top:1px solid #dde0d8">
+      <div class="flex-between text-sm" style="margin-bottom:5px"><span class="text-muted">Cash sales</span><span>${fmt(cashSales)}</span></div>
+      ${cashExpTotal>0?`<div class="flex-between text-sm" style="margin-bottom:5px"><span class="text-muted">− Expenses paid from till</span><span style="color:var(--red)">−${fmt(cashExpTotal)}</span></div>`:''}
+      <div class="flex-between text-sm" style="margin-bottom:5px"><span class="text-muted">Expected in till</span><span>${fmt(expectedCash)}</span></div>
+      <div class="flex-between text-sm" style="margin-bottom:8px;padding-top:6px;border-top:1px solid #dde0d8"><span class="text-muted">You counted</span><span class="bold">${fmt(counted_val)}</span></div>
+      <div class="flex-between" style="padding-top:8px;border-top:2px solid var(--border)">
         <span class="bold" style="font-size:15px">💰 Amount to bank</span>
         <span class="bold" style="font-size:20px;color:var(--green)">${fmt(toBank)}</span>
       </div>
       <div class="flex-between text-sm" style="margin-top:6px">
         <span class="text-muted">Till variance</span>
-        <span style="${varStyle(variance)}">${varLabel(variance)} ${variance>0?'OVER':variance<0?'SHORT':'EXACT'}</span>
+        <span style="${varStyle(variance)}">${varLabel(variance)} ${variance===0?'EXACT':variance>0?'OVER':'SHORT'}</span>
       </div>
     </div>
 
@@ -4507,13 +4669,33 @@ function getPettyCash() {
   return DB.getObj ? DB.getObj('pettyCash',{balance:0}) : {balance:0};
 }
 
-function updatePettyCash(delta, reason) {
+function updatePettyCash(delta, reason, type, category) {
+  // type: 'topup' | 'expense' | 'set' | 'cashup'
   if (!DB.getObj) return;
-  const pc = DB.getObj('pettyCash',{balance:0});
-  pc.balance = Math.max(0,(pc.balance||0)+delta);
+  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+  var oldBal = pc.balance || 0;
+  var newBal;
+  if (type === 'set') {
+    newBal = delta; // delta is the absolute new value when type=set
+  } else {
+    newBal = Math.max(0, oldBal + delta);
+  }
+  pc.balance = newBal;
   pc.lastUpdated = new Date().toISOString();
-  pc.lastReason = reason;
-  DB.setObj('pettyCash',pc);
+  pc.lastReason  = reason;
+  // Always push a history entry
+  if (!pc.history) pc.history = [];
+  pc.history.push({
+    id: (typeof uid === 'function' ? uid() : Date.now().toString(36)),
+    date: new Date().toISOString(),
+    type: type || (delta >= 0 ? 'topup' : 'expense'),
+    reason: reason || '',
+    category: category || '',
+    delta: type === 'set' ? (newBal - oldBal) : delta,
+    oldBalance: oldBal,
+    newBalance: newBal
+  });
+  DB.setObj('pettyCash', pc);
 }
 
 function saveCashup() {
@@ -4530,8 +4712,10 @@ function saveCashup() {
   const todaySales = sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const cashSales  = todaySales.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const cardSales  = todaySales.filter(s=>s.paymentMethod==='card'||s.paymentMethod==='yoco').reduce((a,s)=>a+s.total,0);
-  const cashExpTotal = cashupExpenseItems.reduce((a,e)=>a+e.amount,0);
-  const toBank = Math.max(0, counted - FLOAT_AMOUNT - cashExpTotal);
+  const cashExpTotal  = cashupExpenseItems.reduce((a,e)=>a+e.amount,0);
+  // Amount to bank = what you physically counted (expenses already removed from till during day)
+  const toBank        = Math.max(0, counted);
+  const expectedCash  = Math.max(0, cashSales - cashExpTotal);
   const cardDeclared = parseFloat(document.getElementById('cashup-card-declared')?.value)||0;
   const eftDeclared  = parseFloat(document.getElementById('cashup-eft-declared')?.value)||0;
 
@@ -4545,7 +4729,7 @@ function saveCashup() {
   DB.set('expenses',allExps);
 
   // Top up petty cash with banked amount
-  updatePettyCash(toBank, 'Cash-up banking '+new Date().toLocaleDateString('en-ZA'));
+  updatePettyCash(toBank, 'Cashup banked — '+new Date().toLocaleDateString('en-ZA'), 'cashup');
 
   // Save cashup record
   const cashups = DB.get('cashups')||[];
@@ -4555,7 +4739,7 @@ function saveCashup() {
     staffId: currentUser?.id, staffName: currentUser?.name,
     counted, cashSales, cardSales, cardDeclared, eftDeclared,
     cashExpenses: cashExpTotal, float: FLOAT_AMOUNT, toBank,
-    variance: counted-cashSales,
+    variance: counted - expectedCash,   // positive=over, negative=short
     totalSales: todaySales.reduce((a,s)=>a+s.total,0),
     txnCount: todaySales.length, denomBreakdown,
     cashupExpenses: [...cashupExpenseItems],
@@ -4945,22 +5129,22 @@ let poLines = [];
 function openPOEditor(existingId) {
   poLines = [];
   const pos = DB.get('purchaseOrders');
-  const nextNum = 'PO' + String(pos.length + 1).padStart(4, '0');
+
   document.getElementById('poe-id').value = '';
-  document.getElementById('poe-num').value = nextNum;
+  document.getElementById('poe-num').value = '';   // shown as placeholder until supplier chosen
   document.getElementById('poe-date').value = new Date().toISOString().slice(0,10);
   document.getElementById('poe-payment').value = '';
   document.getElementById('poe-notes').value = '';
 
   if (existingId) {
+    // Editing an existing PO
     const po = pos.find(p=>p.id===existingId);
     if (po) {
-      document.getElementById('poe-id').value = po.id;
-      document.getElementById('poe-num').value = po.poNumber||'';
-      document.getElementById('poe-date').value = po.date?.slice(0,10)||'';
-      document.getElementById('poe-payment').value = po.paymentMethod||'';
+      document.getElementById('poe-id').value    = po.id;
+      document.getElementById('poe-num').value   = po.poNumber||'';
+      document.getElementById('poe-date').value  = po.date?.slice(0,10)||'';
+      document.getElementById('poe-payment').value = po.payment||'';
       document.getElementById('poe-notes').value = po.notes||'';
-      document.getElementById('poe-supplier').value = po.supplierId||'';
       poLines = po.items.map(i=>({...i}));
     }
   }
@@ -4968,7 +5152,40 @@ function openPOEditor(existingId) {
   // Populate supplier dropdown
   const sel = document.getElementById('poe-supplier');
   sel.innerHTML = '<option value="">Select supplier…</option>';
-  DB.get('suppliers').forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.name; sel.appendChild(o); });
+  DB.get('suppliers').forEach(s=>{
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = s.name;
+    sel.appendChild(o);
+  });
+
+  // If editing, set supplier
+  if (existingId) {
+    const po = pos.find(p=>p.id===existingId);
+    if (po) sel.value = po.supplierId||'';
+  }
+
+  // When supplier changes, auto-fill PO number and warn if open PO exists
+  sel.onchange = function() {
+    var supId   = sel.value;
+    var supText = sel.options[sel.selectedIndex]?.text || 'NoSupplier';
+    document.getElementById('poe-num').value = generatePONumber(supText);
+    // Check for existing open PO for this supplier (only on new PO, not edit)
+    if (!document.getElementById('poe-id').value) {
+      var openPO = findOpenPOForSupplier(supId);
+      if (openPO) {
+        var warn = document.getElementById('poe-supplier-warn');
+        if (warn) {
+          warn.style.display = 'block';
+          warn.innerHTML = '⚠️ An open PO already exists for this supplier (<b>' + openPO.poNumber + '</b>). '
+            + 'New items will be <b>added to that PO</b> when you save — or '
+            + '<a href="#" onclick="event.preventDefault();closeModal(\'modal-po-editor\');openPODetail(\'' + openPO.id + '\')" style="color:var(--accent)">open it here</a>.';
+        }
+      } else {
+        var warn = document.getElementById('poe-supplier-warn');
+        if (warn) warn.style.display = 'none';
+      }
+    }
+  };
 
   if (!poLines.length) addPOLine();
   renderPOLines();
@@ -5020,22 +5237,18 @@ function savePOEditor(status) {
   const payStatus    = document.getElementById('poe-pay-status')?.value || 'unpaid';
   const stockStatus  = document.getElementById('poe-stock-status')?.value || 'awaiting';
   const creditAmount = payStatus === 'credit' ? (parseFloat(document.getElementById('poe-credit-amount')?.value)||0) : 0;
+  // Auto PO number using shared generator
+  var _autoPoNum = (function(){
+    var manual = document.getElementById('poe-num').value.trim();
+    if (manual && manual !== 'Auto') return manual;
+    var supSel = document.getElementById('poe-supplier');
+    var supName = supSel && supSel.options[supSel.selectedIndex]
+      ? supSel.options[supSel.selectedIndex].text : 'NoSupplier';
+    return generatePONumber(supName);
+  })();
+
   const poData = {
-    poNumber: (function(){
-      var existing = document.getElementById('poe-num').value;
-      if (existing && existing !== 'Auto') return existing;
-      // Auto-generate: PO-DD/MM/YYYY-SupplierName
-      var d = new Date();
-      var dd = String(d.getDate()).padStart(2,'0');
-      var mm = String(d.getMonth()+1).padStart(2,'0');
-      var yyyy = d.getFullYear();
-      // Get supplier name from selected option text
-      var supSel = document.getElementById('poe-supplier');
-      var supName = supSel && supSel.options[supSel.selectedIndex]
-        ? supSel.options[supSel.selectedIndex].text.replace(/[^a-zA-Z0-9]/g,'-').slice(0,20)
-        : 'NoSupplier';
-      return 'PO' + dd + '/' + mm + '/' + yyyy + '-' + supName;
-    })(),
+    poNumber: _autoPoNum,
     date: document.getElementById('poe-date').value,
     supplierId, supplierName: sup?.name||'No supplier',
     payment: document.getElementById('poe-payment').value,
@@ -5045,9 +5258,30 @@ function savePOEditor(status) {
     createdBy: currentUser?.name, createdAt: new Date().toISOString()
   };
   if (existingId) {
-    const i=pos.findIndex(p=>p.id===existingId);
-    if(i>-1) pos[i]={...pos[i],...poData};
-  } else { pos.push({id:uid(),...poData}); }
+    // Editing an existing PO — just update it
+    const i = pos.findIndex(p=>p.id===existingId);
+    if (i>-1) pos[i] = {...pos[i], ...poData};
+  } else {
+    // New PO — check if a pending/draft PO already exists for this supplier
+    var openPO = findOpenPOForSupplier(supplierId);
+    if (openPO) {
+      // Merge new items into the existing open PO
+      poData.items.forEach(function(ni) {
+        var exists = openPO.items.find(function(ei){ return ei.productId && ei.productId === ni.productId; });
+        if (exists) {
+          // Update qty if product already listed
+          exists.qty = (parseInt(exists.qty)||0) + (parseInt(ni.qty)||1);
+        } else {
+          openPO.items.push(ni);
+        }
+      });
+      openPO.total = openPO.items.reduce(function(a,i){ return a+(parseInt(i.qty)||1)*(parseFloat(i.unitCost)||0); }, 0);
+      if (poData.notes) openPO.notes = (openPO.notes ? openPO.notes + '; ' : '') + poData.notes;
+      showToast('Items added to existing PO: ' + openPO.poNumber, 'success');
+    } else {
+      pos.push({id:uid(), ...poData});
+    }
+  }
   DB.set('purchaseOrders', pos);
   closeModal('modal-po-editor');
   renderPO();
@@ -5365,9 +5599,33 @@ function openGRV() {
   const sel = document.getElementById('grv-supplier');
   sel.innerHTML = '<option value="">No supplier / walk-in</option>';
   DB.get('suppliers').forEach(s=>{ const o=document.createElement('option'); o.value=s.id; o.textContent=s.name; sel.appendChild(o); });
+  // When supplier changes, populate the open PO linker
+  sel.onchange = function() { updateGRVPOLink(sel.value); };
   addGRVLine();
   renderGRVLines();
   openModal('modal-grv');
+}
+
+function updateGRVPOLink(supplierId) {
+  var container = document.getElementById('grv-po-link-row');
+  var poSel     = document.getElementById('grv-po-link');
+  if (!container || !poSel) return;
+  var pos = DB.get('purchaseOrders') || [];
+  var openPOs = pos.filter(function(po) {
+    return po.supplierId === supplierId && po.stockStatus !== 'received' && po.stockStatus !== 'cancelled';
+  });
+  if (!supplierId || !openPOs.length) {
+    container.style.display = 'none';
+    poSel.value = '';
+    return;
+  }
+  container.style.display = 'block';
+  poSel.innerHTML = '<option value="">— No PO link —</option>'
+    + openPOs.map(function(po){
+        return '<option value="' + po.id + '">' + po.poNumber + ' (' + po.items.length + ' items · ' + fmt(po.total||0) + ')</option>';
+      }).join('');
+  // Auto-select if only one open PO
+  if (openPOs.length === 1) poSel.value = openPOs[0].id;
 }
 
 function openGRVForProduct(productId) {
@@ -5521,16 +5779,47 @@ function submitGRV() {
 
   DB.set('products', products);
 
+  // Link to purchase order if selected, and update PO stock status
+  var linkedPOId = '';
+  var linkedPONum = '';
+  var poLinkSel = document.getElementById('grv-po-link');
+  if (poLinkSel && poLinkSel.value) {
+    linkedPOId  = poLinkSel.value;
+    var allPOs  = DB.get('purchaseOrders') || [];
+    var linkedPO = allPOs.find(function(po){ return po.id === linkedPOId; });
+    if (linkedPO) {
+      linkedPONum = linkedPO.poNumber || '';
+      // Check if all ordered items were received
+      var allFullyReceived = linkedPO.items.every(function(poItem) {
+        var recv = processedItems.find(function(gi){ return gi.productId === poItem.productId; });
+        return recv && recv.qty >= poItem.qty;
+      });
+      linkedPO.stockStatus = allFullyReceived ? 'received' : 'partial';
+      linkedPO.receivedAt  = new Date().toISOString();
+      linkedPO.receivedBy  = currentUser ? currentUser.name : null;
+      // Update PO status to confirmed if it was still pending
+      if (linkedPO.status === 'pending' || linkedPO.status === 'draft') {
+        linkedPO.status = 'confirmed';
+      }
+      DB.set('purchaseOrders', allPOs);
+      updatePOBadge();
+      renderPO && renderPO();
+      showToast('PO ' + linkedPONum + ' marked as ' + linkedPO.stockStatus, 'success');
+    }
+  }
+
   // Save GRV record
   const grvRecs = DB.get('grvRecords') || [];
   grvRecs.push({
     id: uid(), grvNumber: document.getElementById('grv-num').value,
     date: document.getElementById('grv-date').value,
     supplierId, supplierName: sup ? sup.name : 'No supplier',
-    location: loc, ref: document.getElementById('grv-ref') ? document.getElementById('grv-ref').value.trim() : '',
+    location: loc,
+    ref: document.getElementById('grv-ref') ? document.getElementById('grv-ref').value.trim() : '',
     notes: document.getElementById('grv-notes') ? document.getElementById('grv-notes').value.trim() : '',
+    linkedPOId, linkedPONum,
     items: processedItems, totalValue,
-    staffId: currentUser ? currentUser.id : null,
+    staffId:   currentUser ? currentUser.id   : null,
     staffName: currentUser ? currentUser.name : null,
     createdAt: new Date().toISOString()
   });
@@ -6024,38 +6313,98 @@ function renderPettyCashReport(el) {
   var cashups = DB.get('cashups') || [];
   var exps    = DB.get('expenses') || [];
 
-  // Petty cash expenses (paid from petty cash)
-  var pcExps = exps.filter(function(e){
-    return e.payMethod === 'petty_cash' || e.payMethod === 'Petty Cash' ||
-           e.payMethod === 'cash' || e.category === 'Till expense';
-  });
-  var totalOut = pcExps.reduce(function(a,e){ return a+e.amount; }, 0);
-  var totalIn  = cashups.reduce(function(a,c){ return a+(c.toBank||0); }, 0);
+  // Build a unified ledger from pc.history + any cashups not yet in history
+  var history = (pc.history || []).slice();
 
-  var rows = (pc.history||[]).slice().reverse().map(function(h){
-    var icon = h.type==='set' ? '✏️' : (h.delta||0)>0 ? '➕' : '➖';
-    var color = (h.delta||0)>0 ? 'var(--green)' : h.type==='set' ? 'var(--blue)' : 'var(--red)';
+  // KPI totals from history
+  var totalTopups   = history.filter(function(h){ return h.type==='cashup'; }).reduce(function(a,h){ return a+(h.delta||0); }, 0);
+  var totalPCExps   = history.filter(function(h){ return h.type==='expense'; }).reduce(function(a,h){ return a+Math.abs(h.delta||0); }, 0);
+  var totalSets     = history.filter(function(h){ return h.type==='set'; }).length;
+
+  // Also count from raw expenses for cross-check display
+  var pcExpsList    = exps.filter(function(e){ return e.payMethod==='petty_cash'||e.payMethod==='Petty Cash'; });
+  var tillExpsList  = exps.filter(function(e){ return e.payMethod==='cash'||e.payMethod==='Cash Sales'||e.category==='Till expense'; });
+  var totalTillExps = tillExpsList.reduce(function(a,e){ return a+e.amount; }, 0);
+
+  // Sort history newest first
+  var sorted = history.slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+
+  var typeLabel = {
+    cashup:  '&#x1F4B0; Cashup banked',
+    expense: '&#x1F4B8; Expense paid',
+    set:     '&#x270F;&#xFE0F; Balance set',
+    refund:  '&#x21A9; Refund/reversal',
+    reversal:'&#x21A9; Cashup reversed',
+    topup:   '&#x2795; Top-up'
+  };
+
+  var rows = sorted.map(function(h) {
+    var delta   = h.delta || 0;
+    var isPos   = delta >= 0;
+    var color   = h.type==='set'?'var(--blue)': isPos?'var(--green)':'var(--red)';
+    var label   = typeLabel[h.type] || h.type || 'Change';
+    var detail  = h.reason || '';
+    if (h.category) detail += (detail?' · ':'')+h.category;
     return '<tr>'
-      + '<td>'+new Date(h.date).toLocaleDateString('en-ZA')+'</td>'
-      + '<td>'+icon+' '+(h.reason||h.type||'')+'</td>'
-      + '<td style="text-align:right;color:'+color+';font-weight:700">'
-      + (h.delta>0?'+':'')+((h.delta||0).toFixed(2))+'</td>'
-      + '<td style="text-align:right;font-weight:600">R'+(h.newBalance||0).toFixed(2)+'</td>'
+      + '<td style="white-space:nowrap">'+new Date(h.date).toLocaleDateString('en-ZA')+'</td>'
+      + '<td><div style="font-size:12px;font-weight:600">'+label+'</div>'
+      + (detail?'<div style="font-size:11px;color:var(--text3)">'+detail+'</div>':'')
+      + '</td>'
+      + '<td style="text-align:right;color:'+color+';font-weight:700;white-space:nowrap">'
+      + (delta>0?'+':delta<0?'':'')+'R'+Math.abs(delta).toFixed(2)+'</td>'
+      + '<td style="text-align:right;font-weight:600;white-space:nowrap">R'+(h.newBalance||0).toFixed(2)+'</td>'
       + '</tr>';
   }).join('');
 
-  el.innerHTML = '<div style="background:var(--blue-bg);border:1px solid var(--blue);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--blue)">'
-    + '&#x1F512; <strong>Anonymous compliance report</strong> — shows transaction values only. No member names, no products purchased. Use this for accounting/regulatory submissions.'
-    + '</div>'
-    + '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">'
+  // Cashup top-ups section — every cashup banked
+  var cuRows = cashups.slice().reverse().map(function(c) {
+    return '<tr>'
+      + '<td>'+new Date(c.date).toLocaleDateString('en-ZA')+'</td>'
+      + '<td><div style="font-size:12px">'+fmt(c.cashSales||0)+' cash sales</div>'
+      + '<div style="font-size:11px;color:var(--text3)">'+
+        (c.staff||'Unknown staff')+' · variance '+(c.variance>=0?'+':'')+fmt(c.variance||0)+'</div></td>'
+      + '<td style="text-align:right;color:var(--green);font-weight:700">+'+fmt(c.toBank||0)+'</td>'
+      + '<td style="text-align:right">'+fmt(c.pettyCashAfter||0)+'</td>'
+      + '</tr>';
+  }).join('');
+
+  // Petty cash expense detail
+  var expRows = pcExpsList.slice().reverse().map(function(e) {
+    return '<tr>'
+      + '<td>'+e.date+'</td>'
+      + '<td><div style="font-size:12px">'+e.desc+'</div>'
+      + '<div style="font-size:11px;color:var(--text3)">'+(e.category||'')+'</div></td>'
+      + '<td style="text-align:right;color:var(--red);font-weight:700">-'+fmt(e.amount)+'</td>'
+      + '</tr>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="report-kpi-grid" style="grid-template-columns:1fr 1fr 1fr 1fr;margin-bottom:16px">'
     + '<div class="kpi-tile"><div class="kpi-label">Current balance</div><div class="kpi-val accent">'+fmt(pc.balance||0)+'</div></div>'
-    + '<div class="kpi-tile"><div class="kpi-label">Total banked in</div><div class="kpi-val green">'+fmt(totalIn)+'</div></div>'
-    + '<div class="kpi-tile"><div class="kpi-label">Total expenses out</div><div class="kpi-val red">'+fmt(totalOut)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Total banked in</div><div class="kpi-val green">'+fmt(totalTopups)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">PC expenses out</div><div class="kpi-val red">'+fmt(totalPCExps)+'</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-label">Till expenses</div><div class="kpi-val amber">'+fmt(totalTillExps)+'</div></div>'
     + '</div>'
-    + '<div class="report-section"><div class="section-title">Balance history</div>'
+
+    // Full ledger
+    + '<div class="report-section" style="margin-bottom:16px"><div class="section-title">Full petty cash ledger</div>'
     + '<div class="table-wrap"><table class="report-table">'
     + '<tr><th>Date</th><th>Description</th><th class="num">Change</th><th class="num">Balance</th></tr>'
-    + (rows || '<tr><td colspan="4" style="text-align:center;color:var(--text3)">No history yet</td></tr>')
+    + (rows || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px">No transactions recorded yet.<br><small>Transactions appear here when you bank cash-ups or log petty cash expenses.</small></td></tr>')
+    + '</table></div></div>'
+
+    // Cashup top-ups
+    + '<div class="report-section" style="margin-bottom:16px"><div class="section-title">Cashup top-ups</div>'
+    + '<div class="table-wrap"><table class="report-table">'
+    + '<tr><th>Date</th><th>Details</th><th class="num">Banked</th><th class="num">PC after</th></tr>'
+    + (cuRows || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">No cashups yet</td></tr>')
+    + '</table></div></div>'
+
+    // Petty cash expenses detail
+    + '<div class="report-section"><div class="section-title">Petty cash expenses</div>'
+    + '<div class="table-wrap"><table class="report-table">'
+    + '<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'
+    + (expRows || '<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">No petty cash expenses logged</td></tr>')
     + '</table></div></div>';
 }
 
@@ -6085,9 +6434,11 @@ function renderAccountingReport(from, to, el) {
   expenses.forEach(function(e){
     var cat = e.category || 'Other';
     var pay = e.payMethod || 'cash';
-    if (!expByCat[cat]) expByCat[cat] = { total:0, cash:0, card:0, eft:0, items:[] };
+    if (!expByCat[cat]) expByCat[cat] = { total:0, petty:0, till:0, card:0, eft:0, items:[] };
     expByCat[cat].total += e.amount;
-    if (pay==='cash'||pay==='Petty Cash'||pay==='petty_cash') expByCat[cat].cash += e.amount;
+    // Distinguish petty cash (from petty cash tin) vs till cash (from daily cash sales)
+    if (pay==='petty_cash'||pay==='Petty Cash') expByCat[cat].petty += e.amount;
+    else if (pay==='cash'||pay==='Cash Sales') expByCat[cat].till  += e.amount;
     else if (pay==='card'||pay==='yoco') expByCat[cat].card += e.amount;
     else if (pay==='eft') expByCat[cat].eft += e.amount;
     expByCat[cat].items.push(e);
@@ -6144,12 +6495,19 @@ function renderAccountingReport(from, to, el) {
   var expCatRows = Object.entries(expByCat).sort(function(a,b){ return b[1].total-a[1].total; }).map(function(e){
     var cat=e[0], v=e[1];
     return '<tr><td>'+cat+'</td>'
-      +'<td style="text-align:right">'+fmt(v.cash)+'</td>'
-      +'<td style="text-align:right">'+fmt(v.card)+'</td>'
-      +'<td style="text-align:right">'+fmt(v.eft)+'</td>'
+      +'<td style="text-align:right;color:var(--amber)">'+(v.petty>0?fmt(v.petty):'-')+'</td>'
+      +'<td style="text-align:right">'+(v.till>0?fmt(v.till):'-')+'</td>'
+      +'<td style="text-align:right">'+(v.card>0?fmt(v.card):'-')+'</td>'
+      +'<td style="text-align:right">'+(v.eft>0?fmt(v.eft):'-')+'</td>'
       +'<td style="text-align:right;font-weight:700">'+fmt(v.total)+'</td>'
       +'</tr>';
   }).join('');
+
+  // Expense totals by pay method
+  var totalPettyExp = Object.values(expByCat).reduce(function(a,v){ return a+v.petty; }, 0);
+  var totalTillExp  = Object.values(expByCat).reduce(function(a,v){ return a+v.till;  }, 0);
+  var totalCardExp  = Object.values(expByCat).reduce(function(a,v){ return a+v.card;  }, 0);
+  var totalEftExp   = Object.values(expByCat).reduce(function(a,v){ return a+v.eft;   }, 0);
 
   el.innerHTML = ''
     // KPIs
@@ -6181,10 +6539,16 @@ function renderAccountingReport(from, to, el) {
 
     // Expense categories
     + '<div class="report-section"><div class="section-title">Expenses by category</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">Petty Cash = paid from tin · Till = paid from daily cash sales · Card/EFT = bank transactions</div>'
     + '<div class="table-wrap"><table class="report-table">'
-    + '<tr><th>Category</th><th class="num">Cash</th><th class="num">Card</th><th class="num">EFT</th><th class="num">Total</th></tr>'
-    + (expCatRows||'<tr><td colspan="5" style="text-align:center;color:var(--text3)">No expenses recorded</td></tr>')
-    + '<tr style="font-weight:700;background:var(--bg3)"><td>TOTAL</td><td colspan="3"></td><td style="text-align:right">'+fmt(totalExp)+'</td></tr>'
+    + '<tr><th>Category</th><th class="num" style="color:var(--amber)">Petty Cash</th><th class="num">Till Cash</th><th class="num">Card</th><th class="num">EFT</th><th class="num">Total</th></tr>'
+    + (expCatRows||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">No expenses recorded</td></tr>')
+    + '<tr style="font-weight:700;background:var(--bg3)"><td>TOTAL</td>'
+    + '<td style="text-align:right;color:var(--amber)">'+fmt(totalPettyExp)+'</td>'
+    + '<td style="text-align:right">'+fmt(totalTillExp)+'</td>'
+    + '<td style="text-align:right">'+fmt(totalCardExp)+'</td>'
+    + '<td style="text-align:right">'+fmt(totalEftExp)+'</td>'
+    + '<td style="text-align:right">'+fmt(totalExp)+'</td></tr>'
     + '</table></div></div>'
 
     // Export button
@@ -7735,9 +8099,12 @@ function openWageRecords(staffId) {
       showToast('Tap Delete again to confirm', 'warning', 3000);
       delBtn.textContent = 'Confirm';
       delBtn.onclick = function() {
-        var recs = JSON.parse(localStorage.getItem('wageRecords') || '[]');
-        recs = recs.filter(function(w){ return w.id !== wid; });
-        localStorage.setItem('wageRecords', JSON.stringify(recs));
+        var lsD = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+        lsD = lsD.filter(function(w){ return w.id !== wid; });
+        localStorage.setItem('wageRecords', JSON.stringify(lsD));
+        var dbD = DB.get('wageRecords') || [];
+        dbD = dbD.filter(function(w){ return w.id !== wid; });
+        DB.set('wageRecords', dbD);
         modal.remove();
         openWageRecords(sid);
         showToast('Wage record deleted', 'success');
@@ -7747,24 +8114,30 @@ function openWageRecords(staffId) {
     if (editBtn) {
       var wid = editBtn.dataset.wid;
       var sid = editBtn.dataset.sid;
-      var recs = JSON.parse(localStorage.getItem('wageRecords') || '[]');
-      var rec  = recs.find(function(w){ return w.id === wid; });
-      if (!rec) return;
+
+      // Search localStorage AND Firebase — record may be in either
+      var lsRecs  = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+      var dbRecs2 = DB.get('wageRecords') || [];
+      // Merge to find the record
+      var mergedRecs = lsRecs.slice();
+      dbRecs2.forEach(function(r){ if (!mergedRecs.find(function(x){ return x.id===r.id; })) mergedRecs.push(r); });
+      var rec = mergedRecs.find(function(w){ return w.id === wid; });
+      if (!rec) { showToast('Record not found — try refreshing', 'error'); return; }
 
       // Replace the row with an inline edit form
       var row = editBtn.closest('div[style*="border-bottom"]');
       if (!row) return;
       row.innerHTML = '<div style="padding:8px 0">'
         + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'
-        + '<div><label style="font-size:10px;color:var(--text3)">Hours</label>'
-        + '<input id="we-hours" type="number" step="0.25" value="' + rec.hours.toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
+        + '<div><label style="font-size:10px;color:var(--text3)">Hours worked</label>'
+        + '<input id="we-hours" type="number" step="0.5" min="0" value="' + (rec.hours||0).toFixed(1) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
         + '<div><label style="font-size:10px;color:var(--text3)">Wages (R)</label>'
-        + '<input id="we-wages" type="number" step="0.01" value="' + rec.wages.toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
+        + '<input id="we-wages" type="number" step="0.01" value="' + (rec.wages||0).toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
         + '<div><label style="font-size:10px;color:var(--text3)">Commission (R)</label>'
         + '<input id="we-comm" type="number" step="0.01" value="' + (rec.commission||0).toFixed(2) + '" style="width:100%;padding:6px;border:1.5px solid var(--accent);border-radius:6px;font-size:13px"></div>'
         + '</div>'
         + '<div style="display:flex;gap:6px">'
-        + '<button id="we-save-btn" style="flex:1;padding:8px;background:var(--green);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">Save</button>'
+        + '<button id="we-save-btn" style="flex:1;padding:8px;background:var(--green);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">✓ Save</button>'
         + '<button id="we-cancel-btn" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
         + '</div></div>';
 
@@ -7776,7 +8149,24 @@ function openWageRecords(staffId) {
         rec.wages      = newWages;
         rec.commission = newComm;
         rec.totalPay   = newWages + newComm;
-        localStorage.setItem('wageRecords', JSON.stringify(recs));
+        rec.edited     = true;
+        rec.editedAt   = new Date().toISOString();
+
+        // Save back to BOTH localStorage and Firebase so it persists everywhere
+        // Update in mergedRecs
+        var lsRecs2 = JSON.parse(localStorage.getItem('wageRecords') || '[]');
+        var lsIdx   = lsRecs2.findIndex(function(w){ return w.id === wid; });
+        if (lsIdx > -1) { lsRecs2[lsIdx] = rec; }
+        else { lsRecs2.push(rec); }
+        localStorage.setItem('wageRecords', JSON.stringify(lsRecs2));
+
+        // Also save to DB (Firebase)
+        var dbW = DB.get('wageRecords') || [];
+        var dbIdx = dbW.findIndex(function(w){ return w.id === wid; });
+        if (dbIdx > -1) { dbW[dbIdx] = rec; }
+        else { dbW.push(rec); }
+        DB.set('wageRecords', dbW);
+
         modal.remove();
         openWageRecords(sid);
         showToast('Wage record updated', 'success');
@@ -9576,11 +9966,12 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <button class="close-btn" onclick="closeModal('modal-po-editor')">✕</button>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">PO Number</label><input id="poe-num" type="text" placeholder="PO0001"></div>
+      <div class="form-group"><label class="form-label">PO Number <span style="font-size:10px;color:var(--text3);font-weight:400">(auto-generated from supplier)</span></label><input id="poe-num" type="text" placeholder="Select supplier to generate…"></div>
       <div class="form-group"><label class="form-label">Date</label><input id="poe-date" type="date"></div>
     </div>
     <div class="form-group"><label class="form-label">Supplier *</label>
       <select id="poe-supplier"></select>
+      <div id="poe-supplier-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef9c3;border-radius:8px;font-size:12px;color:#854d0e;line-height:1.5"></div>
     </div>
     <div class="form-group"><label class="form-label">Payment status</label>
       <select id="poe-pay-status" onchange="togglePOCredit()">
@@ -9692,6 +10083,10 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <div class="form-group"><label class="form-label">Date</label><input id="grv-date" type="date"></div>
     </div>
     <div class="form-group"><label class="form-label">Supplier</label><select id="grv-supplier"></select></div>
+    <div id="grv-po-link-row" style="display:none;margin-bottom:12px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:10px;padding:10px 12px">
+      <label class="form-label" style="color:var(--accent)">📋 Link to purchase order <span style="font-size:10px;font-weight:400">(marks PO as received when you submit)</span></label>
+      <select id="grv-po-link" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px"></select>
+    </div>
     <div class="form-group"><label class="form-label">Receive stock into</label>
       <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
         <button id="grv-loc-shop" onclick="setGRVLoc('shop')" style="flex:1;padding:10px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">&#x1F3EA; Shop floor</button>
