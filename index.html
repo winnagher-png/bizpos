@@ -825,6 +825,11 @@ table.report-table .neg{color:var(--red)}
       <button class="btn btn-success" style="flex:2" onclick="saveCashup()">✓ Complete &amp; bank</button>
     </div>
     <div class="section-title">Cash-up history</div>
+    <div id="cashup-date-fix-banner" style="background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Tap to correct the 17 May cashup → 16 May</div>
+      <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
+        style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
+    </div>
     <div id="cashup-history"></div>
   </div>
 
@@ -6225,6 +6230,31 @@ function jjInitWithSeed() {
 
 // Keep jjInit for backward compatibility
 function jjInit() { jjInitWithSeed(); }
+
+// ── ONE-TIME FIX: correct cashup date 17 May → 16 May ───────────────────────
+function fixCashupDate17to16() {
+  var cashups = DB.get('cashups') || [];
+  var fixed = false;
+  cashups.forEach(function(c) {
+    // Find any cashup with a date on 17 May 2026
+    var d = new Date(c.date);
+    var isWrongDate = (d.getFullYear() === 2026 && d.getMonth() === 4 && d.getDate() === 17);
+    if (isWrongDate) {
+      // Shift date back one day to 16 May, keep the same time
+      d.setDate(16);
+      c.date = d.toISOString();
+      fixed = true;
+      console.log('Fixed cashup:', c.id, 'new date:', c.date);
+    }
+  });
+  if (fixed) {
+    DB.set('cashups', cashups);
+    jjPush(false);
+    showToast('Cashup date corrected to 16 May 2026 ✓', 'success', 5000);
+  } else {
+    showToast('No 17 May cashup found — may already be fixed', 'warning', 4000);
+  }
+}
 
 // ── Manual force push/pull ──
 function forcePushSync() {
