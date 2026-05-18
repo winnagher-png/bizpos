@@ -826,7 +826,7 @@ table.report-table .neg{color:var(--red)}
     </div>
     <div class="section-title">Cash-up history</div>
     <div id="cashup-date-fix-banner" style="background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Tap to correct the 17 May cashup → 16 May</div>
+      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May → 16 May and 18 May → 17 May cashups</div>
       <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
         style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
     </div>
@@ -4975,12 +4975,12 @@ function saveCashup() {
   DB.set('expenses', allExps);
 
   // Top up petty cash with banked amount
-  updatePettyCash(toBank, 'Cashup banked — '+new Date().toLocaleDateString('en-ZA'), 'cashup');
+  updatePettyCash(toBank, 'Cashup banked — ' + new Date(today).toLocaleDateString('en-ZA'), 'cashup');
 
   // Save cashup record
   const cashups = DB.get('cashups')||[];
   cashups.push({
-    id:uid(), date:new Date().toISOString(),
+    id:uid(), date: today + 'T23:00:00.000Z',
     staff: cashupStaffSelected.map(s=>s.name).join(', '),
     staffId: currentUser?.id, staffName: currentUser?.name,
     counted, cashSales, cardSales, cardDeclared, eftDeclared,
@@ -6520,23 +6520,21 @@ function fixCashupDate17to16() {
   var cashups = DB.get('cashups') || [];
   var fixed = false;
   cashups.forEach(function(c) {
-    // Find any cashup with a date on 17 May 2026
     var d = new Date(c.date);
-    var isWrongDate = (d.getFullYear() === 2026 && d.getMonth() === 4 && d.getDate() === 17);
-    if (isWrongDate) {
-      // Shift date back one day to 16 May, keep the same time
-      d.setDate(16);
-      c.date = d.toISOString();
-      fixed = true;
-      console.log('Fixed cashup:', c.id, 'new date:', c.date);
-    }
+    var yr = d.getFullYear(), mo = d.getMonth(), dy = d.getDate();
+    // Fix 17 May → 16 May
+    var is17May = (yr===2026 && mo===4 && dy===17);
+    // Fix 18 May → 17 May
+    var is18May = (yr===2026 && mo===4 && dy===18);
+    if (is17May) { d.setDate(16); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 17→16:', c.id); }
+    if (is18May) { d.setDate(17); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 18→17:', c.id); }
   });
   if (fixed) {
     DB.set('cashups', cashups);
     jjPush(false);
-    showToast('Cashup date corrected to 16 May 2026 ✓', 'success', 5000);
+    showToast('Cashup date corrected ✓', 'success', 5000);
   } else {
-    showToast('No 17 May cashup found — may already be fixed', 'warning', 4000);
+    showToast('No cashup found to fix', 'warning', 4000);
   }
 }
 
