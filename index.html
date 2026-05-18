@@ -5781,6 +5781,13 @@ function renderWhGRV() {
 
 // ── Transfer functions ──
 function openTransfer() {
+  // Pull latest stock quantities from Firebase before opening
+  // so warehouse counts from GRVs on other devices are always current
+  window._blockPullUntil = 0;
+  jjPull(true, function() {
+    renderInventory();
+    renderWarehouse();
+  });
   document.getElementById('tr-search').value = '';
   document.getElementById('tr-qty').value = '';
   document.getElementById('tr-note').value = '';
@@ -5883,7 +5890,10 @@ function submitTransfer() {
   if (!p) return;
   const isS2W = dir === 'shop-to-warehouse';
   const fromQty = isS2W ? (p.qty||0) : (p.qtyWh||0);
-  if (qty > fromQty) { alert('Insufficient stock at source location'); return; }
+  if (qty > fromQty) {
+    alert('Insufficient stock at source location.\n\nAvailable: ' + fromQty + '\nRequested: ' + qty + '\n\nIf you just received a GRV, try closing this and tapping Pull latest in Sync settings first.');
+    return;
+  }
 
   const shopBefore = p.qty||0, whBefore = p.qtyWh||0;
   if (isS2W) { p.qty = shopBefore - qty; p.qtyWh = whBefore + qty; }
