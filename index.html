@@ -2319,6 +2319,36 @@ function renderWriteoffs() {
 // ============================================================
 let stocktakeCounts = {};      // { productId: countedQty }
 var stLocation = 'shop';       // 'shop' or 'warehouse'
+
+function setSTLocation(loc) {
+  stLocation = loc;
+  var shopBtn = document.getElementById('st-loc-shop');
+  var whBtn   = document.getElementById('st-loc-warehouse');
+  if (shopBtn) {
+    shopBtn.style.background = loc === 'shop' ? 'var(--accent)' : 'transparent';
+    shopBtn.style.color      = loc === 'shop' ? '#fff' : 'var(--text3)';
+  }
+  if (whBtn) {
+    whBtn.style.background = loc === 'warehouse' ? 'var(--accent)' : 'transparent';
+    whBtn.style.color      = loc === 'warehouse' ? '#fff' : 'var(--text3)';
+  }
+  // Clear counts when switching location — different locations are separate counts
+  if (Object.keys(stocktakeCounts).length > 0) {
+    if (confirm('Switch to ' + (loc==='warehouse'?'Warehouse':'Shop floor') + ' stocktake? Your current counts will be saved and a fresh count started for this location.')) {
+      // Save current session before switching
+      saveSTSession();
+      stocktakeCounts = {};
+      stSessionDate = new Date().toISOString();
+    } else {
+      // Revert button
+      setSTLocation(loc === 'shop' ? 'warehouse' : 'shop');
+      return;
+    }
+  }
+  renderStocktakeCatFilters();
+  renderStocktakeSummary();
+  renderStocktakeList();
+}
 let stCatFilter = 'all';
 let stShowFilter = 'all';
 let stSessionDate = null;
