@@ -709,9 +709,13 @@ table.report-table .neg{color:var(--red)}
 
   <!-- EXPENSES TAB -->
   <div class="tab-pane" id="tab-expenses">
-    <div class="flex-between" style="margin-bottom:12px">
+    <div class="flex-between" style="margin-bottom:8px">
       <div class="section-title" style="margin:0">Expenses</div>
       <button class="btn btn-primary btn-sm" onclick="openAddExpense()">+ Add expense</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button onclick="backlogPOExpenses();deduplicateExpenses()" style="flex:1;padding:7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer">🔄 Sync PO expenses</button>
+      <button onclick="if(deduplicateExpenses()===0)showToast('No duplicates found ✓','success')" style="flex:1;padding:7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer">🧹 Remove duplicates</button>
     </div>
     <div class="stats-row-3" id="exp-stats"></div>
     <div class="filter-row" id="exp-cat-filters"></div>
@@ -5006,51 +5010,78 @@ function saveCashup() {
   const todaySales = sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const cashSales  = todaySales.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const cardSales  = todaySales.filter(s=>s.paymentMethod==='card'||s.paymentMethod==='yoco').reduce((a,s)=>a+s.total,0);
+  const eftSales   = todaySales.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
   const cashExpTotal  = cashupExpenseItems.reduce((a,e)=>a+e.amount,0);
-  // Amount to bank = what you physically counted (expenses already removed from till during day)
   const toBank        = Math.max(0, counted);
   const expectedCash  = Math.max(0, cashSales - cashExpTotal);
-  const cardDeclared = parseFloat(document.getElementById('cashup-card-declared')?.value)||0;
-  const eftDeclared  = parseFloat(document.getElementById('cashup-eft-declared')?.value)||0;
+  const cardDeclared  = parseFloat(document.getElementById('cashup-card-declared')?.value)||0;
+  const eftDeclared   = parseFloat(document.getElementById('cashup-eft-declared')?.value)||0;
+  const staffNames    = cashupStaffSelected.map(s=>s.name).join(', ');
+  const cuNote        = document.getElementById('cashup-note').value.trim();
+  const pcBefore      = getPettyCash().balance;
 
-  // Save till cash expenses as expense records with their chosen category
+  // ── 1. Save till cash expenses as expense records ──────────────────────────
+  // Deduplicate against existing expenses first (same date + desc + amount)
   const allExps = DB.get('expenses');
-  var cuDate = (document.getElementById('cashup-date')?.value) || new Date().toISOString().slice(0,10);
   cashupExpenseItems.forEach(e=>{
-    allExps.push({
-      id: e.id,
-      desc: e.desc,
-      amount: e.amount,
-      category: e.category || 'Till expense',   // use the category chosen by staff
-      payMethod: 'Cash Sales',                   // always paid from till cash
-      date: cuDate,
-      status: 'paid',
-      notes: 'Declared at cash-up'
+    var isDuplicate = allExps.some(function(ex){
+      return ex.date === today && ex.desc === e.desc && Math.abs(ex.amount - e.amount) < 0.01;
     });
+    if (!isDuplicate) {
+      allExps.push({
+        id: e.id || uid(),
+        desc: e.desc,
+        amount: e.amount,
+        category: e.category || 'Till expense',
+        payMethod: 'Cash Sales',   // paid from daily till cash — NOT petty cash
+        date: today,
+        status: 'paid',
+        notes: 'Declared at cash-up — ' + staffNames
+      });
+    }
   });
   DB.set('expenses', allExps);
 
-  // Top up petty cash with banked amount
-  updatePettyCash(toBank, 'Cashup banked — ' + new Date(today).toLocaleDateString('en-ZA'), 'cashup');
+  // ── 2. Top up petty cash with banked amount ────────────────────────────────
+  // This is the core link: every cent banked from the till goes into petty cash
+  updatePettyCash(toBank,
+    'Cashup banked — ' + new Date(today).toLocaleDateString('en-ZA') + ' (' + staffNames + ')',
+    'cashup');
 
-  // Save cashup record
+  const pcAfter = getPettyCash().balance;
+
+  // ── 3. Save cashup record ──────────────────────────────────────────────────
   const cashups = DB.get('cashups')||[];
   cashups.push({
-    id:uid(), date: today + 'T23:00:00.000Z',
-    staff: cashupStaffSelected.map(s=>s.name).join(', '),
-    staffId: currentUser?.id, staffName: currentUser?.name,
-    counted, cashSales, cardSales, cardDeclared, eftDeclared,
-    cashExpenses: cashExpTotal, float: FLOAT_AMOUNT, toBank,
-    variance: counted - expectedCash,   // positive=over, negative=short
+    id: uid(),
+    date: today + 'T23:00:00.000Z',
+    staff: staffNames,
+    staffId: currentUser?.id,
+    staffName: currentUser?.name,
+    counted, cashSales, cardSales, eftSales,
+    cardDeclared, eftDeclared,
+    tillExpenses: cashExpTotal,
+    cashExpenses: cashExpTotal,
+    float: FLOAT_AMOUNT,
+    toBank,
+    variance: counted - expectedCash,
     totalSales: todaySales.reduce((a,s)=>a+s.total,0),
-    txnCount: todaySales.length, denomBreakdown,
+    txnCount: todaySales.length,
+    denomBreakdown,
     cashupExpenses: [...cashupExpenseItems],
-    note: document.getElementById('cashup-note').value.trim(),
-    pettyCashAfter: getPettyCash().balance
+    note: cuNote,
+    notes: cuNote,
+    pettyCashBefore: pcBefore,
+    pettyCashAfter:  pcAfter
   });
-  DB.set('cashups',cashups);
+  DB.set('cashups', cashups);
 
-  // Reset
+  // ── 4. Push everything to Firebase ────────────────────────────────────────
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 5000);
+
+  // ── 5. Reset form ──────────────────────────────────────────────────────────
   cashupExpenseItems=[];
   cashupStaffSelected=[];
   DENOMS.forEach((_,i)=>{ const el=document.getElementById('cd-'+i); if(el) el.value=''; });
@@ -5063,7 +5094,7 @@ function saveCashup() {
   renderCashupHistory();
   if (typeof renderExpenses==='function') renderExpenses();
 
-  showToast('Cash-up complete! Banked: '+fmt(toBank)+' · Petty cash: '+fmt(getPettyCash().balance),'success',5000);
+  showToast('Cash-up complete! Banked: '+fmt(toBank)+' · Petty cash: '+fmt(pcAfter),'success',5000);
 }
 
 function emailCashupReport() {
@@ -5096,8 +5127,8 @@ function renderCashupHistory() {
   const cashups = DB.get('cashups')||[];
   const el = document.getElementById('cashup-history');
   if (!cashups.length) { el.innerHTML='<div class="empty"><p>No cash-ups yet</p></div>'; return; }
-  el.innerHTML = [...cashups].reverse().slice(0,10).map(c=>`
-    <div class="card" style="margin-bottom:8px;border-left:3px solid ${(c.variance||0)>=0?'#16a34a':'#b65c5e'}">
+  el.innerHTML = [...cashups].reverse().slice(0,20).map(c=>`
+    <div class="card" id="cu-card-${c.id}" style="margin-bottom:8px;border-left:3px solid ${(c.variance||0)>=0?'#16a34a':'#b65c5e'}">
       <div class="flex-between">
         <span class="bold text-sm">${fmtDate(c.date)}</span>
         <span class="bold" style="color:var(--green)">${fmt(c.toBank||0)} banked</span>
@@ -5119,9 +5150,71 @@ function renderCashupHistory() {
       <div class="text-xs text-muted" style="margin-top:6px">${c.staff||c.staffName||'—'} · ${c.txnCount||0} sales · Total: ${fmt(c.totalSales||0)}</div>
       ${c.note?`<div class="text-xs text-muted" style="margin-top:4px">${c.note}</div>`:''}
       <div style="margin-top:8px;display:flex;gap:6px">
-        <button onclick="reverseCashup('${c.id}')" style="padding:6px 12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">🔄 Reverse cashup</button>
+        <button onclick="openEditCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:8px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer">✏️ Edit</button>
+        <button onclick="reverseCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">🔄 Reverse</button>
+      </div>
+      <div id="cu-edit-${c.id}" style="display:none;margin-top:10px;background:var(--bg3);border-radius:10px;padding:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Edit cashup</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="font-size:11px;color:var(--text3);font-weight:600">Date</label>
+            <input type="date" id="cu-edit-date-${c.id}" value="${c.date?.slice(0,10)||''}"
+              style="width:100%;padding:8px;border:1.5px solid var(--accent);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text3);font-weight:600">Staff</label>
+            <input type="text" id="cu-edit-staff-${c.id}" value="${c.staffName||c.staff||''}"
+              style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          </div>
+        </div>
+        <div style="margin-bottom:8px">
+          <label style="font-size:11px;color:var(--text3);font-weight:600">Notes</label>
+          <input type="text" id="cu-edit-note-${c.id}" value="${c.note||c.notes||''}"
+            placeholder="Optional note"
+            style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="saveCashupEdit('${c.id}')" style="flex:2;padding:9px;background:var(--green);border:none;border-radius:8px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">✓ Save changes</button>
+          <button onclick="document.getElementById('cu-edit-${c.id}').style.display='none'" style="flex:1;padding:9px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
+        </div>
       </div>
     </div>`).join('');
+}
+
+function openEditCashup(id) {
+  var panel = document.getElementById('cu-edit-' + id);
+  if (!panel) return;
+  // Toggle — close if already open
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function saveCashupEdit(id) {
+  var newDate  = (document.getElementById('cu-edit-date-'  + id)||{}).value || '';
+  var newStaff = (document.getElementById('cu-edit-staff-' + id)||{}).value || '';
+  var newNote  = (document.getElementById('cu-edit-note-'  + id)||{}).value || '';
+
+  if (!newDate) { showToast('Date is required', 'error'); return; }
+
+  var cashups = DB.get('cashups') || [];
+  var idx = cashups.findIndex(function(c){ return c.id === id; });
+  if (idx === -1) { showToast('Cashup not found', 'error'); return; }
+
+  // Keep the original time component, just change the date
+  var originalTime = cashups[idx].date ? cashups[idx].date.slice(10) : 'T23:00:00.000Z';
+  cashups[idx].date      = newDate + originalTime;
+  cashups[idx].staffName = newStaff;
+  cashups[idx].staff     = newStaff;
+  cashups[idx].note      = newNote;
+  cashups[idx].notes     = newNote;
+  cashups[idx].editedAt  = new Date().toISOString();
+  cashups[idx].editedBy  = currentUser ? currentUser.name : 'unknown';
+
+  DB.set('cashups', cashups);
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+
+  renderCashupHistory();
+  showToast('Cashup updated ✓', 'success');
 }
 
 
@@ -5480,7 +5573,7 @@ function exportReportCSV() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'bizpos-report-'+currentReportType+'-'+new Date().toISOString().slice(0,10)+'.csv';
-  a.click();
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
 // ============================================================
@@ -6010,6 +6103,7 @@ function openGRV() {
   document.getElementById('grv-num').value = 'GRV' + String(grvs.length + 1).padStart(4, '0');
   document.getElementById('grv-date').value = new Date().toISOString().slice(0,10);
   document.getElementById('grv-ref').value = '';
+  if (document.getElementById('grv-payment')) document.getElementById('grv-payment').value = '';
   document.getElementById('grv-notes').value = '';
   setGRVLoc('shop');
   // Populate supplier dropdown
@@ -6246,7 +6340,36 @@ function submitGRV() {
     });
     DB.set('grvRecords', grvRecs);
 
-    // Push to Firebase immediately — double push for reliability
+    // Auto-create expense record if items have cost prices (stock purchase expense)
+    if (totalValue > 0 && supplierId) {
+      var grvPaySel = document.getElementById('grv-payment');
+      var grvPayMethod = grvPaySel ? grvPaySel.value : '';
+      var expPay = '';
+      if (grvPayMethod.toLowerCase().includes('cash')) expPay = 'Cash Sales';
+      else if (grvPayMethod.toLowerCase().includes('eft')) expPay = 'eft';
+      else if (grvPayMethod.toLowerCase().includes('card')) expPay = 'card';
+      else if (grvPayMethod.toLowerCase().includes('petty')) expPay = 'petty_cash';
+
+      if (expPay) {
+        var expsG = DB.get('expenses') || [];
+        expsG.push({
+          id: uid(),
+          date: grvDate,
+          desc: 'Stock purchase — ' + (sup ? sup.name : 'Supplier') + ' (' + grvNumber + ')',
+          amount: totalValue,
+          category: 'Stock purchase',
+          payMethod: expPay,
+          status: 'paid',
+          notes: 'Auto-created from GRV ' + grvNumber,
+          linkedGRV: grvNumber
+        });
+        DB.set('expenses', expsG);
+        // Deduct from petty cash if paid from PC
+        if (expPay === 'petty_cash') {
+          updatePettyCash(-totalValue, 'Stock purchase — ' + (sup ? sup.name : '') + ' (' + grvNumber + ')', 'expense', 'Stock purchase');
+        }
+      }
+    }
     clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
     jjPush(false);
     setTimeout(function(){ jjPush(true); }, 5000);
@@ -6581,7 +6704,13 @@ function jjPull(silent, cb) {
     // Re-check block here too — block may have been set while fetch was in-flight
     var stillBlocked = window._blockPullUntil && Date.now() < window._blockPullUntil;
     var hadData = data && data._at;
-    if (hadData && !stillBlocked) jjWrite(data);
+    if (hadData && !stillBlocked) {
+      jjWrite(data);
+      // After pull, backlog any received POs missing from expenses
+      // and silently deduplicate
+      try { backlogPOExpenses(); } catch(e) {}
+      try { deduplicateExpenses(); } catch(e) {}
+    }
 
     // Refresh UI
     try { renderInventory(); }     catch(e) {}
@@ -6657,6 +6786,82 @@ function jjInitWithSeed() {
 
 // Keep jjInit for backward compatibility
 function jjInit() { jjInitWithSeed(); }
+
+// ── Backlog received POs into expenses ────────────────────────────────────────
+// Run once after pull to create expense records for any received PO
+// that doesn't already have one
+function backlogPOExpenses() {
+  var pos  = DB.get('purchaseOrders') || [];
+  var exps = DB.get('expenses') || [];
+  var changed = false;
+
+  pos.forEach(function(po) {
+    // Only received/confirmed POs with a payment method and a value
+    if (!po.payment) return;
+    if (po.stockStatus !== 'received' && po.stockStatus !== 'partial') return;
+    var total = (po.items||[]).reduce(function(a,i){ return a+(i.qty||0)*(i.unitCost||0); }, 0);
+    if (!total) return;
+
+    // Check if expense already exists for this PO
+    var alreadyExists = exps.some(function(e){ return e.linkedPOId === po.id; });
+    if (alreadyExists) return;
+
+    // Map payment method
+    var pm = (po.payment||'').toLowerCase();
+    var expPay = pm.includes('cash') ? 'Cash Sales'
+               : pm.includes('eft')  ? 'eft'
+               : pm.includes('card') ? 'card'
+               : pm.includes('petty')? 'petty_cash'
+               : po.payment;
+
+    exps.push({
+      id: uid(),
+      date: (po.receivedAt||po.date||new Date().toISOString()).slice(0,10),
+      desc: 'Stock purchase — ' + (po.supplierName||'Supplier') + ' (' + (po.poNumber||po.id) + ')',
+      amount: total,
+      category: 'Stock purchase',
+      payMethod: expPay,
+      status: 'paid',
+      notes: 'Backlogged from PO receipt',
+      linkedPOId: po.id,
+      linkedPONum: po.poNumber || ''
+    });
+    changed = true;
+  });
+
+  if (changed) {
+    DB.set('expenses', exps);
+    if (typeof renderExpenses === 'function') renderExpenses();
+    console.log('Backlogged ' + pos.length + ' PO expenses');
+  }
+}
+
+// ── Deduplicate expenses ───────────────────────────────────────────────────────
+// Remove exact duplicates: same date + desc + amount + category
+function deduplicateExpenses() {
+  var exps = DB.get('expenses') || [];
+  var seen = {};
+  var deduped = exps.filter(function(e) {
+    // Keep linkedPOId entries always (unique by PO)
+    if (e.linkedPOId) {
+      var poKey = 'po:' + e.linkedPOId;
+      if (seen[poKey]) return false;
+      seen[poKey] = true;
+      return true;
+    }
+    var key = [e.date, (e.desc||'').toLowerCase().trim(), e.amount, (e.category||'').toLowerCase()].join('|');
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+  if (deduped.length < exps.length) {
+    DB.set('expenses', deduped);
+    if (typeof renderExpenses === 'function') renderExpenses();
+    showToast('Removed ' + (exps.length - deduped.length) + ' duplicate expense(s) ✓', 'success');
+    return exps.length - deduped.length;
+  }
+  return 0;
+}
 
 // ── ONE-TIME FIX: correct cashup date 17 May → 16 May ───────────────────────
 function fixCashupDate17to16() {
@@ -6951,10 +7156,29 @@ function printPettyCashReport() {
 }
 
 function exportPettyCashCSV() {
-  var pc      = DB.getObj('pettyCash', {balance:0, history:[]});
+  // Try localStorage first, then check if window._lastPCReport has richer data from Firebase
+  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+  // If renderPettyCashReport already ran, use its data which came from merged Firebase+local
+  if (window._lastPCReport && window._lastPCReport.pc) {
+    pc = window._lastPCReport.pc;
+  }
   var history = (pc.history || []).slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
 
-  if (!history.length) { showToast('No petty cash history to export', 'error'); return; }
+  if (!history.length) {
+    // Force pull and retry
+    window._blockPullUntil = 0;
+    jjPull(true, function() {
+      var pc2 = DB.getObj('pettyCash', {balance:0, history:[]});
+      if (pc2.history && pc2.history.length) {
+        window._lastPCReport = window._lastPCReport || {};
+        window._lastPCReport.pc = pc2;
+        exportPettyCashCSV();
+      } else {
+        showToast('No petty cash history found — try pulling latest data first', 'error');
+      }
+    });
+    return;
+  }
 
   var lines = ['Date,Type,Description,Category,Change (R),Balance After (R)'];
   history.forEach(function(h) {
@@ -6991,7 +7215,7 @@ function exportPettyCashCSV() {
   var a    = document.createElement('a');
   a.href   = URL.createObjectURL(blob);
   a.download = 'JJ_PettyCash_' + new Date().toISOString().slice(0,10) + '.csv';
-  a.click();
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   showToast('Petty cash CSV downloaded ✓', 'success');
 }
 
@@ -9928,7 +10152,31 @@ function confirmPOReceipt(id, po, modal) {
     });
     DB.set('grvRecords', grvs);
 
-    // Update PO status
+    // Auto-create expense record for the stock purchase if payment method is set
+    // Only create if PO has a payment method and total value > 0
+    var poPayMethod = po.payment || '';
+    var expPayMethod = '';
+    if (poPayMethod.toLowerCase().includes('cash')) expPayMethod = 'Cash Sales';
+    else if (poPayMethod.toLowerCase().includes('eft')) expPayMethod = 'eft';
+    else if (poPayMethod.toLowerCase().includes('card')) expPayMethod = 'card';
+
+    if (expPayMethod && totalValue > 0 && !isConsignment) {
+      var exps = DB.get('expenses') || [];
+      var itemNames = receivedItems.map(function(i){ return i.productName + ' x' + i.qty; }).join(', ');
+      exps.push({
+        id: uid(),
+        date: new Date().toISOString().slice(0,10),
+        desc: 'Stock purchase — ' + (po.supplierName||'') + ' (' + (po.poNumber||grvNum) + ')',
+        amount: totalValue,
+        category: 'Stock purchase',
+        payMethod: expPayMethod,
+        status: 'paid',
+        notes: 'Auto-created from PO receipt. Items: ' + itemNames.slice(0,200),
+        linkedPOId: id,
+        linkedGRV: grvNum
+      });
+      DB.set('expenses', exps);
+    }
     var pos = DB.get('purchaseOrders') || [];
     var poIdx = pos.findIndex(function(p){ return p.id === id; });
     if (poIdx > -1) {
@@ -10890,6 +11138,15 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Reference / PO #</label><input id="grv-ref" type="text" placeholder="Optional"></div>
+      <div class="form-group"><label class="form-label">Payment method <span style="font-size:10px;color:var(--text3)">(creates expense record if set)</span></label>
+        <select id="grv-payment" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px">
+          <option value="">— Not paid yet / consignment —</option>
+          <option value="cash">Cash</option>
+          <option value="eft">EFT</option>
+          <option value="card">Card</option>
+          <option value="petty_cash">Petty Cash</option>
+        </select>
+      </div>
       <div class="form-group"><label class="form-label">Notes</label><input id="grv-notes" type="text" placeholder="Optional"></div>
     </div>
     <div class="section-title" style="margin-bottom:8px">Items received</div>
