@@ -5555,6 +5555,8 @@ function printReport(title, subtitle, bodyHtml) {
 }
 
 function exportReportCSV() {
+  // Petty cash has its own dedicated exporter
+  if (currentReportType === 'pettycash') { exportPettyCashCSV(); return; }
   if (!reportData || !reportData.length) { alert('Run a report first'); return; }
   let csv = '';
   if (currentReportType === 'sales') {
@@ -5564,8 +5566,37 @@ function exportReportCSV() {
     csv = 'Product,SKU,Category,Qty,Cost,Price,Stock Value,Margin%\n';
     reportData.forEach(p=>{ const m=p.price&&p.cost?((p.price-p.cost)/p.price*100).toFixed(1):''; csv+=`"${p.name}","${p.sku||''}","${p.category||''}",${p.qty},${p.cost||0},${p.price||0},${(p.qty*(p.cost||0)).toFixed(2)},${m}\n`; });
   } else if (currentReportType === 'expenses') {
-    csv = 'Date,Description,Category,Payment,Amount,Notes\n';
-    reportData.forEach(e=>{ csv+=`"${fmtDate(e.date)}","${e.desc}","${e.category}","${e.payMethod}","${e.amount}","${e.notes||''}"\n`; });
+    var q2 = function(s){ return '"'+String(s||'').replace(/"/g,'""')+'"'; };
+    var r2 = function(n){ return 'R'+parseFloat(n||0).toFixed(2); };
+    var rows2 = [];
+    rows2.push(['JACK & JILL\'S ADVENTURE CLUB — EXPENSE REPORT','','','','','']);
+    rows2.push(['Generated:',new Date().toLocaleString('en-ZA'),'','','','']);
+    rows2.push(['','','','','','']);
+    // Summary by category
+    var bycat2 = {};
+    reportData.forEach(function(e){ bycat2[e.category||'Other'] = (bycat2[e.category||'Other']||0) + e.amount; });
+    rows2.push(['SUMMARY BY CATEGORY','','','','','']);
+    rows2.push(['Category','Total','% of expenses','','','']);
+    var tot2 = reportData.reduce(function(a,e){ return a+e.amount; }, 0);
+    Object.entries(bycat2).sort(function(a,b){ return b[1]-a[1]; }).forEach(function(pair) {
+      rows2.push([q2(pair[0]), r2(pair[1]), (tot2 ? (pair[1]/tot2*100).toFixed(1)+'%' : '0%'),'','','']);
+    });
+    rows2.push(['TOTAL', r2(tot2), '100%','','','']);
+    rows2.push(['','','','','','']);
+    // Full detail
+    rows2.push(['ALL EXPENSES','','','','','']);
+    rows2.push(['Date','Description','Category','Paid From','Amount','Notes']);
+    reportData.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); }).forEach(function(e) {
+      rows2.push([e.date||'', q2(e.desc), q2(e.category||''), q2(e.payMethod||''), r2(e.amount), q2(e.notes||'')]);
+    });
+    var bom2 = '\uFEFF';
+    csv = bom2 + rows2.map(function(row){ return row.join(','); }).join('\r\n');
+    const blob2 = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const a2 = document.createElement('a');
+    a2.href = URL.createObjectURL(blob2);
+    a2.download = 'JJ_Expenses_' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+    return;
   } else {
     csv = 'Report data exported\n';
   }
@@ -7156,67 +7187,119 @@ function printPettyCashReport() {
 }
 
 function exportPettyCashCSV() {
-  // Try localStorage first, then check if window._lastPCReport has richer data from Firebase
-  var pc = DB.getObj('pettyCash', {balance:0, history:[]});
-  // If renderPettyCashReport already ran, use its data which came from merged Firebase+local
-  if (window._lastPCReport && window._lastPCReport.pc) {
-    pc = window._lastPCReport.pc;
-  }
-  var history = (pc.history || []).slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+  window._blockPullUntil = 0;
+  var _exported = false;
 
-  if (!history.length) {
-    // Force pull and retry
-    window._blockPullUntil = 0;
-    jjPull(true, function() {
-      var pc2 = DB.getObj('pettyCash', {balance:0, history:[]});
-      if (pc2.history && pc2.history.length) {
-        window._lastPCReport = window._lastPCReport || {};
-        window._lastPCReport.pc = pc2;
-        exportPettyCashCSV();
-      } else {
-        showToast('No petty cash history found — try pulling latest data first', 'error');
-      }
+  function doExport() {
+    if (_exported) return;
+    _exported = true;
+
+    var pc = DB.getObj('pettyCash', {balance:0, history:[]});
+    if (window._lastPCReport && window._lastPCReport.pc &&
+        (window._lastPCReport.pc.history||[]).length > (pc.history||[]).length) {
+      pc = window._lastPCReport.pc;
+    }
+    var history = (pc.history || []).slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+
+    // Reconstruct from cashups + expenses if no history recorded
+    if (!history.length) {
+      var runBal = 0;
+      var allEvents = [];
+      (DB.get('cashups')||[]).forEach(function(c) {
+        if ((c.toBank||0) > 0) allEvents.push({ date: c.date, type: 'cashup', reason: 'Cashup banked', category: 'Banking', delta: c.toBank, staff: c.staffName||c.staff||'' });
+      });
+      (DB.get('expenses')||[]).filter(function(e){ return e.payMethod==='petty_cash'||e.payMethod==='Petty Cash'; }).forEach(function(e) {
+        allEvents.push({ date: e.date+'T12:00:00Z', type: 'expense', reason: e.desc, category: e.category||'Expense', delta: -e.amount, staff: '' });
+      });
+      allEvents.sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+      allEvents.forEach(function(ev) {
+        runBal += ev.delta;
+        history.push({ date: ev.date, type: ev.type, reason: ev.reason, category: ev.category, delta: ev.delta, newBalance: runBal, staff: ev.staff||'' });
+      });
+    }
+
+    if (!history.length) { showToast('No petty cash data to export', 'error'); return; }
+
+    var q = function(s) { return '"' + String(s||'').replace(/"/g,'""') + '"'; };
+    var r = function(n) { return 'R' + parseFloat(n||0).toFixed(2); };
+    var d = function(s) { try { return new Date(s).toLocaleDateString('en-ZA'); } catch(e) { return s||''; } };
+
+    var rows = [];
+
+    // ── Section 1: Report header ──────────────────────────────────────────────
+    rows.push(['JACK & JILL\'S ADVENTURE CLUB — PETTY CASH REPORT','','','','','','']);
+    rows.push(['Generated:',new Date().toLocaleString('en-ZA'),'','','','','']);
+    rows.push(['Current Balance:',r(pc.balance||0),'','','','','']);
+    rows.push(['','','','','','','']);
+
+    // ── Section 2: Full ledger ────────────────────────────────────────────────
+    rows.push(['PETTY CASH LEDGER','','','','','','']);
+    rows.push(['Date','Type','Description','Category','Money In (R)','Money Out (R)','Balance (R)']);
+    history.forEach(function(h) {
+      var delta = h.delta || 0;
+      rows.push([
+        d(h.date),
+        q(h.type === 'cashup' ? 'Cashup top-up' : h.type === 'expense' ? 'PC Expense' : h.type === 'set' ? 'Balance set' : h.type||''),
+        q(h.reason||''),
+        q(h.category||''),
+        delta > 0 ? r(delta)  : '',
+        delta < 0 ? r(Math.abs(delta)) : '',
+        r(h.newBalance||0)
+      ]);
     });
-    return;
+    rows.push(['','','','','','','']);
+
+    // ── Section 3: Cashup top-ups ─────────────────────────────────────────────
+    var cashups = (DB.get('cashups')||[]).slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    if (cashups.length) {
+      rows.push(['CASHUP BANKING SUMMARY','','','','','','']);
+      rows.push(['Date','Staff','Cash Sales','Till Expenses','Amount Banked','PC Before','PC After']);
+      cashups.forEach(function(c) {
+        rows.push([
+          d(c.date),
+          q(c.staffName||c.staff||''),
+          r(c.cashSales||0),
+          r(c.tillExpenses||c.cashExpenses||0),
+          r(c.toBank||0),
+          r(c.pettyCashBefore||0),
+          r(c.pettyCashAfter||0)
+        ]);
+      });
+      rows.push(['','','','','','','']);
+    }
+
+    // ── Section 4: PC expenses detail ─────────────────────────────────────────
+    var pcExps = (DB.get('expenses')||[]).filter(function(e){ return e.payMethod==='petty_cash'||e.payMethod==='Petty Cash'; }).sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+    if (pcExps.length) {
+      rows.push(['PETTY CASH EXPENSES','','','','','','']);
+      rows.push(['Date','Description','Category','Amount','Notes','','']);
+      pcExps.forEach(function(e) {
+        rows.push([d(e.date), q(e.desc||''), q(e.category||''), r(e.amount||0), q(e.notes||''),'','']);
+      });
+    }
+
+    // Convert to CSV — all rows have same column count so Excel renders as clean table
+    var csv = rows.map(function(row) {
+      return row.map(function(cell) {
+        var s = String(cell||'');
+        // Quote if not already quoted and contains comma/newline
+        if (s.charAt(0) !== '"' && (s.indexOf(',')>-1 || s.indexOf('\n')>-1)) s = '"'+s.replace(/"/g,'""')+'"';
+        return s;
+      }).join(',');
+    }).join('\r\n');
+
+    // Add BOM so Excel opens with correct encoding
+    var bom = '\uFEFF';
+    var blob = new Blob([bom + csv], {type:'text/csv;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'JJ_PettyCash_' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    showToast('Petty cash CSV downloaded ✓', 'success');
   }
 
-  var lines = ['Date,Type,Description,Category,Change (R),Balance After (R)'];
-  history.forEach(function(h) {
-    var date    = new Date(h.date).toLocaleDateString('en-ZA');
-    var type    = h.type || '';
-    var reason  = '"' + (h.reason  || '').replace(/"/g,'""') + '"';
-    var cat     = '"' + (h.category|| '').replace(/"/g,'""') + '"';
-    var delta   = (h.delta   || 0).toFixed(2);
-    var balance = (h.newBalance || 0).toFixed(2);
-    lines.push([date, type, reason, cat, delta, balance].join(','));
-  });
-
-  // Also append cashup top-ups section
-  var cashups = DB.get('cashups') || [];
-  if (cashups.length) {
-    lines.push('');
-    lines.push('CASHUP TOP-UPS');
-    lines.push('Date,Staff,Cash Sales,Counted,Expenses,Banked,PC Before,PC After');
-    cashups.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); }).forEach(function(c) {
-      lines.push([
-        new Date(c.date).toLocaleDateString('en-ZA'),
-        '"'+(c.staffName||'').replace(/"/g,'""')+'"',
-        (c.cashSales||0).toFixed(2),
-        (c.counted||0).toFixed(2),
-        (c.tillExpenses||0).toFixed(2),
-        (c.toBank||0).toFixed(2),
-        (c.pettyCashBefore||0).toFixed(2),
-        (c.pettyCashAfter||0).toFixed(2)
-      ].join(','));
-    });
-  }
-
-  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
-  var a    = document.createElement('a');
-  a.href   = URL.createObjectURL(blob);
-  a.download = 'JJ_PettyCash_' + new Date().toISOString().slice(0,10) + '.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  showToast('Petty cash CSV downloaded ✓', 'success');
+  jjPull(true, function() { doExport(); });
+  setTimeout(function() { doExport(); }, 3000);
 }
 
 // ============================================================
