@@ -1011,6 +1011,7 @@ table.report-table .neg{color:var(--red)}
     <input type="hidden" id="p-id">
     <input type="hidden" id="p-sku-manual" value="0">
     <button class="btn btn-primary btn-full" onclick="saveProduct()">Save product</button>
+    <button id="btn-delete-product" style="display:none;width:100%;margin-top:8px;padding:12px;background:transparent;border:1.5px solid var(--red);border-radius:12px;color:var(--red);font-size:14px;font-weight:700;cursor:pointer" onclick="deleteProduct()">🗑 Delete product</button>
   </div>
 </div>
 
@@ -2184,6 +2185,8 @@ function openAddProduct() {
   document.getElementById('modal-product-title').textContent = 'Add product';
   document.getElementById('sku-preview').style.display = 'none';
   document.getElementById('sku-gen-badge').style.display = 'none';
+  var delBtn = document.getElementById('btn-delete-product');
+  if (delBtn) delBtn.style.display = 'none';
   populateSupplierSelect();
   populateCatDatalist();
   openModal('modal-product');
@@ -2205,6 +2208,8 @@ function openEditProduct(id) {
   document.getElementById('modal-product-title').textContent = 'Edit product';
   document.getElementById('sku-preview').style.display = 'none';
   document.getElementById('sku-gen-badge').style.display = 'none';
+  var delBtn = document.getElementById('btn-delete-product');
+  if (delBtn) delBtn.style.display = 'block';
   populateSupplierSelect(p.supplierId);
   populateCatDatalist();
   openModal('modal-product');
@@ -2267,6 +2272,27 @@ function saveProduct() {
   renderInventory();
   checkReorderPoints();
   showToast(name + ' saved ✓', 'success');
+}
+
+function deleteProduct() {
+  var id = document.getElementById('p-id').value;
+  var name = document.getElementById('p-name').value || 'this product';
+  if (!id) return;
+  if (!confirm('Permanently delete "' + name + '"?\n\nThis cannot be undone. Any sales history referencing this product will still be kept.')) return;
+
+  var products = JSON.parse(localStorage.getItem('products') || '[]');
+  products = products.filter(function(p){ return p.id !== id; });
+  localStorage.setItem('products', JSON.stringify(products));
+  DB.set('products', products);
+
+  window._blockPullUntil = Date.now() + 30000;
+  JJ.pushing = false;
+  clearTimeout(JJ.timer);
+  setTimeout(function(){ jjPush(true); }, 100);
+
+  closeModal('modal-product');
+  renderInventory();
+  showToast(name + ' deleted', 'success');
 }
 
 // ============================================================
@@ -5354,25 +5380,85 @@ function renderExpensesReport(from, to, el) {
   const bycat = {};
   exps.forEach(e=>{ bycat[e.category]=(bycat[e.category]||0)+e.amount; });
   reportData = exps;
+
+  var fromStr = from.toLocaleDateString('en-ZA');
+  var toStr   = to.toLocaleDateString('en-ZA');
+
   el.innerHTML = `
     <div class="report-kpi-grid">
       <div class="kpi-tile"><div class="kpi-label">Total expenses</div><div class="kpi-val red">${fmt(total)}</div></div>
       <div class="kpi-tile"><div class="kpi-label">Records</div><div class="kpi-val">${exps.length}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <button onclick="exportReportCSV()" class="btn btn-secondary">&#x1F4E5; Export CSV</button>
+      <button onclick="printExpensesReport()" class="btn btn-secondary">&#x1F5A8; Print report</button>
     </div>
     <div class="report-section">
       <div class="section-title">By category</div>
       <div class="table-wrap"><table class="report-table">
         <tr><th>Category</th><th class="num">Amount</th><th class="num">%</th></tr>
         ${Object.entries(bycat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td>${c}</td><td class="num red">${fmt(v)}</td><td class="num">${total?(v/total*100).toFixed(1):'0'}%</td></tr>`).join('')}
+        <tr style="font-weight:700;border-top:2px solid var(--border)"><td>TOTAL</td><td class="num red">${fmt(total)}</td><td class="num">100%</td></tr>
       </table></div>
     </div>
     <div class="report-section">
       <div class="section-title">All expenses</div>
       <div class="table-wrap"><table class="report-table">
-        <tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr>
-        ${[...exps].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.desc}</td><td>${e.category}</td><td class="num red">${fmt(e.amount)}</td></tr>`).join('')}
+        <tr><th>Date</th><th>Description</th><th>Category</th><th>Paid from</th><th class="num">Amount</th></tr>
+        ${[...exps].sort((a,b)=>new Date(a.date)-new Date(b.date)).map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.desc}</td><td>${e.category||''}</td><td>${e.payMethod||''}</td><td class="num red">${fmt(e.amount)}</td></tr>`).join('')}
       </table></div>
     </div>`;
+
+  // Store for print
+  window._lastExpReport = { exps, total, bycat, fromStr, toStr };
+}
+
+function printExpensesReport() {
+  var r = window._lastExpReport;
+  if (!r) { alert('Run the report first'); return; }
+  var byCatRows = Object.entries(r.bycat).sort((a,b)=>b[1]-a[1])
+    .map(([c,v])=>`<tr><td>${c}</td><td style="text-align:right">R${v.toFixed(2)}</td><td style="text-align:right">${r.total?(v/r.total*100).toFixed(1):'0'}%</td></tr>`).join('');
+  var expRows = [...r.exps].sort((a,b)=>new Date(a.date)-new Date(b.date))
+    .map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.desc}</td><td>${e.category||''}</td><td>${e.payMethod||''}</td><td style="text-align:right">R${e.amount.toFixed(2)}</td></tr>`).join('');
+  printReport('Jack & Jill\'s Adventure Club — Expense Report',
+    r.fromStr + ' to ' + r.toStr,
+    `<h3>Summary by category</h3>
+     <table><thead><tr><th>Category</th><th>Amount</th><th>%</th></tr></thead><tbody>${byCatRows}
+     <tr style="font-weight:700;border-top:2px solid #333"><td>TOTAL</td><td style="text-align:right">R${r.total.toFixed(2)}</td><td></td></tr></tbody></table>
+     <h3 style="margin-top:24px">All expenses</h3>
+     <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid from</th><th>Amount</th></tr></thead><tbody>${expRows}</tbody></table>`
+  );
+}
+
+// ── Shared print helper ────────────────────────────────────────────────────
+function printReport(title, subtitle, bodyHtml) {
+  var w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 24px; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    h2 { font-size: 13px; color: #555; font-weight: normal; margin-bottom: 20px; }
+    h3 { font-size: 13px; margin-bottom: 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
+    th { background: #f0f0f0; text-align: left; padding: 6px 8px; border: 1px solid #ccc; font-size: 11px; }
+    td { padding: 5px 8px; border: 1px solid #ddd; }
+    tr:nth-child(even) { background: #fafafa; }
+    .kpi-row { display: flex; gap: 16px; margin-bottom: 20px; }
+    .kpi { flex: 1; border: 1px solid #ddd; border-radius: 6px; padding: 10px 14px; }
+    .kpi-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .4px; }
+    .kpi-val { font-size: 20px; font-weight: 800; margin-top: 2px; }
+    .green { color: #16a34a; } .red { color: #dc2626; } .amber { color: #d97706; } .blue { color: #2563eb; }
+    .footer { margin-top: 24px; font-size: 10px; color: #999; border-top: 1px solid #eee; padding-top: 8px; }
+    @media print { body { padding: 0; } button { display: none !important; } }
+  </style></head><body>
+  <h1>${title}</h1>
+  <h2>${subtitle}</h2>
+  <button onclick="window.print()" style="margin-bottom:20px;padding:8px 20px;background:#1a6b4a;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer">&#x1F5A8; Print</button>
+  ${bodyHtml}
+  <div class="footer">Generated by BizPOS &mdash; Jack &amp; Jill's Adventure Club &mdash; ${new Date().toLocaleString('en-ZA')}</div>
+  </body></html>`);
+  w.document.close();
 }
 
 function exportReportCSV() {
@@ -6079,96 +6165,113 @@ function updateGRVTotal() {
 }
 
 function submitGRV() {
-  const loc = document.getElementById('grv-location').value;
+  const loc        = document.getElementById('grv-location').value || 'shop';
   const supplierId = document.getElementById('grv-supplier').value;
-  const sup = DB.get('suppliers').find(s=>s.id===supplierId);
-  const validLines = grvLines.filter(l=>l.productName.trim()&&l.qty>0);
-  if (!validLines.length) { alert('Add at least one product'); return; }
+  const sup        = (DB.get('suppliers')||[]).find(s=>s.id===supplierId);
+  const validLines = grvLines.filter(l=>l.productName&&l.productName.trim()&&l.qty>0);
+  if (!validLines.length) { alert('Add at least one product with a quantity'); return; }
 
-  const products = DB.get('products');
-  let totalValue = 0;
-  const processedItems = [];
+  // Capture form values before async pull
+  const grvNumber  = document.getElementById('grv-num').value;
+  const grvDate    = document.getElementById('grv-date').value;
+  const grvRef     = (document.getElementById('grv-ref')||{}).value || '';
+  const grvNotes   = (document.getElementById('grv-notes')||{}).value || '';
+  const poLinkSel  = document.getElementById('grv-po-link');
+  const linkedPOId = poLinkSel ? poLinkSel.value : '';
 
-  validLines.forEach(line => {
-    let p = products.find(x=>x.id===line.productId);
-    // If no match found by ID, try to match by name or create new product stub
-    if (!p && line.productId) p = products.find(x=>x.name.toLowerCase()===line.productName.toLowerCase());
-
-    if (p) {
-      // Update cost price if provided
-      if (line.unitCost > 0) p.cost = line.unitCost;
-      // Add to correct location
-      if (loc === 'warehouse') { p.qtyWh = (p.qtyWh||0) + line.qty; }
-      else { p.qty = (p.qty||0) + line.qty; }
-      processedItems.push({ productId:p.id, productName:p.name, qty:line.qty, unitCost:line.unitCost, location:loc });
-    } else {
-      // New product — flag it, we'll prompt after
-      processedItems.push({ productId: null, productName: line.productName, qty: line.qty, unitCost: line.unitCost, location: loc, isNew: true });
-    }
-    totalValue += (line.qty||1)*(line.unitCost||0);
-  });
-
-  DB.set('products', products);
-
-  // Link to purchase order if selected, and update PO stock status
-  var linkedPOId = '';
-  var linkedPONum = '';
-  var poLinkSel = document.getElementById('grv-po-link');
-  if (poLinkSel && poLinkSel.value) {
-    linkedPOId  = poLinkSel.value;
-    var allPOs  = DB.get('purchaseOrders') || [];
-    var linkedPO = allPOs.find(function(po){ return po.id === linkedPOId; });
-    if (linkedPO) {
-      linkedPONum = linkedPO.poNumber || '';
-      // Check if all ordered items were received
-      var allFullyReceived = linkedPO.items.every(function(poItem) {
-        var recv = processedItems.find(function(gi){ return gi.productId === poItem.productId; });
-        return recv && recv.qty >= poItem.qty;
-      });
-      linkedPO.stockStatus = allFullyReceived ? 'received' : 'partial';
-      linkedPO.receivedAt  = new Date().toISOString();
-      linkedPO.receivedBy  = currentUser ? currentUser.name : null;
-      // Update PO status to confirmed if it was still pending
-      if (linkedPO.status === 'pending' || linkedPO.status === 'draft') {
-        linkedPO.status = 'confirmed';
-      }
-      DB.set('purchaseOrders', allPOs);
-      updatePOBadge();
-      renderPO && renderPO();
-      showToast('PO ' + linkedPONum + ' marked as ' + linkedPO.stockStatus, 'success');
-    }
-  }
-
-  // Save GRV record
-  const grvRecs = DB.get('grvRecords') || [];
-  grvRecs.push({
-    id: uid(), grvNumber: document.getElementById('grv-num').value,
-    date: document.getElementById('grv-date').value,
-    supplierId, supplierName: sup ? sup.name : 'No supplier',
-    location: loc,
-    ref: document.getElementById('grv-ref') ? document.getElementById('grv-ref').value.trim() : '',
-    notes: document.getElementById('grv-notes') ? document.getElementById('grv-notes').value.trim() : '',
-    linkedPOId, linkedPONum,
-    items: processedItems, totalValue,
-    staffId:   currentUser ? currentUser.id   : null,
-    staffName: currentUser ? currentUser.name : null,
-    createdAt: new Date().toISOString()
-  });
-  DB.set('grvRecords', grvRecs);
-
+  // Close modal first so user isn't waiting
   closeModal('modal-grv');
-  renderInventory();
-  renderWarehouse && renderWarehouse();
-  checkReorderPoints();
 
-  // Handle new products — open quick form for each
-  var newItems = processedItems.filter(function(i){ return i.isNew && !i.productId; });
-  if (newItems.length) {
-    showToast(processedItems.length - newItems.length + ' existing updated. Now set up ' + newItems.length + ' new product(s)...', 'success', 4000);
-    processNewGRVProducts(newItems, loc, supplierId, 0);
-  } else {
-    showToast('GRV saved! ' + processedItems.length + ' product(s) received into ' + (loc==='warehouse'?'Warehouse':'Shop floor'), 'success');
+  // Clear pull block and pull fresh stock before adding quantities
+  window._blockPullUntil = 0;
+
+  function applyGRV() {
+    const products = DB.get('products') || [];
+    let totalValue = 0;
+    const processedItems = [];
+
+    validLines.forEach(function(line) {
+      var p = products.find(function(x){ return x.id === line.productId; });
+      if (!p && line.productId) p = products.find(function(x){ return (x.name||'').toLowerCase() === (line.productName||'').toLowerCase(); });
+
+      if (p) {
+        if (line.unitCost > 0) p.cost = line.unitCost;
+        if (loc === 'warehouse') { p.qtyWh = (p.qtyWh||0) + (line.qty||0); }
+        else                    { p.qty   = (p.qty||0)   + (line.qty||0); }
+        processedItems.push({ productId: p.id, productName: p.name, qty: line.qty, unitCost: line.unitCost||0, location: loc });
+      } else {
+        processedItems.push({ productId: null, productName: line.productName, qty: line.qty, unitCost: line.unitCost||0, location: loc, isNew: true });
+      }
+      totalValue += (line.qty||0) * (line.unitCost||0);
+    });
+
+    // Save products and immediately block pull for 3 minutes
+    DB.set('products', products);
+    window._blockPullUntil = Date.now() + 180000;
+
+    // Link to PO if selected
+    var linkedPONum = '';
+    if (linkedPOId) {
+      var allPOs  = DB.get('purchaseOrders') || [];
+      var linkedPO = allPOs.find(function(po){ return po.id === linkedPOId; });
+      if (linkedPO) {
+        linkedPONum = linkedPO.poNumber || '';
+        var allFullyReceived = linkedPO.items.every(function(poItem) {
+          var recv = processedItems.find(function(gi){ return gi.productId === poItem.productId; });
+          return recv && recv.qty >= (poItem.qty||0);
+        });
+        linkedPO.stockStatus = allFullyReceived ? 'received' : 'partial';
+        linkedPO.receivedAt  = new Date().toISOString();
+        linkedPO.receivedBy  = currentUser ? currentUser.name : null;
+        if (linkedPO.status === 'pending' || linkedPO.status === 'draft') linkedPO.status = 'confirmed';
+        DB.set('purchaseOrders', allPOs);
+        updatePOBadge();
+        renderPO && renderPO();
+      }
+    }
+
+    // Save GRV record
+    const grvRecs = DB.get('grvRecords') || [];
+    grvRecs.push({
+      id: uid(), grvNumber: grvNumber, date: grvDate,
+      supplierId: supplierId,
+      supplierName: sup ? sup.name : 'No supplier',
+      location: loc,
+      ref: grvRef.trim(), notes: grvNotes.trim(),
+      linkedPOId: linkedPOId, linkedPONum: linkedPONum,
+      items: processedItems, totalValue: totalValue,
+      staffId:   currentUser ? currentUser.id   : null,
+      staffName: currentUser ? currentUser.name : null,
+      createdAt: new Date().toISOString()
+    });
+    DB.set('grvRecords', grvRecs);
+
+    // Push to Firebase immediately — double push for reliability
+    clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+    jjPush(false);
+    setTimeout(function(){ jjPush(true); }, 5000);
+
+    renderInventory();
+    renderWarehouse && renderWarehouse();
+    checkReorderPoints();
+
+    // Handle new products
+    var newItems = processedItems.filter(function(i){ return i.isNew && !i.productId; });
+    if (newItems.length) {
+      showToast((processedItems.length - newItems.length) + ' products received. Creating ' + newItems.length + ' new product(s)...', 'success', 4000);
+      processNewGRVProducts(newItems, loc, supplierId, 0);
+    } else {
+      showToast('GRV saved! ' + processedItems.length + ' product(s) received into ' + (loc==='warehouse'?'🏭 Warehouse':'🏪 Shop floor'), 'success', 4000);
+    }
   }
+
+  // Pull fresh data first, then apply GRV on top of current quantities
+  jjPull(true, function() { applyGRV(); });
+  // Safety fallback — if pull takes >4 seconds, proceed with local data
+  var _applied = false;
+  var _origApply = applyGRV;
+  applyGRV = function() { if (_applied) return; _applied = true; _origApply(); };
+  setTimeout(function() { applyGRV(); }, 4000);
 }
 
 function processNewGRVProducts(newItems, loc, supplierId, idx) {
@@ -6784,7 +6887,112 @@ function renderPettyCashReport(el) {
     + '<div class="table-wrap"><table class="report-table">'
     + '<tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr>'
     + (expRows || '<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">No petty cash expenses logged</td></tr>')
-    + '</table></div></div>';
+    + '</table></div></div>'
+
+    // Export buttons
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">'
+    + '<button onclick="exportPettyCashCSV()" class="btn btn-secondary">&#x1F4E5; Export CSV</button>'
+    + '<button onclick="printPettyCashReport()" class="btn btn-secondary">&#x1F5A8; Print report</button>'
+    + '</div>';
+
+  // Store for print
+  window._lastPCReport = { pc, history: sorted, cashups, pcExpsList, tillExpsList, totalTopups, totalPCExps, totalTillExps };
+}
+
+function printPettyCashReport() {
+  var r = window._lastPCReport;
+  if (!r) { alert('Load the petty cash report first'); return; }
+
+  var ledgerRows = r.history.map(function(h) {
+    var delta = h.delta || 0;
+    var sign  = delta >= 0 ? '+' : '';
+    return '<tr><td>' + new Date(h.date).toLocaleDateString('en-ZA') + '</td>'
+      + '<td>' + (h.type||'') + '</td>'
+      + '<td>' + (h.reason||'') + '</td>'
+      + '<td>' + (h.category||'') + '</td>'
+      + '<td style="text-align:right;color:' + (delta>=0?'#16a34a':'#dc2626') + '">' + sign + 'R' + Math.abs(delta).toFixed(2) + '</td>'
+      + '<td style="text-align:right;font-weight:700">R' + (h.newBalance||0).toFixed(2) + '</td></tr>';
+  }).join('');
+
+  var cuRows = r.cashups.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); }).map(function(c) {
+    return '<tr><td>' + new Date(c.date).toLocaleDateString('en-ZA') + '</td>'
+      + '<td>' + (c.staffName||'') + '</td>'
+      + '<td style="text-align:right">R' + (c.cashSales||0).toFixed(2) + '</td>'
+      + '<td style="text-align:right">R' + (c.tillExpenses||0).toFixed(2) + '</td>'
+      + '<td style="text-align:right;color:#16a34a;font-weight:700">+R' + (c.toBank||0).toFixed(2) + '</td>'
+      + '<td style="text-align:right">R' + (c.pettyCashAfter||0).toFixed(2) + '</td></tr>';
+  }).join('');
+
+  var pcExpRows = r.pcExpsList.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); }).map(function(e) {
+    return '<tr><td>' + e.date + '</td><td>' + e.desc + '</td><td>' + (e.category||'') + '</td>'
+      + '<td style="text-align:right;color:#dc2626">-R' + e.amount.toFixed(2) + '</td></tr>';
+  }).join('');
+
+  printReport('Jack & Jill\'s Adventure Club — Petty Cash Report', 'All dates',
+    '<div class="kpi-row">'
+    + '<div class="kpi"><div class="kpi-label">Current balance</div><div class="kpi-val blue">R' + (r.pc.balance||0).toFixed(2) + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">Total banked in</div><div class="kpi-val green">R' + r.totalTopups.toFixed(2) + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">PC expenses out</div><div class="kpi-val red">R' + r.totalPCExps.toFixed(2) + '</div></div>'
+    + '<div class="kpi"><div class="kpi-label">Till expenses</div><div class="kpi-val amber">R' + r.totalTillExps.toFixed(2) + '</div></div>'
+    + '</div>'
+    + '<h3>Full ledger</h3>'
+    + '<table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Category</th><th>Change</th><th>Balance</th></tr></thead><tbody>'
+    + (ledgerRows || '<tr><td colspan="6" style="text-align:center">No transactions</td></tr>')
+    + '</tbody></table>'
+    + '<h3>Cashup top-ups</h3>'
+    + '<table><thead><tr><th>Date</th><th>Staff</th><th>Cash sales</th><th>Expenses</th><th>Banked</th><th>PC after</th></tr></thead><tbody>'
+    + (cuRows || '<tr><td colspan="6" style="text-align:center">No cashups</td></tr>')
+    + '</tbody></table>'
+    + '<h3>Petty cash expenses</h3>'
+    + '<table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead><tbody>'
+    + (pcExpRows || '<tr><td colspan="4" style="text-align:center">No petty cash expenses</td></tr>')
+    + '</tbody></table>'
+  );
+}
+
+function exportPettyCashCSV() {
+  var pc      = DB.getObj('pettyCash', {balance:0, history:[]});
+  var history = (pc.history || []).slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+
+  if (!history.length) { showToast('No petty cash history to export', 'error'); return; }
+
+  var lines = ['Date,Type,Description,Category,Change (R),Balance After (R)'];
+  history.forEach(function(h) {
+    var date    = new Date(h.date).toLocaleDateString('en-ZA');
+    var type    = h.type || '';
+    var reason  = '"' + (h.reason  || '').replace(/"/g,'""') + '"';
+    var cat     = '"' + (h.category|| '').replace(/"/g,'""') + '"';
+    var delta   = (h.delta   || 0).toFixed(2);
+    var balance = (h.newBalance || 0).toFixed(2);
+    lines.push([date, type, reason, cat, delta, balance].join(','));
+  });
+
+  // Also append cashup top-ups section
+  var cashups = DB.get('cashups') || [];
+  if (cashups.length) {
+    lines.push('');
+    lines.push('CASHUP TOP-UPS');
+    lines.push('Date,Staff,Cash Sales,Counted,Expenses,Banked,PC Before,PC After');
+    cashups.slice().sort(function(a,b){ return new Date(a.date)-new Date(b.date); }).forEach(function(c) {
+      lines.push([
+        new Date(c.date).toLocaleDateString('en-ZA'),
+        '"'+(c.staffName||'').replace(/"/g,'""')+'"',
+        (c.cashSales||0).toFixed(2),
+        (c.counted||0).toFixed(2),
+        (c.tillExpenses||0).toFixed(2),
+        (c.toBank||0).toFixed(2),
+        (c.pettyCashBefore||0).toFixed(2),
+        (c.pettyCashAfter||0).toFixed(2)
+      ].join(','));
+    });
+  }
+
+  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  var a    = document.createElement('a');
+  a.href   = URL.createObjectURL(blob);
+  a.download = 'JJ_PettyCash_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  showToast('Petty cash CSV downloaded ✓', 'success');
 }
 
 // ============================================================
@@ -9651,54 +9859,106 @@ function setRecvLoc(loc) {
 }
 
 function confirmPOReceipt(id, po, modal) {
-  var products = DB.get('products') || [];
-  var loc      = document.getElementById('recv-loc').value || 'shop';
-  var notes    = document.getElementById('recv-notes').value.trim();
-  var isConsignment = po.payStatus === 'consignment' || po.stockStatus === 'consignment';
-  var allReceived = true;
-  var receivedItems = [];
+  // Pull fresh stock first so we're adding to current quantities
+  window._blockPullUntil = 0;
 
+  var loc    = document.getElementById('recv-loc').value || 'shop';
+  var notes  = document.getElementById('recv-notes').value.trim();
+  var isConsignment = po.payStatus === 'consignment' || po.stockStatus === 'consignment';
+
+  // Collect qty inputs before async pull
+  var recvQtys = {};
   (po.items||[]).forEach(function(item, i) {
     var qtyInput = document.getElementById('recv-qty-' + i);
-    var recvQty  = parseInt(qtyInput ? qtyInput.value : item.qty) || 0;
-    if (recvQty < item.qty) allReceived = false;
-
-    var p = products.find(function(x){ return x.id === item.productId; });
-    if (p && recvQty > 0) {
-      if (loc === 'warehouse') p.qtyWh = (p.qtyWh||0) + recvQty;
-      else p.qty = (p.qty||0) + recvQty;
-
-      // Mark as consignment stock on product
-      if (isConsignment) {
-        p.consignment = p.consignment || [];
-        p.consignment.push({
-          poId: id, poNumber: po.poNumber, supplierName: po.supplierName,
-          qty: recvQty, dateReceived: new Date().toISOString(),
-          costPerUnit: item.unitCost, soldQty: 0, paidQty: 0
-        });
-      }
-    }
-    receivedItems.push({ productId: item.productId, productName: item.productName, qty: recvQty, unitCost: item.unitCost });
+    recvQtys[i]  = parseInt(qtyInput ? qtyInput.value : item.qty) || 0;
   });
 
-  DB.set('products', products);
+  function doReceive() {
+    var products = DB.get('products') || [];
+    var allReceived = true;
+    var receivedItems = [];
+    var totalValue = 0;
 
-  // Update PO status
-  var pos = DB.get('purchaseOrders') || [];
-  var poIdx = pos.findIndex(function(p){ return p.id === id; });
-  if (poIdx > -1) {
-    pos[poIdx].stockStatus  = allReceived ? 'received' : 'partial';
-    pos[poIdx].receivedAt   = new Date().toISOString();
-    pos[poIdx].receivedBy   = currentUser ? currentUser.name : '';
-    pos[poIdx].receivedNotes = notes;
-    pos[poIdx].receivedItems = receivedItems;
+    (po.items||[]).forEach(function(item, i) {
+      var recvQty = recvQtys[i] || 0;
+      if (recvQty < (item.qty||0)) allReceived = false;
+
+      var p = products.find(function(x){ return x.id === item.productId; });
+      if (p && recvQty > 0) {
+        if (loc === 'warehouse') p.qtyWh = (p.qtyWh||0) + recvQty;
+        else p.qty = (p.qty||0) + recvQty;
+        totalValue += recvQty * (item.unitCost||0);
+
+        if (isConsignment) {
+          p.consignment = p.consignment || [];
+          p.consignment.push({
+            poId: id, poNumber: po.poNumber, supplierName: po.supplierName,
+            qty: recvQty, dateReceived: new Date().toISOString(),
+            costPerUnit: item.unitCost, soldQty: 0, paidQty: 0
+          });
+        }
+      }
+      receivedItems.push({ productId: item.productId, productName: item.productName, qty: recvQty, unitCost: item.unitCost||0 });
+    });
+
+    // Save updated stock quantities
+    DB.set('products', products);
+    // Block pull for 3 minutes so Firebase doesn't overwrite what we just added
+    window._blockPullUntil = Date.now() + 180000;
+
+    // Auto-create a GRV record so stock receipt is fully audited
+    var grvs = DB.get('grvRecords') || [];
+    var grvNum = 'GRV' + String(grvs.length + 1).padStart(4, '0');
+    grvs.push({
+      id: uid(),
+      grvNumber: grvNum,
+      date: new Date().toISOString().slice(0,10),
+      supplierId:   po.supplierId   || '',
+      supplierName: po.supplierName || 'Unknown supplier',
+      location: loc,
+      ref: po.poNumber || '',
+      notes: 'Auto-GRV from PO receipt' + (notes ? ' — ' + notes : ''),
+      linkedPOId:  id,
+      linkedPONum: po.poNumber || '',
+      items: receivedItems,
+      totalValue: totalValue,
+      staffId:   currentUser ? currentUser.id   : null,
+      staffName: currentUser ? currentUser.name : null,
+      createdAt: new Date().toISOString()
+    });
+    DB.set('grvRecords', grvs);
+
+    // Update PO status
+    var pos = DB.get('purchaseOrders') || [];
+    var poIdx = pos.findIndex(function(p){ return p.id === id; });
+    if (poIdx > -1) {
+      pos[poIdx].stockStatus   = allReceived ? 'received' : 'partial';
+      pos[poIdx].status        = 'confirmed';
+      pos[poIdx].receivedAt    = new Date().toISOString();
+      pos[poIdx].receivedBy    = currentUser ? currentUser.name : '';
+      pos[poIdx].receivedNotes = notes;
+      pos[poIdx].receivedItems = receivedItems;
+      pos[poIdx].grvNumber     = grvNum;
+    }
+    DB.set('purchaseOrders', pos);
+
+    // Push to Firebase immediately — double-push for reliability
+    clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+    jjPush(false);
+    setTimeout(function(){ jjPush(true); }, 5000);
+
+    renderInventory();
+    renderPO && renderPO();
+    modal.remove();
+    showToast('Stock received! ' + grvNum + ' created. ' + (allReceived ? 'PO fully received.' : 'Partially received.'), 'success', 5000);
   }
-  DB.set('purchaseOrders', pos);
 
-  renderInventory();
-  renderPO && renderPO();
-  modal.remove();
-  showToast('Stock received! ' + (allReceived ? 'PO fully received.' : 'Partially received.'), 'success', 4000);
+  // Pull fresh data first, then apply the receipt on top
+  jjPull(true, function() { doReceive(); });
+  // If pull takes too long (>3s), proceed anyway with local data
+  setTimeout(function() {
+    if (modal && modal.parentNode) doReceive();
+  }, 3000);
 }
 
 // ============================================================
