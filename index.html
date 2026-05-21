@@ -709,18 +709,52 @@ table.report-table .neg{color:var(--red)}
 
   <!-- EXPENSES TAB -->
   <div class="tab-pane" id="tab-expenses">
-    <div class="flex-between" style="margin-bottom:8px">
-      <div class="section-title" style="margin:0">Expenses</div>
-      <button class="btn btn-primary btn-sm" onclick="openAddExpense()">+ Add expense</button>
+
+    <!-- Header -->
+    <div class="flex-between" style="margin-bottom:10px">
+      <div class="section-title" style="margin:0">Cash &amp; Expenses</div>
+      <button class="btn btn-primary btn-sm" onclick="openAddExpense()">+ Add</button>
     </div>
+
+    <!-- Petty Cash Balance Bar -->
+    <div style="background:var(--accent);border-radius:12px;padding:14px 16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-size:10px;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">Petty Cash Balance</div>
+          <div id="pcd-balance" style="font-size:30px;font-weight:900;color:#fff">R0.00</div>
+          <div id="pcd-bal-status" style="font-size:11px;color:rgba(255,255,255,.7);margin-top:2px"></div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <input id="pcd-set-input" type="number" step="0.01" placeholder="R0.00"
+            style="width:80px;padding:6px 8px;border-radius:8px;border:none;font-size:13px;font-weight:700;text-align:right;background:rgba(255,255,255,.2);color:#fff">
+          <button onclick="pcdSetBalance()" style="padding:7px 12px;background:#fff;color:var(--accent);border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer">Set</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Month navigator -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button onclick="pcdChangeMonth(-1)" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">&#8249;</button>
+      <div id="pcd-month-label" style="flex:1;text-align:center;font-weight:800;font-size:15px;color:var(--text)"></div>
+      <button onclick="pcdChangeMonth(+1)" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">&#8250;</button>
+    </div>
+
+    <!-- Monthly KPI summary -->
+    <div id="pcd-kpis" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px"></div>
+
+    <!-- Category filter pills -->
+    <div id="pcd-pills" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>
+
+    <!-- Action buttons -->
     <div style="display:flex;gap:6px;margin-bottom:10px">
-      <button onclick="backlogPOExpenses();deduplicateExpenses()" style="flex:1;padding:7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer">🔄 Sync PO expenses</button>
-      <button onclick="if(deduplicateExpenses()===0)showToast('No duplicates found ✓','success')" style="flex:1;padding:7px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text3);cursor:pointer">🧹 Remove duplicates</button>
+      <button onclick="pcdExportCSV()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F4E5; Export CSV</button>
+      <button onclick="pcdPrint()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F5A8; Print</button>
+      <button onclick="backlogPOExpenses();deduplicateExpenses();renderPCDashboard()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F504; Sync</button>
     </div>
-    <div class="stats-row-3" id="exp-stats"></div>
-    <div class="filter-row" id="exp-cat-filters"></div>
-    <div id="pending-expenses-banner" style="display:none;background:var(--amber-bg);border:1px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:10px"></div>
-    <div id="expenses-list"></div>
+
+    <!-- Daily ledger -->
+    <div id="pcd-ledger"></div>
+
   </div>
 
   <!-- CASHUP TAB -->
@@ -900,6 +934,8 @@ table.report-table .neg{color:var(--red)}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> Cash Up
   </button>
   <button id="menu-expenses" class="more-menu-item" onclick="switchTab('expenses',null);closeMoreMenu()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.48 2.68 3.66 3.19 1.95.46 2.34 1.14 2.34 1.86 0 .53-.39 1.39-2.1 1.39-1.6 0-2.23-.72-2.32-1.64H8.04c.1 1.7 1.37 2.66 2.86 2.97V19h2.34v-1.67c1.52-.29 2.72-1.16 2.73-2.77-.01-2.2-1.9-2.96-3.66-3.42z"/></svg>
+      Cash &amp; Expenses
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> Expenses
   </button>
   <button id="menu-staff" class="more-menu-item" onclick="switchTab('staff',null);closeMoreMenu()">
@@ -1788,7 +1824,7 @@ function switchTab(tab, btn) {
   else if (tab==='po') renderPO();
   else if (tab==='writeoffs') renderWriteoffs();
   else if (tab==='staff') renderStaff();
-  else if (tab==='expenses') renderExpenses();
+  else if (tab==='expenses') { _pcdMonth=new Date().getMonth(); _pcdYear=new Date().getFullYear(); renderPCDashboard(); }
   else if (tab==='cashup') { renderCashup(); setTimeout(checkClockOutForCashup, 300); }
   else if (tab==='reports') initReports();
   else if (tab==='warehouse') renderWarehouse();
@@ -4641,52 +4677,314 @@ function reloadInventoryData() {
 // ============================================================
 const EXP_COLORS = ['#6c63ff','#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'];
 
-function renderExpenses() {
-  const exps = DB.get('expenses');
-  const now = new Date();
-  const thisMonth = exps.filter(e=>new Date(e.date).getMonth()===new Date().getMonth()&&new Date(e.date).getFullYear()===now.getFullYear());
-  const monthTotal = thisMonth.reduce((a,e)=>a+e.amount,0);
-  const allTotal = exps.reduce((a,e)=>a+e.amount,0);
-  const cats = [...new Set(exps.map(e=>e.category))];
+// ── Unified Cash & Expenses Dashboard ────────────────────────────────────────
+var _pcdMonth = new Date().getMonth();
+var _pcdYear  = new Date().getFullYear();
+var _pcdCat   = 'all';
 
-  document.getElementById('exp-stats').innerHTML = `
-    <div class="stat-tile"><div class="stat-label">This month</div><div class="stat-value red">${fmt(monthTotal)}</div></div>
-    <div class="stat-tile"><div class="stat-label">All-time</div><div class="stat-value">${fmt(allTotal)}</div></div>
-    <div class="stat-tile"><div class="stat-label">Records</div><div class="stat-value">${exps.length}</div></div>`;
+var PCD_CATS = {
+  'Cashup banked':   { icon:'💰', color:'#16a34a', type:'in'  },
+  'Salaries':        { icon:'👤', color:'#7c3aed', type:'out' },
+  'Rent & Utilities':{ icon:'🏠', color:'#2563eb', type:'out' },
+  'Stock purchase':  { icon:'📦', color:'#d97706', type:'out' },
+  'Till expense':    { icon:'🧾', color:'#64748b', type:'out' },
+  'Equipment':       { icon:'🔧', color:'#0891b2', type:'out' },
+  'Other':           { icon:'📌', color:'#9ca3af', type:'out' },
+};
 
-  const cf = document.getElementById('exp-cat-filters');
-  const activeCat = cf.querySelector('.pill.active')?.dataset.cat || 'all';
-  cf.innerHTML = ['all',...cats].map(c=>`<button class="pill${activeCat===c?' active':''}" data-cat="${c}" onclick="filterExpCat('${c}',this)">${c==='all'?'All':c}</button>`).join('');
+function catInfo(cat) {
+  if (!cat) return PCD_CATS['Other'];
+  if (cat.toLowerCase().includes('salar') || cat.toLowerCase().includes('wage')) return PCD_CATS['Salaries'];
+  if (cat.toLowerCase().includes('rent') || cat.toLowerCase().includes('util') || cat.toLowerCase().includes('electr')) return PCD_CATS['Rent & Utilities'];
+  if (cat.toLowerCase().includes('stock') || cat.toLowerCase().includes('purchase') || cat.toLowerCase().includes('po')) return PCD_CATS['Stock purchase'];
+  if (cat.toLowerCase().includes('till') || cat.toLowerCase().includes('float')) return PCD_CATS['Till expense'];
+  if (cat.toLowerCase().includes('equip') || cat.toLowerCase().includes('maint') || cat.toLowerCase().includes('trink')) return PCD_CATS['Equipment'];
+  return PCD_CATS[cat] || PCD_CATS['Other'];
+}
 
-  const list = activeCat==='all' ? exps : exps.filter(e=>e.category===activeCat);
-  const el = document.getElementById('expenses-list');
-  if (!list.length) { el.innerHTML='<div class="empty"><p>No expenses yet</p></div>'; return; }
+function pcdChangeMonth(delta) {
+  _pcdMonth += delta;
+  if (_pcdMonth > 11) { _pcdMonth = 0;  _pcdYear++; }
+  if (_pcdMonth < 0)  { _pcdMonth = 11; _pcdYear--; }
+  _pcdCat = 'all';
+  renderPCDashboard();
+}
 
-  el.innerHTML = [...list].reverse().map(e=>{
-    const ci = cats.indexOf(e.category)%EXP_COLORS.length;
-    return `<div class="exp-row">
-      <div class="flex-between">
-        <div><span class="exp-category-dot" style="background:${EXP_COLORS[ci]}"></span><span class="bold text-sm">${e.desc}</span></div>
-        <div class="bold red">${fmt(e.amount)}</div>
-      </div>
-      <div class="flex-between mt-4">
-        <div class="text-xs text-muted">${e.category} · ${e.payMethod} · ${fmtDate(e.date)}</div>
-        ${e.status && e.status !== 'paid' ? `<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;background:${e.status==='pending'?'var(--amber-bg)':e.status==='overdue'?'var(--red-bg)':'var(--blue-bg)'};color:${e.status==='pending'?'var(--amber)':e.status==='overdue'?'var(--red)':'var(--blue)'}">${e.status==='pending'?'⏳ Pending':e.status==='overdue'?'🔴 Overdue':'📒 On account'}</span>` : ''}
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary btn-sm" onclick="editExpense('${e.id}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteExpense('${e.id}')">Del</button>
-        </div>
-      </div>
-      ${e.notes?`<div class="text-xs text-muted mt-4">${e.notes}</div>`:''}
-    </div>`;
+function pcdSetBalance() {
+  var val = parseFloat(document.getElementById('pcd-set-input').value);
+  if (isNaN(val)) { showToast('Enter a valid amount', 'error'); return; }
+  updatePettyCash(val - getPettyCash().balance, 'Balance manually set to ' + fmt(val), 'set');
+  document.getElementById('pcd-set-input').value = '';
+  renderPCDashboard();
+  jjPush(false);
+  showToast('Petty cash balance set to ' + fmt(val) + ' ✓', 'success');
+}
+
+function renderPCDashboard() {
+  // Update balance display
+  var pc  = getPettyCash();
+  var bal = pc.balance || 0;
+  var balEl = document.getElementById('pcd-balance');
+  if (balEl) {
+    balEl.textContent = fmt(bal);
+    balEl.style.color = bal < 0 ? '#fca5a5' : '#fff';
+  }
+  var statusEl = document.getElementById('pcd-bal-status');
+  if (statusEl) statusEl.textContent = bal < 0 ? '⚠️ Overdrawn' : bal < 200 ? '⚠️ Running low' : '✓ Healthy';
+
+  // Month label
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var mlEl = document.getElementById('pcd-month-label');
+  if (mlEl) mlEl.textContent = monthNames[_pcdMonth] + ' ' + _pcdYear;
+
+  // Build unified ledger for this month
+  var exps    = DB.get('expenses') || [];
+  var cashups = DB.get('cashups')  || [];
+  var pcHist  = (pc.history || []);
+
+  // Combine all events for this month
+  var events = [];
+
+  // Cashup banking (money IN to petty cash)
+  cashups.forEach(function(c) {
+    var d = new Date(c.date);
+    if (d.getMonth() !== _pcdMonth || d.getFullYear() !== _pcdYear) return;
+    if ((c.toBank || 0) === 0) return;
+    events.push({
+      id: c.id, date: c.date, dateStr: c.date.slice(0,10),
+      type: 'in', entryType: 'cashup',
+      desc: 'Cashup banked',
+      detail: c.staffName || c.staff || '',
+      category: 'Cashup banked',
+      amount: c.toBank || 0,
+      cashSales: c.cashSales || 0,
+      tillExp: c.tillExpenses || c.cashExpenses || 0,
+      counted: c.counted || 0,
+      variance: c.variance || 0,
+      payMethod: 'cash'
+    });
+  });
+
+  // All expenses for this month
+  exps.forEach(function(e) {
+    var d = new Date(e.date);
+    if (d.getMonth() !== _pcdMonth || d.getFullYear() !== _pcdYear) return;
+    var isTill = e.payMethod === 'Cash Sales' || e.payMethod === 'cash' || (e.category||'').toLowerCase().includes('till');
+    var isPC   = e.payMethod === 'petty_cash' || e.payMethod === 'Petty Cash';
+    events.push({
+      id: e.id, date: e.date+'T20:00:00Z', dateStr: e.date,
+      type: 'out', entryType: isPC ? 'pc_expense' : isTill ? 'till_expense' : 'expense',
+      desc: e.desc, detail: e.notes || '',
+      category: e.category || 'Other',
+      amount: e.amount || 0,
+      payMethod: e.payMethod || '',
+      status: e.status || 'paid',
+      expId: e.id
+    });
+  });
+
+  // Sort by date then type (cashup before expenses on same day)
+  events.sort(function(a,b){
+    var da = new Date(a.date), db = new Date(b.date);
+    if (da - db !== 0) return da - db;
+    if (a.entryType === 'cashup') return -1;
+    if (b.entryType === 'cashup') return 1;
+    return 0;
+  });
+
+  // Category filter
+  var filtEvents = _pcdCat === 'all' ? events : events.filter(function(e){
+    if (_pcdCat === 'Cashup banked') return e.entryType === 'cashup';
+    if (_pcdCat === 'Till expense')  return e.entryType === 'till_expense';
+    if (_pcdCat === 'PC expense')    return e.entryType === 'pc_expense';
+    return catInfo(e.category) === PCD_CATS[_pcdCat] || e.category === _pcdCat;
+  });
+
+  // KPIs
+  var totalIn     = events.filter(e=>e.entryType==='cashup').reduce((a,e)=>a+e.amount,0);
+  var totalWages  = events.filter(e=>catInfo(e.category)===PCD_CATS['Salaries']).reduce((a,e)=>a+e.amount,0);
+  var totalRent   = events.filter(e=>catInfo(e.category)===PCD_CATS['Rent & Utilities']).reduce((a,e)=>a+e.amount,0);
+  var totalStock  = events.filter(e=>catInfo(e.category)===PCD_CATS['Stock purchase']).reduce((a,e)=>a+e.amount,0);
+  var totalTill   = events.filter(e=>e.entryType==='till_expense').reduce((a,e)=>a+e.amount,0);
+  var totalPCOut  = events.filter(e=>e.entryType==='pc_expense').reduce((a,e)=>a+e.amount,0);
+  var totalOut    = events.filter(e=>e.type==='out').reduce((a,e)=>a+e.amount,0);
+
+  var kpiEl = document.getElementById('pcd-kpis');
+  if (kpiEl) kpiEl.innerHTML = [
+    ['💰 Banked in',   fmt(totalIn),    '#16a34a'],
+    ['👤 Wages',       fmt(totalWages), '#7c3aed'],
+    ['🏠 Rent/Utils',  fmt(totalRent),  '#2563eb'],
+    ['📦 Stock',       fmt(totalStock), '#d97706'],
+    ['🧾 Till exp',    fmt(totalTill),  '#64748b'],
+    ['📌 PC expenses', fmt(totalPCOut), '#dc2626'],
+  ].map(function(k) {
+    return '<div style="background:var(--bg3);border-radius:10px;padding:10px 8px;text-align:center">'
+      + '<div style="font-size:10px;color:var(--text3);margin-bottom:3px">' + k[0] + '</div>'
+      + '<div style="font-size:14px;font-weight:800;color:' + k[2] + '">' + k[1] + '</div>'
+      + '</div>';
   }).join('');
+
+  // Category pills
+  var pillEl = document.getElementById('pcd-pills');
+  if (pillEl) {
+    var catPills = ['all','Cashup banked','Salaries','Rent & Utilities','Stock purchase','Till expense','PC expense','Equipment','Other'];
+    pillEl.innerHTML = catPills.map(function(c) {
+      var active = _pcdCat === c;
+      return '<button onclick="pcdFilterCat(\'' + c + '\')" style="padding:5px 11px;border-radius:20px;border:1.5px solid '
+        + (active ? 'var(--accent)' : 'var(--border)') + ';background:'
+        + (active ? 'var(--accent)' : 'var(--bg3)') + ';color:'
+        + (active ? '#fff' : 'var(--text3)') + ';font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
+        + (c === 'all' ? 'All' : c) + '</button>';
+    }).join('');
+  }
+
+  // Build daily ledger — group by date
+  var byDate = {};
+  filtEvents.forEach(function(e) {
+    if (!byDate[e.dateStr]) byDate[e.dateStr] = [];
+    byDate[e.dateStr].push(e);
+  });
+
+  var ledgerEl = document.getElementById('pcd-ledger');
+  if (!ledgerEl) return;
+
+  if (!filtEvents.length) {
+    ledgerEl.innerHTML = '<div class="empty"><p>No records for ' + monthNames[_pcdMonth] + ' ' + _pcdYear + '</p></div>';
+    return;
+  }
+
+  var html = '';
+  Object.keys(byDate).sort().forEach(function(dateStr) {
+    var dayEvents = byDate[dateStr];
+    var dayIn  = dayEvents.filter(e=>e.type==='in').reduce((a,e)=>a+e.amount,0);
+    var dayOut = dayEvents.filter(e=>e.type==='out').reduce((a,e)=>a+e.amount,0);
+    var d = new Date(dateStr + 'T12:00:00');
+    var dayLabel = d.toLocaleDateString('en-ZA', {weekday:'short', day:'numeric', month:'short'});
+
+    html += '<div style="margin-bottom:10px">';
+    // Day header
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--bg3);border-radius:8px;margin-bottom:4px">';
+    html += '<span style="font-size:12px;font-weight:700;color:var(--text2)">' + dayLabel + '</span>';
+    html += '<span style="font-size:11px">';
+    if (dayIn > 0)  html += '<span style="color:#16a34a;font-weight:700">+' + fmt(dayIn) + '</span> ';
+    if (dayOut > 0) html += '<span style="color:#dc2626;font-weight:700">-' + fmt(dayOut) + '</span>';
+    html += '</span></div>';
+
+    // Day rows
+    dayEvents.forEach(function(e) {
+      var ci = catInfo(e.category);
+      var isCashup = e.entryType === 'cashup';
+      var isTill   = e.entryType === 'till_expense';
+      var isPC     = e.entryType === 'pc_expense';
+
+      html += '<div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:4px;border-left:3px solid ' + (e.type==='in' ? '#16a34a' : ci.color) + '">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+      html += '<div style="flex:1">';
+      html += '<div style="font-size:13px;font-weight:700;color:var(--text)">' + ci.icon + ' ' + e.desc + '</div>';
+
+      // Cashup detail
+      if (isCashup) {
+        html += '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
+          + 'Cash sales: ' + fmt(e.cashSales) + ' · Counted: ' + fmt(e.counted)
+          + ' · Till exp: ' + fmt(e.tillExp)
+          + (e.variance !== 0 ? ' · Variance: <span style="color:' + (e.variance>=0?'#16a34a':'#dc2626') + '">' + (e.variance>0?'+':'') + fmt(e.variance) + '</span>' : '')
+          + (e.detail ? ' · ' + e.detail : '')
+          + '</div>';
+      } else {
+        html += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'
+          + e.category
+          + (isTill ? ' · <span style="color:#64748b">Till cash</span>' : '')
+          + (isPC   ? ' · <span style="color:#7c3aed">Petty cash</span>' : '')
+          + (e.detail ? ' · ' + e.detail : '')
+          + '</div>';
+      }
+      html += '</div>';
+      html += '<div style="text-align:right;margin-left:12px">';
+      html += '<div style="font-size:15px;font-weight:800;color:' + (e.type==='in' ? '#16a34a' : '#dc2626') + '">'
+        + (e.type==='in' ? '+' : '-') + fmt(e.amount) + '</div>';
+      if (!isCashup && e.expId) {
+        html += '<div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end">'
+          + '<button onclick="editExpense(\'' + e.expId + '\')" style="padding:3px 8px;font-size:10px;font-weight:700;border-radius:6px;border:1px solid var(--border);background:var(--bg3);cursor:pointer;color:var(--text2)">Edit</button>'
+          + '<button onclick="deleteExpense(\'' + e.expId + '\')" style="padding:3px 8px;font-size:10px;font-weight:700;border-radius:6px;border:1px solid var(--red);background:var(--red-bg);cursor:pointer;color:var(--red)">Del</button>'
+          + '</div>';
+      }
+      html += '</div></div></div>';
+    });
+    html += '</div>';
+  });
+
+  ledgerEl.innerHTML = html;
 }
 
-function filterExpCat(cat, btn) {
-  document.querySelectorAll('#exp-cat-filters .pill').forEach(p=>p.classList.remove('active'));
-  btn.classList.add('active');
-  renderExpenses();
+function pcdFilterCat(cat) {
+  _pcdCat = cat;
+  renderPCDashboard();
 }
+
+function renderExpenses() { renderPCDashboard(); }
+function filterExpCat()   { renderPCDashboard(); }
+
+function pcdExportCSV() {
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var exps    = DB.get('expenses') || [];
+  var cashups = DB.get('cashups')  || [];
+  var pc      = getPettyCash();
+
+  var q = function(s){ return '"' + String(s||'').replace(/"/g,'""') + '"'; };
+  var r = function(n){ return 'R' + parseFloat(n||0).toFixed(2); };
+
+  var rows = [];
+  rows.push(['JACK & JILL\'S ADVENTURE CLUB - CASH & EXPENSES REPORT','','','','','','','']);
+  rows.push(['Month:', monthNames[_pcdMonth] + ' ' + _pcdYear, 'Generated:', new Date().toLocaleString('en-ZA'), '', '', '', '']);
+  rows.push(['Petty Cash Balance:', r(pc.balance||0), '', '', '', '', '', '']);
+  rows.push(['','','','','','','','']);
+  rows.push(['DAILY LEDGER','','','','','','','']);
+  rows.push(['Date','Type','Description','Category','Paid From','Money In','Money Out','Notes']);
+
+  // Combined events sorted by date
+  var all = [];
+  cashups.filter(function(c){ return new Date(c.date).getFullYear()===_pcdYear && new Date(c.date).getMonth()===_pcdMonth; })
+    .forEach(function(c){ if(c.toBank||0) all.push({date:c.date.slice(0,10),type:'Cashup banked',desc:'Cash banked from till',cat:'Cashup banked',pay:'Cash',in:c.toBank,out:0,notes:(c.staffName||'')+' | Sales:'+r(c.cashSales)+'| TillExp:'+r(c.tillExpenses||0)}); });
+  exps.filter(function(e){ return new Date(e.date).getFullYear()===_pcdYear && new Date(e.date).getMonth()===_pcdMonth; })
+    .forEach(function(e){ all.push({date:e.date,type:e.payMethod==='petty_cash'||e.payMethod==='Petty Cash'?'PC Expense':e.payMethod==='Cash Sales'||e.payMethod==='cash'?'Till Expense':'Expense',desc:e.desc,cat:e.category||'Other',pay:e.payMethod,in:0,out:e.amount,notes:e.notes||''}); });
+  all.sort(function(a,b){ return a.date.localeCompare(b.date); });
+  all.forEach(function(e){ rows.push([e.date, q(e.type), q(e.desc), q(e.cat), q(e.pay), e.in?r(e.in):'', e.out?r(e.out):'', q(e.notes)]); });
+
+  rows.push(['','','','','','','','']);
+  rows.push(['CATEGORY SUMMARY FOR ' + monthNames[_pcdMonth].toUpperCase(),'','','','','','','']);
+  rows.push(['Category','Total Out','% of expenses','','','','','']);
+  var catTotals = {};
+  all.filter(e=>e.out>0).forEach(function(e){ catTotals[e.cat]=(catTotals[e.cat]||0)+e.out; });
+  var grandOut = Object.values(catTotals).reduce(function(a,v){ return a+v; }, 0);
+  Object.entries(catTotals).sort(function(a,b){ return b[1]-a[1]; }).forEach(function(pair){
+    rows.push([q(pair[0]), r(pair[1]), grandOut?(pair[1]/grandOut*100).toFixed(1)+'%':'0%','','','','','']);
+  });
+  rows.push(['TOTAL OUT', r(grandOut), '100%','','','','','']);
+
+  var bom = '\uFEFF';
+  var csv = bom + rows.map(function(row){ return row.join(','); }).join('\r\n');
+  var blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'JJ_CashExpenses_' + _pcdYear + '-' + String(_pcdMonth+1).padStart(2,'0') + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('CSV downloaded ✓', 'success');
+}
+
+function pcdPrint() {
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var ledgerEl = document.getElementById('pcd-ledger');
+  var kpiEl    = document.getElementById('pcd-kpis');
+  var pc       = getPettyCash();
+  if (!ledgerEl) return;
+  printReport(
+    "Jack & Jill's Adventure Club — Cash & Expenses",
+    monthNames[_pcdMonth] + ' ' + _pcdYear + ' · Petty Cash Balance: ' + fmt(pc.balance||0),
+    (kpiEl ? '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">' + kpiEl.innerHTML.replace(/style="/g, 'style="min-width:80px;') + '</div>' : '')
+    + ledgerEl.innerHTML
+  );
+}
+
 
 function openAddExpense() {
   ['ex-desc','ex-amount','ex-notes','ex-id'].forEach(id=>document.getElementById(id).value='');
@@ -4982,7 +5280,7 @@ function updatePettyCash(delta, reason, type, category) {
   pc.lastUpdated = new Date().toISOString();
   pc.lastReason  = reason;
   // Always push a history entry
-  if (!pc.history) pc.history = [];
+  if (!pc.history) pc.history = [{"date": "2026-05-01T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 533, "oldBalance": 7, "newBalance": 540, "by": "import"}, {"date": "2026-05-01T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wage", "category": "Salaries", "delta": -350, "oldBalance": 540, "newBalance": 190, "by": "import"}, {"date": "2026-05-02T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 886, "oldBalance": 190, "newBalance": 1076, "by": "import"}, {"date": "2026-05-03T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 96, "oldBalance": 1076, "newBalance": 1172, "by": "import"}, {"date": "2026-05-03T20:00:00.000Z", "type": "expense", "reason": "Rent contribution cash", "category": "Rent", "delta": -100, "oldBalance": 1172, "newBalance": 1072, "by": "import"}, {"date": "2026-05-04T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 301, "oldBalance": 1072, "newBalance": 1373, "by": "import"}, {"date": "2026-05-04T20:00:00.000Z", "type": "expense", "reason": "Charne Mon+Tues wages", "category": "Salaries", "delta": -700, "oldBalance": 1373, "newBalance": 673, "by": "import"}, {"date": "2026-05-05T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 124, "oldBalance": 673, "newBalance": 797, "by": "import"}, {"date": "2026-05-05T20:00:00.000Z", "type": "expense", "reason": "Charne Wed wages", "category": "Salaries", "delta": -350, "oldBalance": 797, "newBalance": 447, "by": "import"}, {"date": "2026-05-06T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 588, "oldBalance": 447, "newBalance": 1035, "by": "import"}, {"date": "2026-05-07T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 650, "oldBalance": 1035, "newBalance": 1685, "by": "import"}, {"date": "2026-05-07T20:00:00.000Z", "type": "expense", "reason": "Charne Thurs wages", "category": "Salaries", "delta": -350, "oldBalance": 1685, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 0, "oldBalance": 1335, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wages", "category": "Salaries", "delta": -350, "oldBalance": 1335, "newBalance": 985, "by": "import"}, {"date": "2026-05-08T20:30:00.000Z", "type": "expense", "reason": "MacBook Pro maintenance", "category": "Equipment", "delta": -200, "oldBalance": 985, "newBalance": 785, "by": "import"}, {"date": "2026-05-09T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 1220, "oldBalance": 785, "newBalance": 2005, "by": "import"}, {"date": "2026-05-10T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 540, "oldBalance": 2005, "newBalance": 2545, "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -300, "oldBalance": 2545, "newBalance": 2245, "by": "import"}, {"date": "2026-05-10T20:30:00.000Z", "type": "expense", "reason": "Electricity set aside cash", "category": "Utilities", "delta": -300, "oldBalance": 2245, "newBalance": 1945, "by": "import"}, {"date": "2026-05-10T21:00:00.000Z", "type": "expense", "reason": "Charne Monday wages", "category": "Salaries", "delta": -350, "oldBalance": 1945, "newBalance": 1595, "by": "import"}, {"date": "2026-05-11T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 904, "oldBalance": 1595, "newBalance": 2499, "by": "import"}, {"date": "2026-05-12T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 370, "oldBalance": 2499, "newBalance": 2869, "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "reason": "Charne Tues wages", "category": "Salaries", "delta": -350, "oldBalance": 2869, "newBalance": 2519, "by": "import"}, {"date": "2026-05-12T20:30:00.000Z", "type": "expense", "reason": "Shaun PO110526-SHAUN", "category": "Stock purchase", "delta": -750, "oldBalance": 2519, "newBalance": 1769, "by": "import"}, {"date": "2026-05-13T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -16, "oldBalance": 1769, "newBalance": 1753, "by": "import"}, {"date": "2026-05-14T10:00:00.000Z", "type": "expense", "reason": "Trink Consumables stationery cleaning ink", "category": "Equipment", "delta": -1205, "oldBalance": 1753, "newBalance": 548, "by": "import"}, {"date": "2026-05-14T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 489, "oldBalance": 548, "newBalance": 1037, "by": "import"}, {"date": "2026-05-15T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 540, "oldBalance": 1037, "newBalance": 1577, "by": "import"}, {"date": "2026-05-15T20:00:00.000Z", "type": "expense", "reason": "Charne wages Wed & Thurs", "category": "Salaries", "delta": -700, "oldBalance": 1577, "newBalance": 877, "by": "import"}, {"date": "2026-05-16T10:00:00.000Z", "type": "expense", "reason": "Charne wages Fri & Sat", "category": "Salaries", "delta": -700, "oldBalance": 877, "newBalance": 177, "by": "import"}, {"date": "2026-05-16T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 107, "oldBalance": 177, "newBalance": 284, "by": "import"}, {"date": "2026-05-17T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 285, "oldBalance": 284, "newBalance": 569, "by": "import"}, {"date": "2026-05-18T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 732, "oldBalance": 569, "newBalance": 1301, "by": "import"}, {"date": "2026-05-18T20:00:00.000Z", "type": "expense", "reason": "Charne Monday wage", "category": "Salaries", "delta": -350, "oldBalance": 1301, "newBalance": 951, "by": "import"}, {"date": "2026-05-19T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -6, "oldBalance": 951, "newBalance": 945, "by": "import"}, {"date": "2026-05-20T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 514, "oldBalance": 945, "newBalance": 1459, "by": "import"}, {"date": "2026-05-20T20:00:00.000Z", "type": "expense", "reason": "Charne Tues & Wed wages", "category": "Salaries", "delta": -700, "oldBalance": 1459, "newBalance": 759, "by": "import"}, {"date": "2026-05-20T20:30:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -200, "oldBalance": 759, "newBalance": 559, "by": "import"}, {"date": "2026-05-20T21:00:00.000Z", "type": "expense", "reason": "Charne Thursday wage", "category": "Salaries", "delta": -350, "oldBalance": 559, "newBalance": 209, "by": "import"}];
   pc.history.push({
     id: (typeof uid === 'function' ? uid() : Date.now().toString(36)),
     date: new Date().toISOString(),
@@ -9767,7 +10065,7 @@ function openQuickNewProduct(defaultName, callback) {
   // Set petty cash balance and history
   var pc = DB.getObj('pettyCash', {balance:0, history:[]});
   if (!pc.history || pc.history.length < 5) {
-    pc.balance = 284.0;  // correct opening balance before 17 May cashup
+    pc.balance = 209;  // correct balance after 20 May per spreadsheet
     pc.history = [
   {
     "date": "2026-05-01T18:00:00.000Z",
@@ -10886,7 +11184,7 @@ function setDelivery(isDelivery) {
   if (localStorage.getItem(doneKey)) return;
 
   var newCashups  = [{"id": "pndpsipn", "date": "2026-05-01T23:59:00.000Z", "staffName": "Charne & Jordan", "totalSales": 1058, "counted": 1058, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 525, "toBank": 533, "variance": 0, "pettyCashBefore": 0, "pettyCashAfter": 533, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "ksi8eful", "date": "2026-05-02T23:59:00.000Z", "staffName": "Jordan", "totalSales": 1410, "counted": 1410, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 524, "toBank": 886, "variance": 0, "pettyCashBefore": 183, "pettyCashAfter": 1069, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "38iwv1kq", "date": "2026-05-03T23:59:00.000Z", "staffName": "Jordan", "totalSales": 295, "counted": 295, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 199, "toBank": 96, "variance": 0, "pettyCashBefore": 1069, "pettyCashAfter": 1165, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "k9gyl6v5", "date": "2026-05-04T23:59:00.000Z", "staffName": "Charne & Jordan", "totalSales": 730, "counted": 730, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 429, "toBank": 301, "variance": 0, "pettyCashBefore": 1065, "pettyCashAfter": 1366, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "is408p9y", "date": "2026-05-05T23:59:00.000Z", "staffName": "Charne", "totalSales": 260, "counted": 260, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 136, "toBank": 124, "variance": 0, "pettyCashBefore": 666, "pettyCashAfter": 790, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "rzzspl5j", "date": "2026-05-06T23:59:00.000Z", "staffName": "Charne", "totalSales": 588, "counted": 588, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 0, "toBank": 588, "variance": 0, "pettyCashBefore": 440, "pettyCashAfter": 1028, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "fa4gyaj9", "date": "2026-05-07T23:59:00.000Z", "staffName": "Charne", "totalSales": 650, "counted": 650, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 0, "toBank": 650, "variance": 0, "pettyCashBefore": 1028, "pettyCashAfter": 1678, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "hdfy4nvm", "date": "2026-05-08T23:59:00.000Z", "staffName": "Charne & Jordan", "totalSales": 240, "counted": 257, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 257, "toBank": 0, "variance": 0, "pettyCashBefore": 1328, "pettyCashAfter": 1328, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "o302thee", "date": "2026-05-09T23:59:00.000Z", "staffName": "Jordan", "totalSales": 1220, "counted": 1220, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 0, "toBank": 1220, "variance": 0, "pettyCashBefore": 778, "pettyCashAfter": 1998, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "ub8bdzhx", "date": "2026-05-10T23:59:00.000Z", "staffName": "Jordan", "totalSales": 640, "counted": 675, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 135, "toBank": 540, "variance": 0, "pettyCashBefore": 1998, "pettyCashAfter": 2538, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "8vn5pk28", "date": "2026-05-11T23:59:00.000Z", "staffName": "Jordan & Charne", "totalSales": 1320, "counted": 1320, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 416, "toBank": 904, "variance": 0, "pettyCashBefore": 1588, "pettyCashAfter": 2492, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "bk5znqyd", "date": "2026-05-12T23:59:00.000Z", "staffName": "Charne", "totalSales": 370, "counted": 370, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 0, "toBank": 370, "variance": 0, "pettyCashBefore": 2492, "pettyCashAfter": 2862, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "pqfp736y", "date": "2026-05-13T23:59:00.000Z", "staffName": "Jordan & Charne", "totalSales": 200, "counted": 200, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 216, "toBank": -16, "variance": 0, "pettyCashBefore": 1762, "pettyCashAfter": 1746, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "vit56bny", "date": "2026-05-14T23:59:00.000Z", "staffName": "Jordan & Charne", "totalSales": 880, "counted": 889, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 400, "toBank": 489, "variance": 0, "pettyCashBefore": 1730, "pettyCashAfter": 2219, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}, {"id": "d55cxugb", "date": "2026-05-15T23:59:00.000Z", "staffName": "Jordan & Charne", "totalSales": 1000, "counted": 1000, "cardTotal": 0, "eftTotal": 0, "tillExpenses": 460, "toBank": 540, "variance": 0, "pettyCashBefore": 1013.3, "pettyCashAfter": 1553.3, "txnCount": 0, "notes": "Imported from spreadsheet", "manual": true}];
-  var newExpenses = [{"id": "hij26wrk", "date": "2026-05-01", "desc": "Till cash expenses (category TBD)", "amount": 525, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "wr6d03p3", "date": "2026-05-01", "desc": "Charne Fri wage", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "vr16bzmz", "date": "2026-05-02", "desc": "Till cash expenses (category TBD)", "amount": 524, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "z7qttnxz", "date": "2026-05-03", "desc": "Till cash expenses (category TBD)", "amount": 199, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "fl39qcmp", "date": "2026-05-03", "desc": "Rent contribution", "amount": 100, "category": "Rent", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "k89ftdp3", "date": "2026-05-04", "desc": "Till cash expenses (category TBD)", "amount": 429, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "8dfc932x", "date": "2026-05-04", "desc": "Charne Mon+Tues wages", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "09yghevu", "date": "2026-05-05", "desc": "Till cash expenses (category TBD)", "amount": 136, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "xhn6x9im", "date": "2026-05-05", "desc": "Charne Wed wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "b9onvbyr", "date": "2026-05-07", "desc": "Charne Thurs wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "7k2ak9o6", "date": "2026-05-08", "desc": "Till cash expenses (category TBD)", "amount": 257, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "f8b56yi7", "date": "2026-05-08", "desc": "Charne Friday wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "js9x6p95", "date": "2026-05-08", "desc": "MacBook Pro maintenance", "amount": 200, "category": "Equipment", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "t1wnxl8r", "date": "2026-05-10", "desc": "Till cash expenses (category TBD)", "amount": 135, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "7neaofrp", "date": "2026-05-10", "desc": "Rent set aside", "amount": 300, "category": "Rent", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "fp3n9p4m", "date": "2026-05-10", "desc": "Electricity set aside", "amount": 300, "category": "Utilities", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "x6nnxpmy", "date": "2026-05-10", "desc": "Charne Mon wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "jk6k5j53", "date": "2026-05-11", "desc": "Till cash expenses (category TBD)", "amount": 416, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "56vfh94n", "date": "2026-05-12", "desc": "Charne Tues wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "oc3cii40", "date": "2026-05-12", "desc": "Shaun PO110526-SHAUN", "amount": 750, "category": "Stock purchase", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "ljhjkgqb", "date": "2026-05-13", "desc": "Till cash expenses (category TBD)", "amount": 216, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "ml75z7k4", "date": "2026-05-13", "desc": "Float top up", "amount": 16, "category": "Till expense", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "ja2g7f31", "date": "2026-05-14", "desc": "Till cash expenses (category TBD)", "amount": 400, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "nzp28qm7", "date": "2026-05-14", "desc": "Trink Consumables stationery cleaning ink", "amount": 1205.7, "category": "Equipment", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "lnyu2xrk", "date": "2026-05-15", "desc": "Till cash expenses (category TBD)", "amount": 460, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "k4tr475a", "date": "2026-05-15", "desc": "Charne wages Wed+Thurs", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "1m1zsgqk", "date": "2026-05-16", "desc": "Charne wages Fri+Sat", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}];
+  var newExpenses = [{"id": "hij26wrk", "date": "2026-05-01", "desc": "Till cash expenses (category TBD)", "amount": 525, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "wr6d03p3", "date": "2026-05-01", "desc": "Charne Fri wage", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "vr16bzmz", "date": "2026-05-02", "desc": "Till cash expenses (category TBD)", "amount": 524, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "z7qttnxz", "date": "2026-05-03", "desc": "Till cash expenses (category TBD)", "amount": 199, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "fl39qcmp", "date": "2026-05-03", "desc": "Rent contribution", "amount": 100, "category": "Rent", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "k89ftdp3", "date": "2026-05-04", "desc": "Till cash expenses (category TBD)", "amount": 429, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "8dfc932x", "date": "2026-05-04", "desc": "Charne Mon+Tues wages", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "09yghevu", "date": "2026-05-05", "desc": "Till cash expenses (category TBD)", "amount": 136, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "xhn6x9im", "date": "2026-05-05", "desc": "Charne Wed wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "b9onvbyr", "date": "2026-05-07", "desc": "Charne Thurs wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "7k2ak9o6", "date": "2026-05-08", "desc": "Till cash expenses (category TBD)", "amount": 257, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "f8b56yi7", "date": "2026-05-08", "desc": "Charne Friday wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "js9x6p95", "date": "2026-05-08", "desc": "MacBook Pro maintenance", "amount": 200, "category": "Equipment", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "t1wnxl8r", "date": "2026-05-10", "desc": "Till cash expenses (category TBD)", "amount": 135, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "7neaofrp", "date": "2026-05-10", "desc": "Rent set aside", "amount": 300, "category": "Rent", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "fp3n9p4m", "date": "2026-05-10", "desc": "Electricity set aside", "amount": 300, "category": "Utilities", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "x6nnxpmy", "date": "2026-05-10", "desc": "Charne Mon wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "jk6k5j53", "date": "2026-05-11", "desc": "Till cash expenses (category TBD)", "amount": 416, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "56vfh94n", "date": "2026-05-12", "desc": "Charne Tues wages", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "oc3cii40", "date": "2026-05-12", "desc": "Shaun PO110526-SHAUN", "amount": 750, "category": "Stock purchase", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "ljhjkgqb", "date": "2026-05-13", "desc": "Till cash expenses (category TBD)", "amount": 216, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "ml75z7k4", "date": "2026-05-13", "desc": "Float top up", "amount": 16, "category": "Till expense", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "ja2g7f31", "date": "2026-05-14", "desc": "Till cash expenses (category TBD)", "amount": 400, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "nzp28qm7", "date": "2026-05-14", "desc": "Trink Consumables stationery cleaning ink", "amount": 1205.7, "category": "Equipment", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "lnyu2xrk", "date": "2026-05-15", "desc": "Till cash expenses (category TBD)", "amount": 460, "category": "Till expense", "payMethod": "cash", "status": "paid", "notes": "Breakdown to be confirmed"}, {"id": "k4tr475a", "date": "2026-05-15", "desc": "Charne wages Wed+Thurs", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "1m1zsgqk", "date": "2026-05-16", "desc": "Charne wages Fri+Sat", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "exp18may_mon_wage", "date": "2026-05-18", "desc": "Charne Monday wage", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "exp19may_float", "date": "2026-05-19", "desc": "Float cash top-up", "amount": 6, "category": "Till expense", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "exp20may_wages", "date": "2026-05-20", "desc": "Charne Tues & Wed wages", "amount": 700, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "exp20may_rent", "date": "2026-05-20", "desc": "Rent set aside cash", "amount": 200, "category": "Rent", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}, {"id": "exp20may_thurs_wage", "date": "2026-05-20", "desc": "Charne Thursday wage", "amount": 350, "category": "Salaries", "payMethod": "petty_cash", "status": "paid", "notes": "Paid from petty cash"}];
 
   // Remove old imported cashups for these dates, keep live ones
   var existing = DB.get('cashups') || [];
@@ -10908,7 +11206,15 @@ function setDelivery(isDelivery) {
   // Set petty cash
   var pc = DB.getObj('pettyCash', {balance:0, history:[]});
   pc.balance = 177;
-  pc.history = [{"date": "2026-05-01T20:00:00.000Z", "type": "expense", "oldBalance": 533, "newBalance": 183, "delta": -350, "reason": "Charne Fri wage", "by": "import"}, {"date": "2026-05-03T20:00:00.000Z", "type": "expense", "oldBalance": 1165, "newBalance": 1065, "delta": -100, "reason": "Rent contribution", "by": "import"}, {"date": "2026-05-04T20:00:00.000Z", "type": "expense", "oldBalance": 1366, "newBalance": 666, "delta": -700, "reason": "Charne Mon+Tues wages", "by": "import"}, {"date": "2026-05-05T20:00:00.000Z", "type": "expense", "oldBalance": 790, "newBalance": 440, "delta": -350, "reason": "Charne Wed wages", "by": "import"}, {"date": "2026-05-07T20:00:00.000Z", "type": "expense", "oldBalance": 1678, "newBalance": 1328, "delta": -350, "reason": "Charne Thurs wages", "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "oldBalance": 1328, "newBalance": 978, "delta": -350, "reason": "Charne Friday wages", "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "oldBalance": 978, "newBalance": 778, "delta": -200, "reason": "MacBook Pro maintenance", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 2538, "newBalance": 2238, "delta": -300, "reason": "Rent set aside", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 2238, "newBalance": 1938, "delta": -300, "reason": "Electricity set aside", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 1938, "newBalance": 1588, "delta": -350, "reason": "Charne Mon wages", "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "oldBalance": 2862, "newBalance": 2512, "delta": -350, "reason": "Charne Tues wages", "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "oldBalance": 2512, "newBalance": 1762, "delta": -750, "reason": "Shaun PO110526-SHAUN", "by": "import"}, {"date": "2026-05-13T20:00:00.000Z", "type": "expense", "oldBalance": 1746, "newBalance": 1730, "delta": -16, "reason": "Float top up", "by": "import"}, {"date": "2026-05-14T20:00:00.000Z", "type": "expense", "oldBalance": 2219, "newBalance": 1013.3, "delta": -1205.7, "reason": "Trink Consumables stationery cleaning ink", "by": "import"}, {"date": "2026-05-15T20:00:00.000Z", "type": "expense", "oldBalance": 1553.3, "newBalance": 853.3, "delta": -700, "reason": "Charne wages Wed+Thurs", "by": "import"}];
+  pc.history = [{"date": "2026-05-01T20:00:00.000Z", "type": "expense", "oldBalance": 533, "newBalance": 183, "delta": -350, "reason": "Charne Fri wage", "by": "import"}, {"date": "2026-05-03T20:00:00.000Z", "type": "expense", "oldBalance": 1165, "newBalance": 1065, "delta": -100, "reason": "Rent contribution", "by": "import"}, {"date": "2026-05-04T20:00:00.000Z", "type": "expense", "oldBalance": 1366, "newBalance": 666, "delta": -700, "reason": "Charne Mon+Tues wages", "by": "import"}, {"date": "2026-05-05T20:00:00.000Z", "type": "expense", "oldBalance": 790, "newBalance": 440, "delta": -350, "reason": "Charne Wed wages", "by": "import"}, {"date": "2026-05-07T20:00:00.000Z", "type": "expense", "oldBalance": 1678, "newBalance": 1328, "delta": -350, "reason": "Charne Thurs wages", "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "oldBalance": 1328, "newBalance": 978, "delta": -350, "reason": "Charne Friday wages", "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "oldBalance": 978, "newBalance": 778, "delta": -200, "reason": "MacBook Pro maintenance", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 2538, "newBalance": 2238, "delta": -300, "reason": "Rent set aside", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 2238, "newBalance": 1938, "delta": -300, "reason": "Electricity set aside", "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "oldBalance": 1938, "newBalance": 1588, "delta": -350, "reason": "Charne Mon wages", "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "oldBalance": 2862, "newBalance": 2512, "delta": -350, "reason": "Charne Tues wages", "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "oldBalance": 2512, "newBalance": 1762, "delta": -750, "reason": "Shaun PO110526-SHAUN", "by": "import"}, {"date": "2026-05-13T20:00:00.000Z", "type": "expense", "oldBalance": 1746, "newBalance": 1730, "delta": -16, "reason": "Float top up", "by": "import"}, {"date": "2026-05-14T20:00:00.000Z", "type": "expense", "oldBalance": 2219, "newBalance": 1013.3, "delta": -1205.7, "reason": "Trink Consumables stationery cleaning ink", "by": "import"}, {"date": "2026-05-15T20:00:00.000Z", "type": "expense", "oldBalance": 1553.3, "newBalance": 853.3, "delta": -700, "reason": "Charne wages Wed+Thurs", "by": "import"},
+  {"date": "2026-05-16T18:00:00.000Z", "type": "cashup", "oldBalance": 853.3, "newBalance": 960.3, "delta": 107, "reason": "Cashup banked 16 May", "by": "import"},
+  {"date": "2026-05-16T20:00:00.000Z", "type": "expense", "oldBalance": 960.3, "newBalance": 260.3, "delta": -700, "reason": "Charne wages Fri+Sat", "category": "Salaries", "by": "import"},
+  {"date": "2026-05-17T18:00:00.000Z", "type": "cashup", "oldBalance": 260.3, "newBalance": 545.3, "delta": 285, "reason": "Cashup banked 17 May", "by": "import"},
+  {"date": "2026-05-18T20:00:00.000Z", "type": "expense", "oldBalance": 545.3, "newBalance": 195.3, "delta": -350, "reason": "Charne Monday wage", "category": "Salaries", "by": "import"},
+  {"date": "2026-05-19T20:00:00.000Z", "type": "expense", "oldBalance": 195.3, "newBalance": 189.3, "delta": -6, "reason": "Float cash top-up", "category": "Till expense", "by": "import"},
+  {"date": "2026-05-20T20:00:00.000Z", "type": "expense", "oldBalance": 189.3, "newBalance": -510.7, "delta": -700, "reason": "Charne Tues & Wed wages", "category": "Salaries", "by": "import"},
+  {"date": "2026-05-20T20:00:01.000Z", "type": "expense", "oldBalance": -510.7, "newBalance": -710.7, "delta": -200, "reason": "Rent set aside cash", "category": "Rent", "by": "import"},
+  {"date": "2026-05-20T20:00:02.000Z", "type": "expense", "oldBalance": -710.7, "newBalance": -1060.7, "delta": -350, "reason": "Charne Thursday wage", "category": "Salaries", "by": "import"}];
   DB.setObj('pettyCash', pc);
 
   localStorage.setItem(doneKey, '1');
