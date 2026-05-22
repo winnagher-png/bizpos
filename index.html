@@ -777,21 +777,6 @@ table.report-table .neg{color:var(--red)}
         <button onclick="pcdToggleQuickExp()" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
       </div>
     </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-        <input id="pce-cat" type="text" list="pce-cat-list" placeholder="Category"
-          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
-        <datalist id="pce-cat-list"></datalist>
-        <input id="pce-date" type="date"
-          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
-      </div>
-      <input id="pce-notes" type="text" placeholder="Notes (optional)"
-        style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);margin-bottom:8px">
-      <div style="display:flex;gap:8px">
-        <button onclick="pcdLogExpense()" style="flex:2;padding:10px;background:var(--accent);border:none;border-radius:8px;font-size:13px;font-weight:800;color:#fff;cursor:pointer">Save &amp; deduct from petty cash</button>
-        <button onclick="pcdToggleQuickExp()" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
-      </div>
-    </div>
 
     <!-- Month navigator -->
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
@@ -810,7 +795,7 @@ table.report-table .neg{color:var(--red)}
     <div style="display:flex;gap:6px;margin-bottom:10px">
       <button onclick="pcdExportCSV()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F4E5; Export</button>
       <button onclick="pcdPrint()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F5A8; Print</button>
-      <button onclick="backlogPOExpenses();deduplicateExpenses();renderPCDashboard()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F504; Sync</button>
+      <button onclick="cleanupDuplicateExpenses(false);backlogPOExpenses();renderPCDashboard()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F504; Sync</button>
     </div>
 
     <!-- Daily ledger -->
@@ -5789,7 +5774,11 @@ function pcdFilterCat(cat) {
   renderPCDashboard();
 }
 
-function renderExpenses() { renderPCDashboard(); }
+function renderExpenses() {
+  // Only render if expenses tab is currently active
+  if (!document.getElementById('tab-expenses').classList.contains('active')) return;
+  renderPCDashboard();
+}
 function filterExpCat()   { renderPCDashboard(); }
 
 function pcdExportCSV() {
@@ -6186,23 +6175,28 @@ function saveCashup() {
   const cuNote        = document.getElementById('cashup-note').value.trim();
   const pcBefore      = getPettyCash().balance;
 
-  // ── 1. Save till cash expenses as expense records ──────────────────────────
-  // Deduplicate against existing expenses first (same date + desc + amount)
+  // ── 1. Save till cash expenses — deduplicate by date+amount to prevent doubles
   const allExps = DB.get('expenses');
-  cashupExpenseItems.forEach(e=>{
-    var isDuplicate = allExps.some(function(ex){
-      return ex.date === today && ex.desc === e.desc && Math.abs(ex.amount - e.amount) < 0.01;
+  cashupExpenseItems.forEach(function(e) {
+    // Check for any existing till expense on same date with same amount
+    var isDuplicate = allExps.some(function(ex) {
+      var sameDate   = ex.date === today;
+      var sameAmount = Math.abs((ex.amount||0) - e.amount) < 0.01;
+      var isTillType = ex.payMethod === 'Cash Sales' || ex.payMethod === 'cash'
+                    || (ex.category||'').toLowerCase().includes('till');
+      return sameDate && sameAmount && isTillType;
     });
     if (!isDuplicate) {
       allExps.push({
         id: e.id || uid(),
-        desc: e.desc,
+        desc: e.desc || 'Till expense',
         amount: e.amount,
         category: e.category || 'Till expense',
-        payMethod: 'Cash Sales',   // paid from daily till cash — NOT petty cash
+        payMethod: 'Cash Sales',
         date: today,
         status: 'paid',
-        notes: 'Declared at cash-up — ' + staffNames
+        notes: 'Declared at cash-up — ' + staffNames,
+        cashupDate: today  // tag so we can identify origin
       });
     }
   });
@@ -7914,10 +7908,9 @@ function jjPull(silent, cb) {
     var hadData = data && data._at;
     if (hadData && !stillBlocked) {
       jjWrite(data);
-      // After pull, backlog any received POs missing from expenses
-      // and silently deduplicate
+      // After pull, silently clean up duplicate expenses and backlog PO expenses
+      try { cleanupDuplicateExpenses(true); } catch(e) {}
       try { backlogPOExpenses(); } catch(e) {}
-      try { deduplicateExpenses(); } catch(e) {}
     }
 
     // Refresh UI
@@ -8085,20 +8078,111 @@ function backlogPOExpenses() {
 
 // ── Deduplicate expenses ───────────────────────────────────────────────────────
 // Remove exact duplicates: same date + desc + amount + category
+// ── One-time + ongoing expense deduplication ─────────────────────────────────
+// Runs silently after every Firebase pull to keep expenses clean
+function cleanupDuplicateExpenses(silent) {
+  var exps = DB.get('expenses') || [];
+  var before = exps.length;
+
+  // Group by date
+  var byDate = {};
+  exps.forEach(function(e) {
+    var d = e.date || 'nodate';
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(e);
+  });
+
+  var keep = [];
+  var seen = {};
+
+  Object.keys(byDate).sort().forEach(function(date) {
+    var dayExps = byDate[date];
+
+    // For till expenses: deduplicate by amount — only one per amount per day
+    // (different cashup records and seed data both create the same till expense)
+    var tillByAmount = {};
+    var nonTill = [];
+
+    dayExps.forEach(function(e) {
+      var isTill = e.payMethod === 'Cash Sales' || e.payMethod === 'cash'
+                || (e.category||'').toLowerCase() === 'till expense'
+                || (e.desc||'').toLowerCase().includes('till');
+
+      if (isTill) {
+        var amtKey = Math.round((e.amount||0) * 100);
+        if (!tillByAmount[amtKey]) {
+          // Keep the more descriptive one — prefer records with a real desc over "Till expenses"
+          tillByAmount[amtKey] = e;
+        } else {
+          var existing = tillByAmount[amtKey];
+          var existingDesc = (existing.desc||'').toLowerCase();
+          var newDesc      = (e.desc||'').toLowerCase();
+          // Prefer the one with category set and non-generic description
+          if (newDesc !== 'till expenses' && newDesc !== 'till expense'
+              && (existingDesc === 'till expenses' || existingDesc === 'till expense')) {
+            tillByAmount[amtKey] = e;
+          }
+        }
+      } else {
+        nonTill.push(e);
+      }
+    });
+
+    // Add deduped till expenses
+    Object.values(tillByAmount).forEach(function(e) { keep.push(e); });
+
+    // Dedup non-till by amount+category+desc
+    nonTill.forEach(function(e) {
+      var key = date + '|' + Math.round((e.amount||0)*100) + '|' + (e.category||'').toLowerCase() + '|' + (e.desc||'').toLowerCase().trim();
+      if (!seen[key]) {
+        seen[key] = true;
+        keep.push(e);
+      }
+    });
+  });
+
+  if (keep.length < before) {
+    DB.set('expenses', keep);
+    if (!silent) showToast('Cleaned ' + (before - keep.length) + ' duplicate expense(s) ✓', 'success');
+    console.log('cleanupDuplicateExpenses: removed ' + (before - keep.length) + ' duplicates');
+    return before - keep.length;
+  }
+  return 0;
+}
+
 function deduplicateExpenses() {
   var exps = DB.get('expenses') || [];
   var seen = {};
   var deduped = exps.filter(function(e) {
-    // Keep linkedPOId entries always (unique by PO)
+    // For PO-linked expenses, deduplicate by PO ID
     if (e.linkedPOId) {
       var poKey = 'po:' + e.linkedPOId;
       if (seen[poKey]) return false;
       seen[poKey] = true;
       return true;
     }
-    var key = [e.date, (e.desc||'').toLowerCase().trim(), e.amount, (e.category||'').toLowerCase()].join('|');
+    // For recurring expenses, keep only one per recurringId per month
+    if (e.recurringId) {
+      var recKey = 'rec:' + e.recurringId + ':' + (e.date||'').slice(0,7);
+      if (seen[recKey]) return false;
+      seen[recKey] = true;
+      return true;
+    }
+    // General dedup: same date + same amount + same category + similar description
+    var descNorm = (e.desc||'').toLowerCase().trim()
+      .replace(/\s+/g,' ')
+      .replace(/till\s*(cash\s*)?(expenses?|exp)/,'till_exp')
+      .replace(/category\s*tbd/,'')
+      .trim();
+    var key = [e.date, Math.round((e.amount||0)*100), (e.category||'').toLowerCase(), descNorm].join('|');
+    // Also dedupe by amount+date+payMethod for till expenses
+    var tillKey = (e.payMethod==='Cash Sales'||e.payMethod==='cash') 
+      ? 'till:' + e.date + ':' + Math.round((e.amount||0)*100) 
+      : null;
+    if (tillKey && seen[tillKey]) return false;
     if (seen[key]) return false;
     seen[key] = true;
+    if (tillKey) seen[tillKey] = true;
     return true;
   });
   if (deduped.length < exps.length) {
