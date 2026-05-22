@@ -3932,17 +3932,15 @@ let saleDiscountVisible = false;
 // ── Member completeness check ──
 function memberIsComplete(m) {
   if (!m) return false;
-  // Only require name + member number to be selectable on POS
-  // ID number is optional — don't block sales for members without it
-  const hasName     = !!(m.name && m.name.trim());
-  const hasMemberNo = !!(m.memberNo && m.memberNo.trim() && m.memberNo !== '???');
-  return hasName && hasMemberNo;
+  // Only require a name — never block a sale just because memberNo or phone is missing
+  return !!(m.name && m.name.trim());
 }
 
 function memberMissingFields(m) {
+  // Informational only — no longer blocks sale selection
   const missing = [];
+  if (!m.memberNo || m.memberNo === '???' || !m.memberNo.trim()) missing.push('member number');
   if (!m.phone || !m.phone.trim()) missing.push('phone');
-  if (!m.memberNo || m.memberNo === '???') missing.push('member number');
   return missing;
 }
 
@@ -4228,16 +4226,16 @@ function searchSaleMember() {
   const matchRows = matches.map(m => {
     const complete = memberIsComplete(m);
     const missing = complete ? [] : memberMissingFields(m);
-    return `<div onclick="${complete ? `selectSaleMember('${m.id}')` : `showMemberIncomplete('${m.id}')`}"
-      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:${complete?'pointer':'default'};
-      opacity:${complete?'1':'0.5'};border:1px solid ${complete?'var(--border)':'var(--red)'};display:flex;align-items:center;gap:10px">
-      <div class="avatar-circle" style="background:${complete?'var(--accent)':'var(--border2)'};width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
+    return `<div onclick="selectSaleMember('${m.id}')"
+      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:pointer;
+      opacity:1;border:1px solid ${missing.length?'var(--amber)':'var(--border)'};display:flex;align-items:center;gap:10px">
+      <div class="avatar-circle" style="background:var(--accent);width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div class="text-sm bold" style="color:${complete?'var(--text)':'var(--text3)'}">${m.name}</div>
+        <div class="text-sm bold" style="color:var(--text)">${m.name}</div>
         <div class="text-xs text-muted">#${m.memberNo||'???'} · ${m.phone||'no phone'}</div>
         ${!complete ? `<div class="text-xs" style="color:var(--red);margin-top:2px">⚠ Missing: ${missing.join(', ')}</div>` : ''}
       </div>
-      ${complete ? '' : '<div style="font-size:18px;color:var(--red)">🔒</div>'}
+      ${missing.length ? '<div style="font-size:13px;color:var(--amber)">⚠</div>' : ''}
     </div>`;
   }).join('');
 
