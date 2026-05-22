@@ -713,22 +713,83 @@ table.report-table .neg{color:var(--red)}
     <!-- Header -->
     <div class="flex-between" style="margin-bottom:10px">
       <div class="section-title" style="margin:0">Cash &amp; Expenses</div>
-      <button class="btn btn-primary btn-sm" onclick="openAddExpense()">+ Add</button>
+      <button class="btn btn-primary btn-sm" onclick="pcdToggleQuickExp()">+ Log expense</button>
     </div>
 
-    <!-- Petty Cash Balance Bar -->
-    <div style="background:var(--accent);border-radius:12px;padding:14px 16px;margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div style="font-size:10px;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:4px">Petty Cash Balance</div>
-          <div id="pcd-balance" style="font-size:30px;font-weight:900;color:#fff">R0.00</div>
-          <div id="pcd-bal-status" style="font-size:11px;color:rgba(255,255,255,.7);margin-top:2px"></div>
+    <!-- Dual Balance Bars -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+
+      <!-- Petty Cash -->
+      <div style="background:var(--accent);border-radius:12px;padding:12px 14px">
+        <div style="font-size:9px;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:3px">&#x1F4B0; Petty Cash</div>
+        <div id="pcd-balance" style="font-size:22px;font-weight:900;color:#fff">R0.00</div>
+        <div id="pcd-bal-status" style="font-size:10px;color:rgba(255,255,255,.75);margin-top:2px"></div>
+        <div style="margin-top:8px;display:flex;gap:4px">
+          <input id="pcd-set-input" type="number" step="0.01" placeholder="Set R"
+            style="flex:1;min-width:0;padding:5px 7px;border-radius:7px;border:none;font-size:12px;font-weight:700;background:rgba(255,255,255,.2);color:#fff">
+          <button onclick="pcdSetBalance()" style="padding:5px 10px;background:#fff;color:var(--accent);border:none;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer">Set</button>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <input id="pcd-set-input" type="number" step="0.01" placeholder="R0.00"
-            style="width:80px;padding:6px 8px;border-radius:8px;border:none;font-size:13px;font-weight:700;text-align:right;background:rgba(255,255,255,.2);color:#fff">
-          <button onclick="pcdSetBalance()" style="padding:7px 12px;background:#fff;color:var(--accent);border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer">Set</button>
+        <div style="font-size:9px;color:rgba(255,255,255,.6);margin-top:4px">Cash banked at cashup tops this up</div>
+      </div>
+
+      <!-- Bank / Card -->
+      <div style="background:#1d4ed8;border-radius:12px;padding:12px 14px">
+        <div style="font-size:9px;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin-bottom:3px">&#x1F3E6; Bank / Card</div>
+        <div id="pcd-bank-balance" style="font-size:22px;font-weight:900;color:#fff">R0.00</div>
+        <div id="pcd-bank-status" style="font-size:10px;color:rgba(255,255,255,.75);margin-top:2px"></div>
+        <div style="margin-top:8px;display:flex;gap:4px">
+          <input id="pcd-bank-set-input" type="number" step="0.01" placeholder="Set R"
+            style="flex:1;min-width:0;padding:5px 7px;border-radius:7px;border:none;font-size:12px;font-weight:700;background:rgba(255,255,255,.2);color:#fff">
+          <button onclick="pcdSetBankBalance()" style="padding:5px 10px;background:#fff;color:#1d4ed8;border:none;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer">Set</button>
         </div>
+        <div style="font-size:9px;color:rgba(255,255,255,.6);margin-top:4px">Card/EFT declared at cashup tops this up</div>
+      </div>
+    </div>
+
+    <!-- Quick expense form (collapsed by default) -->
+    <div id="pcd-quick-exp" style="display:none;background:var(--bg3);border:1.5px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:10px">
+      <div style="font-size:12px;font-weight:800;color:var(--accent);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Log expense</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:8px">
+        <input id="pce-desc" type="text" placeholder="Description *"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <input id="pce-amount" type="number" step="0.01" placeholder="Amount R"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <input id="pce-cat" type="text" list="pce-cat-list" placeholder="Category"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <datalist id="pce-cat-list"></datalist>
+        <input id="pce-date" type="date"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+      </div>
+      <div style="margin-bottom:8px">
+        <select id="pce-paymethod" style="width:100%;padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="petty_cash">Petty Cash (deducts from petty cash balance)</option>
+          <option value="eft">EFT / Bank (deducts from bank balance)</option>
+          <option value="card">Card (deducts from bank balance)</option>
+          <option value="cash">Cash (till cash)</option>
+        </select>
+      </div>
+      <input id="pce-notes" type="text" placeholder="Notes (optional)"
+        style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);margin-bottom:8px">
+      <div style="display:flex;gap:8px">
+        <button onclick="pcdLogExpense()" style="flex:2;padding:10px;background:var(--accent);border:none;border-radius:8px;font-size:13px;font-weight:800;color:#fff;cursor:pointer">Save &amp; deduct from balance</button>
+        <button onclick="pcdToggleQuickExp()" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <input id="pce-cat" type="text" list="pce-cat-list" placeholder="Category"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <datalist id="pce-cat-list"></datalist>
+        <input id="pce-date" type="date"
+          style="padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+      </div>
+      <input id="pce-notes" type="text" placeholder="Notes (optional)"
+        style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);margin-bottom:8px">
+      <div style="display:flex;gap:8px">
+        <button onclick="pcdLogExpense()" style="flex:2;padding:10px;background:var(--accent);border:none;border-radius:8px;font-size:13px;font-weight:800;color:#fff;cursor:pointer">Save &amp; deduct from petty cash</button>
+        <button onclick="pcdToggleQuickExp()" style="flex:1;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>
       </div>
     </div>
 
@@ -747,13 +808,31 @@ table.report-table .neg{color:var(--red)}
 
     <!-- Action buttons -->
     <div style="display:flex;gap:6px;margin-bottom:10px">
-      <button onclick="pcdExportCSV()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F4E5; Export CSV</button>
+      <button onclick="pcdExportCSV()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F4E5; Export</button>
       <button onclick="pcdPrint()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F5A8; Print</button>
       <button onclick="backlogPOExpenses();deduplicateExpenses();renderPCDashboard()" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F504; Sync</button>
     </div>
 
     <!-- Daily ledger -->
     <div id="pcd-ledger"></div>
+
+    <!-- Recurring expenses / debit orders section -->
+    <div style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:800;color:var(--text)">📅 Recurring expenses &amp; debit orders</div>
+        <button onclick="pcdAddRecurring()" style="padding:5px 12px;background:var(--accent);border:none;border-radius:8px;font-size:11px;font-weight:700;color:#fff;cursor:pointer">+ Add</button>
+      </div>
+      <div id="pcd-recurring-list"></div>
+    </div>
+
+    <!-- Category management -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:800;color:var(--text)">🏷️ Expense categories</div>
+        <button onclick="pcdManageCats()" style="padding:5px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:11px;font-weight:700;color:var(--text2);cursor:pointer">Manage</button>
+      </div>
+      <div id="pcd-cats-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
 
   </div>
 
@@ -867,6 +946,10 @@ table.report-table .neg{color:var(--red)}
       <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May → 16 May and 18 May → 17 May cashups</div>
       <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
         style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
+    </div>
+    <div style="background:#e0f2fe;border:1.5px solid #0284c7;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;color:#0c4a6e"><strong>Petty cash fix:</strong> Rebuild correct May ledger with all wages &amp; expenses</div>
+      <button onclick="fixPettyCashHistory()" style="padding:6px 14px;background:#0284c7;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix now</button>
     </div>
     <div id="cashup-history"></div>
   </div>
@@ -1013,6 +1096,11 @@ table.report-table .neg{color:var(--red)}
       <input id="p-name" type="text" placeholder="e.g. Diamonds in the dirt" oninput="onProductNameInput()">
     </div>
     <div class="form-row">
+      <div class="form-group" style="flex:0 0 70px">
+        <label class="form-label">Emoji</label>
+        <input id="p-emoji" type="text" placeholder="🌿" maxlength="2"
+          style="font-size:22px;text-align:center;padding:6px">
+      </div>
       <div class="form-group"><label class="form-label">Category</label>
         <input id="p-cat" type="text" placeholder="e.g. ID Prerolls" list="cat-datalist" oninput="onProductNameInput()">
         <datalist id="cat-datalist"></datalist>
@@ -1048,8 +1136,31 @@ table.report-table .neg{color:var(--red)}
     <div class="form-group"><label class="form-label">Supplier</label>
       <select id="p-supplier"><option value="">None</option></select>
     </div>
+
+    <!-- Variants section -->
+    <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <label class="form-label" style="margin:0">Variants <span style="font-size:10px;color:var(--text3);font-weight:400">(flavours, sizes, strengths etc)</span></label>
+        <button type="button" onclick="addProductVariant()" style="padding:4px 10px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:8px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer">+ Add variant</button>
+      </div>
+      <div id="p-variants-list"></div>
+    </div>
+
+    <!-- Product art section -->
+    <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:12px">
+      <label class="form-label">Product art / Canva images</label>
+      <div id="p-art-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+      <label style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg3);border:1.5px dashed var(--border);border-radius:10px;cursor:pointer">
+        <span style="font-size:20px">🖼️</span>
+        <span style="font-size:12px;color:var(--text3)">Tap to upload image from device</span>
+        <input id="p-art-upload" type="file" accept="image/*" multiple style="display:none" onchange="handleProductArtUpload(event)">
+      </label>
+    </div>
+
     <input type="hidden" id="p-id">
     <input type="hidden" id="p-sku-manual" value="0">
+    <input type="hidden" id="p-variants-data" value="[]">
+    <input type="hidden" id="p-art-data" value="[]">
     <button class="btn btn-primary btn-full" onclick="saveProduct()">Save product</button>
     <button id="btn-delete-product" style="display:none;width:100%;margin-top:8px;padding:12px;background:transparent;border:1.5px solid var(--red);border-radius:12px;color:var(--red);font-size:14px;font-weight:700;cursor:pointer" onclick="deleteProduct()">🗑 Delete product</button>
   </div>
@@ -1113,10 +1224,14 @@ table.report-table .neg{color:var(--red)}
     <div class="form-group"><label class="form-label">Full name *</label><input id="m-name" type="text"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Member #</label><input id="m-num" type="text"></div>
-      <div class="form-group"><label class="form-label">ID number</label><input id="m-id" type="text"></div>
+      <div class="form-group"><label class="form-label">ID number</label>
+        <input id="m-id" type="text" maxlength="13" placeholder="13-digit SA ID" oninput="parseSAID()">
+        <div id="m-id-result" style="margin-top:5px;font-size:12px;display:none"></div>
+      </div>
     </div>
     <div class="form-group"><label class="form-label">Phone</label><input id="m-phone" type="tel"></div>
     <div class="form-group"><label class="form-label">Email</label><input id="m-email" type="email"></div>
+    <div class="form-group"><label class="form-label">Birthday <span style="font-size:10px;color:var(--text3);font-weight:400">(auto-filled from ID number)</span></label><input id="m-birthday" type="date" readonly style="background:var(--bg3);color:var(--text3)"></div>
     <div class="form-group"><label class="form-label">Address</label><textarea id="m-addr" rows="2"></textarea></div>
     <input type="hidden" id="m-id-hidden">
     <button class="btn btn-primary btn-full" onclick="saveMember()">Save member</button>
@@ -1630,6 +1745,8 @@ function loginSuccess(staffMember) {
   setTimeout(function(){ renderPinScreen(); }, 300);
   // Check clock-in reminder after login
   setTimeout(checkClockInReminder, 800);
+  // Check birthdays after login
+  setTimeout(checkBirthdays, 2000);
   // Start reminder scheduler if not already running
   if (!window._reminderStarted) { window._reminderStarted = true; startReminderScheduler(); }
 }
@@ -2159,7 +2276,7 @@ function renderInventory() {
     const marginCol = margin===null?'':margin>=30?'var(--green)':margin>=15?'var(--amber)':'var(--red)';
     return `<div class="product-row">
       <div class="product-info">
-        <div class="product-name">${p.name}</div>
+        <div class="product-name">${p.emoji ? p.emoji + ' ' : ''}${p.name}</div>
         <div class="product-meta">${p.sku||'—'} · ${p.category||'—'}</div>
         <div class="mt-4 flex-center gap-8">
           <span class="badge ${st.cls}">${st.label}</span>
@@ -2219,40 +2336,56 @@ function adjustQty(id, delta, loc='shop') {
 }
 
 function openAddProduct() {
-  ['p-name','p-sku','p-cat','p-price','p-cost','p-qty','p-low','p-reorder','p-id'].forEach(id => document.getElementById(id).value = '');
+  ['p-name','p-sku','p-cat','p-price','p-cost','p-qty','p-low','p-reorder','p-id','p-emoji'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('p-low').value = '5';
   document.getElementById('p-sku-manual').value = '0';
+  document.getElementById('p-variants-data').value = '[]';
+  document.getElementById('p-art-data').value = '[]';
   document.getElementById('modal-product-title').textContent = 'Add product';
   document.getElementById('sku-preview').style.display = 'none';
   document.getElementById('sku-gen-badge').style.display = 'none';
   var delBtn = document.getElementById('btn-delete-product');
   if (delBtn) delBtn.style.display = 'none';
+  renderVariantsList();
+  renderArtList();
   populateSupplierSelect();
   populateCatDatalist();
   openModal('modal-product');
 }
 
 function openEditProduct(id) {
-  const p = DB.get('products').find(x=>x.id===id);
-  if (!p) return;
-  document.getElementById('p-id').value = p.id;
-  document.getElementById('p-name').value = p.name||'';
-  document.getElementById('p-sku').value = p.sku||'';
-  document.getElementById('p-cat').value = p.category||'';
-  document.getElementById('p-price').value = p.price||'';
-  document.getElementById('p-cost').value = p.cost||'';
-  document.getElementById('p-qty').value = p.qty||'';
-  document.getElementById('p-low').value = p.lowAt||5;
-  document.getElementById('p-reorder').value = p.reorderAt||'';
-  document.getElementById('p-sku-manual').value = '1'; // existing SKU, don't auto-generate
-  document.getElementById('modal-product-title').textContent = 'Edit product';
-  document.getElementById('sku-preview').style.display = 'none';
-  document.getElementById('sku-gen-badge').style.display = 'none';
-  var delBtn = document.getElementById('btn-delete-product');
-  if (delBtn) delBtn.style.display = 'block';
-  populateSupplierSelect(p.supplierId);
-  populateCatDatalist();
-  openModal('modal-product');
+  // Pull fresh data first to ensure we have latest stock counts
+  window._blockPullUntil = 0;
+  var doOpen = function() {
+    const p = DB.get('products').find(x=>x.id===id);
+    if (!p) return;
+    document.getElementById('p-id').value      = p.id;
+    document.getElementById('p-name').value    = p.name||'';
+    document.getElementById('p-sku').value     = p.sku||'';
+    document.getElementById('p-cat').value     = p.category||'';
+    document.getElementById('p-price').value   = p.price||'';
+    document.getElementById('p-cost').value    = p.cost||'';
+    document.getElementById('p-qty').value     = p.qty||'';
+    document.getElementById('p-low').value     = p.lowAt||5;
+    document.getElementById('p-reorder').value = p.reorderAt||'';
+    var emojiEl = document.getElementById('p-emoji');
+    if (emojiEl) emojiEl.value = p.emoji||'';
+    document.getElementById('p-sku-manual').value = '1';
+    document.getElementById('modal-product-title').textContent = 'Edit product';
+    document.getElementById('sku-preview').style.display = 'none';
+    document.getElementById('sku-gen-badge').style.display = 'none';
+    var delBtn = document.getElementById('btn-delete-product');
+    if (delBtn) delBtn.style.display = 'block';
+    document.getElementById('p-variants-data').value = JSON.stringify(p.variants||[]);
+    document.getElementById('p-art-data').value      = JSON.stringify(p.art||[]);
+    renderVariantsList();
+    renderArtList();
+    populateSupplierSelect(p.supplierId);
+    populateCatDatalist();
+    openModal('modal-product');
+  };
+  jjPull(true, function(){ doOpen(); });
+  setTimeout(function(){ doOpen(); }, 2000);
 }
 
 function populateSupplierSelect(sel='') {
@@ -2264,6 +2397,160 @@ function populateSupplierSelect(sel='') {
     if (sup.id === sel) o.selected = true;
     s.appendChild(o);
   });
+}
+
+// ── Product Variants ─────────────────────────────────────────────────────────
+function getProductVariants() {
+  try { return JSON.parse(document.getElementById('p-variants-data').value || '[]'); }
+  catch(e) { return []; }
+}
+
+function setProductVariants(v) {
+  document.getElementById('p-variants-data').value = JSON.stringify(v);
+  renderVariantsList();
+}
+
+function addProductVariant() {
+  var v = getProductVariants();
+  // Default price from base product price
+  var basePrice = parseFloat(document.getElementById('p-price').value) || 0;
+  v.push({ id: uid(), name: '', price: basePrice, cost: 0, qty: 0, sku: '' });
+  setProductVariants(v);
+}
+
+function renderVariantsList() {
+  var v   = getProductVariants();
+  var el  = document.getElementById('p-variants-list');
+  if (!el) return;
+  if (!v.length) { el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:4px 0">No variants — all stock tracked at product level</div>'; return; }
+  el.innerHTML = v.map(function(vr, i) {
+    return '<div style="background:var(--bg3);border-radius:10px;padding:10px;margin-bottom:6px">'
+      + '<div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px">'
+      + '<input type="text" value="' + (vr.name||'') + '" placeholder="Variant name *" oninput="updateVariant(' + i + ',\'name\',this.value)"'
+      + ' style="padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;background:var(--bg);color:var(--text)">'
+      + '<input type="number" value="' + (vr.price||'') + '" placeholder="Price R" step="0.01" oninput="updateVariant(' + i + ',\'price\',parseFloat(this.value)||0)"'
+      + ' style="padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;background:var(--bg);color:var(--text)">'
+      + '<input type="number" value="' + (vr.qty||0) + '" placeholder="Stock" oninput="updateVariant(' + i + ',\'qty\',parseInt(this.value)||0)"'
+      + ' style="padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:12px;background:var(--bg);color:var(--text)">'
+      + '</div>'
+      + '<div style="display:flex;justify-content:flex-end">'
+      + '<button type="button" onclick="removeVariant(' + i + ')" style="padding:4px 10px;background:var(--red-bg);border:1px solid var(--red);border-radius:7px;font-size:11px;color:var(--red);cursor:pointer">Remove</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+function updateVariant(i, field, val) {
+  var v = getProductVariants();
+  if (v[i]) { v[i][field] = val; document.getElementById('p-variants-data').value = JSON.stringify(v); }
+}
+
+function removeVariant(i) {
+  var v = getProductVariants();
+  v.splice(i, 1);
+  setProductVariants(v);
+}
+
+// ── Product Art ───────────────────────────────────────────────────────────────
+function getProductArt() {
+  try { return JSON.parse(document.getElementById('p-art-data').value || '[]'); }
+  catch(e) { return []; }
+}
+
+function handleProductArtUpload(event) {
+  var files = Array.from(event.target.files);
+  var art   = getProductArt();
+  var remaining = files.length;
+  files.forEach(function(file) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      art.push({ id: uid(), name: file.name, data: e.target.result, uploadedAt: new Date().toISOString() });
+      remaining--;
+      if (remaining === 0) {
+        document.getElementById('p-art-data').value = JSON.stringify(art);
+        renderArtList();
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+  event.target.value = '';
+}
+
+function renderArtList() {
+  var art = getProductArt();
+  var el  = document.getElementById('p-art-list');
+  if (!el) return;
+  el.innerHTML = art.map(function(a, i) {
+    return '<div style="position:relative;width:80px;height:80px">'
+      + '<img src="' + a.data + '" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="viewProductArt(' + i + ')" title="' + a.name + '">'
+      + '<button type="button" onclick="removeProductArt(' + i + ')" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;background:var(--red);border:none;border-radius:50%;color:#fff;font-size:12px;cursor:pointer;line-height:1;padding:0">&#215;</button>'
+      + '</div>';
+  }).join('');
+}
+
+function removeProductArt(i) {
+  var art = getProductArt();
+  art.splice(i, 1);
+  document.getElementById('p-art-data').value = JSON.stringify(art);
+  renderArtList();
+}
+
+function viewProductArt(i) {
+  var art = getProductArt();
+  var a   = art[i];
+  if (!a) return;
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px';
+  ov.innerHTML = '<img src="' + a.data + '" style="max-width:95vw;max-height:80vh;border-radius:12px;object-fit:contain">'
+    + '<div style="display:flex;gap:10px">'
+    + '<a href="' + a.data + '" download="' + a.name + '" style="padding:10px 20px;background:var(--accent);color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none">&#x2B07; Download</a>'
+    + '<button onclick="shareProductArt(\'' + i + '\')" style="padding:10px 20px;background:#25D366;color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">&#x1F4F1; Share</button>'
+    + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="padding:10px 20px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:10px;font-size:13px;cursor:pointer">Close</button>'
+    + '</div>';
+  ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+
+function shareProductArt(i) {
+  var art = getProductArt();
+  var a   = art[i];
+  if (!a) return;
+  // Convert base64 to blob for sharing
+  var arr  = a.data.split(','), mime = arr[0].match(/:(.*?);/)[1];
+  var bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+  while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+  var blob = new Blob([u8arr], {type:mime});
+  var file = new File([blob], a.name, {type:mime});
+  if (navigator.share && navigator.canShare && navigator.canShare({files:[file]})) {
+    navigator.share({files:[file], title:'Product art'});
+  } else {
+    // Fallback — open in new tab for manual share
+    window.open(a.data, '_blank');
+  }
+}
+
+// View product art from inventory card (when not in edit modal)
+function viewProductArtById(productId) {
+  var p = (DB.get('products')||[]).find(function(x){ return x.id===productId; });
+  if (!p || !(p.art||[]).length) { showToast('No images saved for this product','warning'); return; }
+  viewProductArtFromArray(p.art, 0);
+}
+
+function viewProductArtFromArray(art, i) {
+  var a   = art[i];
+  if (!a) return;
+  var ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px';
+  var thumbs = art.length > 1 ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:400px">'
+    + art.map(function(t,ti){ return '<img src="'+t.data+'" onclick="this.closest(\'[style*=fixed]\').remove();viewProductArtFromArray('+JSON.stringify(art)+','+ti+')" style="width:50px;height:50px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid '+(ti===i?'var(--accent)':'transparent')+'">'; }).join('')
+    + '</div>' : '';
+  ov.innerHTML = '<img src="' + a.data + '" style="max-width:95vw;max-height:72vh;border-radius:12px;object-fit:contain">'
+    + thumbs
+    + '<div style="display:flex;gap:10px">'
+    + '<a href="' + a.data + '" download="' + a.name + '" style="padding:10px 20px;background:var(--accent);color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none">&#x2B07; Download</a>'
+    + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="padding:10px 20px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:10px;font-size:13px;cursor:pointer">Close</button>'
+    + '</div>';
+  ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
 }
 
 function saveProduct() {
@@ -2285,7 +2572,10 @@ function saveProduct() {
     lowAt:     parseInt(document.getElementById('p-low')        ? document.getElementById('p-low').value        : 5) || 5,
     reorderAt: parseInt(document.getElementById('p-reorder')    ? document.getElementById('p-reorder').value    : 0) || 0,
     reorderQty:parseInt(document.getElementById('p-reorder-qty')? document.getElementById('p-reorder-qty').value: 0) || 0,
-    supplierId:(document.getElementById('p-supplier')           ? document.getElementById('p-supplier').value    : '')
+    supplierId:(document.getElementById('p-supplier')           ? document.getElementById('p-supplier').value    : ''),
+    emoji:     (document.getElementById('p-emoji')              ? document.getElementById('p-emoji').value.trim() : ''),
+    variants:  getProductVariants(),
+    art:       getProductArt()
   };
 
   if (id) {
@@ -2538,7 +2828,7 @@ function renderStocktakeList() {
     return `<div class="stocktake-row ${rowCls}" id="str-${p.id}">
       <div class="flex-between gap-8">
         <div style="flex:1;min-width:0">
-          <div class="bold text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+          <div class="bold text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.emoji ? p.emoji + " " : ""}${p.name}</div>
           <div class="text-xs text-muted mt-4">${p.category} ${p.sku?'· '+p.sku:''}</div>
           <div class="text-xs mt-4 flex-center gap-8">
             <span class="text-muted">System: <span class="bold">${p.qty}</span></span>
@@ -3374,25 +3664,145 @@ function openAddMember() {
   openModal('modal-member');
 }
 
+function parseSAID() {
+  var idVal  = (document.getElementById('m-id')||{}).value.trim().replace(/\D/g,'');
+  var res    = document.getElementById('m-id-result');
+  var bdEl   = document.getElementById('m-birthday');
+  if (!res) return;
+
+  if (!idVal) { res.style.display='none'; if(bdEl) bdEl.value=''; return; }
+  if (idVal.length < 6) { res.style.display='none'; return; }
+
+  // Extract DOB from first 6 digits: YYMMDD
+  var yy = parseInt(idVal.slice(0,2));
+  var mm = parseInt(idVal.slice(2,4));
+  var dd = parseInt(idVal.slice(4,6));
+
+  // Determine century — if YY > current 2-digit year, person born in 1900s else 2000s
+  var currentYY = new Date().getFullYear() % 100;
+  var fullYear  = yy > currentYY ? 1900 + yy : 2000 + yy;
+
+  // Validate month and day
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) {
+    res.style.display = 'block';
+    res.style.color   = 'var(--red)';
+    res.textContent   = '⚠ Invalid date in ID number';
+    if (bdEl) bdEl.value = '';
+    return;
+  }
+
+  var dob     = new Date(fullYear, mm-1, dd);
+  var today   = new Date();
+  var age     = today.getFullYear() - dob.getFullYear() - (today < new Date(today.getFullYear(), dob.getMonth(), dob.getDate()) ? 1 : 0);
+  var dobStr  = fullYear + '-' + String(mm).padStart(2,'0') + '-' + String(dd).padStart(2,'0');
+
+  // Gender from digit 7 (0-4 = female, 5-9 = male)
+  var gender = idVal.length >= 7 ? (parseInt(idVal[6]) >= 5 ? 'Male' : 'Female') : '';
+
+  // Citizenship from digit 11 (0 = SA citizen, 1 = permanent resident)
+  var citizen = idVal.length >= 11 ? (idVal[10] === '0' ? 'SA Citizen' : 'Permanent Resident') : '';
+
+  // Luhn check (digit 13)
+  var luhnValid = idVal.length === 13 ? validateLuhn(idVal) : null;
+
+  if (age < 18) {
+    res.style.display = 'block';
+    res.style.color   = 'var(--red)';
+    res.innerHTML     = '&#x26A0; Under 18 — cannot register (' + dob.toLocaleDateString('en-ZA') + ' · Age ' + age + ')';
+    if (bdEl) bdEl.value = '';
+    return;
+  }
+
+  // Auto-fill birthday
+  if (bdEl) bdEl.value = dobStr;
+
+  res.style.display = 'block';
+  res.style.color   = 'var(--green)';
+  res.innerHTML     = '&#x2713; '
+    + dob.toLocaleDateString('en-ZA', {day:'numeric',month:'long',year:'numeric'})
+    + ' &middot; Age ' + age
+    + (gender ? ' &middot; ' + gender : '')
+    + (citizen ? ' &middot; ' + citizen : '')
+    + (luhnValid === false ? ' <span style="color:var(--red)">&middot; &#x26A0; Check ID digits</span>' : '');
+}
+
+function validateLuhn(idStr) {
+  // South African ID uses Luhn algorithm
+  var sum = 0;
+  var nDigits = idStr.length;
+  var parity = nDigits % 2;
+  for (var i = 0; i < nDigits; i++) {
+    var digit = parseInt(idStr[i]);
+    if (i % 2 === parity) digit *= 2;
+    if (digit > 9) digit -= 9;
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
+function getSAIDAge(idNumber) {
+  if (!idNumber || idNumber.length < 6) return null;
+  var id = idNumber.replace(/\D/g,'');
+  var yy = parseInt(id.slice(0,2));
+  var mm = parseInt(id.slice(2,4));
+  var dd = parseInt(id.slice(4,6));
+  var currentYY = new Date().getFullYear() % 100;
+  var fullYear  = yy > currentYY ? 1900 + yy : 2000 + yy;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  var dob  = new Date(fullYear, mm-1, dd);
+  var today = new Date();
+  return today.getFullYear() - dob.getFullYear() - (today < new Date(today.getFullYear(), dob.getMonth(), dob.getDate()) ? 1 : 0);
+}
+
+function getSAIDBirthday(idNumber) {
+  if (!idNumber || idNumber.length < 6) return null;
+  var id = idNumber.replace(/\D/g,'');
+  var yy = parseInt(id.slice(0,2));
+  var mm = parseInt(id.slice(2,4));
+  var dd = parseInt(id.slice(4,6));
+  var currentYY = new Date().getFullYear() % 100;
+  var fullYear  = yy > currentYY ? 1900 + yy : 2000 + yy;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return fullYear + '-' + String(mm).padStart(2,'0') + '-' + String(dd).padStart(2,'0');
+}
+
 function saveMember() {
-  const name = document.getElementById('m-name').value.trim();
+  var name = (document.getElementById('m-name').value||'').trim();
   if (!name) { alert('Name required'); return; }
-  const members = DB.get('members');
-  const id = document.getElementById('m-id-hidden').value;
+
+  // SA ID age validation
+  var idVal = (document.getElementById('m-id').value||'').trim();
+  if (idVal && idVal.replace(/\D/g,'').length >= 6) {
+    var age = getSAIDAge(idVal);
+    if (age !== null && age < 18) {
+      alert('Member must be 18 or older. This ID shows age ' + age + '.');
+      return;
+    }
+  }
+
+  var members = DB.get('members');
+  var id = document.getElementById('m-id-hidden').value;
   var mPhone2 = (document.getElementById('m-phone').value||'').replace(/\D/g,'');
   var autoMemberNo = mPhone2.slice(-4) || document.getElementById('m-num').value.trim();
   var memberNoFinal = document.getElementById('m-num').value.trim() || autoMemberNo;
-  const data = { name, memberNo: memberNoFinal, idNumber:document.getElementById('m-id').value.trim(), phone:document.getElementById('m-phone').value.trim(), email:document.getElementById('m-email').value.trim(), address:document.getElementById('m-addr').value.trim() };
+
+  // Auto-derive birthday from ID if field is empty
+  var birthdayVal = (document.getElementById('m-birthday').value||'').trim();
+  if (!birthdayVal && idVal) birthdayVal = getSAIDBirthday(idVal) || '';
+
+  var data = {
+    name, memberNo: memberNoFinal,
+    idNumber: idVal,
+    phone:    (document.getElementById('m-phone').value||'').trim(),
+    email:    (document.getElementById('m-email').value||'').trim(),
+    address:  (document.getElementById('m-addr').value||'').trim(),
+    birthday: birthdayVal
+  };
   if (id) {
-    const i=members.findIndex(m=>m.id===id);
-    if(i>-1) {
-      // preserve marketingOptIn from existing record — don't overwrite it on edit
-      const existing = members[i];
-      members[i]={...existing,...data, marketingOptIn: existing.marketingOptIn !== false};
-    }
+    var i = members.findIndex(function(m){ return m.id===id; });
+    if (i>-1) { var ex=members[i]; members[i]={...ex,...data, marketingOptIn: ex.marketingOptIn!==false}; }
   } else {
-    // New members default to opted IN
-    members.push({id:uid(), marketingOptIn:true, ...data});
+    members.push({id:uid(), marketingOptIn:true, loyaltyPoints:0, lifetimeSpend:0, ...data});
   }
   DB.set('members', members);
   closeModal('modal-member');
@@ -3423,6 +3833,30 @@ function openMemberProfile(id) {
       <div class="stat-tile"><div class="stat-label">Purchases</div><div class="stat-value">${sales.length}</div></div>
       <div class="stat-tile"><div class="stat-label">Total spent</div><div class="stat-value green">${fmt(totalSpend)}</div></div>
     </div>
+    ${(function(){
+      var tier  = getLoyaltyTier(totalSpend);
+      var pts   = getMemberPoints(m);
+      var toNext = LOYALTY.pointsPerCredit - (pts % LOYALTY.pointsPerCredit);
+      var credits = Math.floor(pts / LOYALTY.pointsPerCredit) * LOYALTY.creditValue;
+      return '<div style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:12px">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+        +'<div style="font-size:13px;font-weight:800">'+tier.icon+' '+tier.name+' Member</div>'
+        +(m.birthday?'<div style="font-size:11px;color:var(--text3)">&#x1F382; '+m.birthday.slice(5).replace("-","/")+'</div>':'')
+        +'</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+        +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">'
+        +'<div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;margin-bottom:3px">Points</div>'
+        +'<div style="font-size:20px;font-weight:900;color:var(--accent)">'+pts+'</div>'
+        +(toNext<LOYALTY.pointsPerCredit?'<div style="font-size:10px;color:var(--text3)">'+toNext+' to next reward</div>':'')
+        +'</div>'
+        +'<div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">'
+        +'<div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;margin-bottom:3px">Credits</div>'
+        +'<div style="font-size:20px;font-weight:900;color:#16a34a">'+fmt(credits)+'</div>'
+        +(credits>0?'<div style="font-size:10px;color:var(--text3)">redeemable at POS</div>':'<div style="font-size:10px;color:var(--text3)">'+LOYALTY.pointsPerCredit+' pts = '+fmt(LOYALTY.creditValue)+'</div>')
+        +'</div></div>'
+        +(credits>0?'<div style="font-size:11px;color:var(--accent);text-align:center;margin-top:8px;font-weight:700">Ask staff to apply credit at next purchase</div>':'')
+        +'</div>';
+    })()}
     <div class="flex-between" style="margin-bottom:10px">
       <div class="section-title" style="margin:0">Purchase history</div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -3453,6 +3887,8 @@ function openEditMember(id) {
   document.getElementById('m-phone').value = m.phone||'';
   document.getElementById('m-email').value = m.email||'';
   document.getElementById('m-addr').value = m.address||'';
+  var bdEl = document.getElementById('m-birthday');
+  if (bdEl) bdEl.value = m.birthday||'';
   document.getElementById('modal-member-title').textContent = 'Edit member';
   openModal('modal-member');
 }
@@ -3475,19 +3911,17 @@ let saleDiscountVisible = false;
 // ── Member completeness check ──
 function memberIsComplete(m) {
   if (!m) return false;
-  const hasName = !!(m.name && m.name.trim());
-  const hasPhone = !!(m.phone && m.phone.trim());
-  const hasId = !!(m.idNumber && m.idNumber.trim() && 
-    !m.idNumber.includes('NEEDS') && m.idNumber !== '/' && m.idNumber.length > 4);
+  // Only require name + member number to be selectable on POS
+  // ID number is optional — don't block sales for members without it
+  const hasName     = !!(m.name && m.name.trim());
   const hasMemberNo = !!(m.memberNo && m.memberNo.trim() && m.memberNo !== '???');
-  return hasName && hasPhone && hasId && hasMemberNo;
+  return hasName && hasMemberNo;
 }
 
 function memberMissingFields(m) {
   const missing = [];
-  if (!m.phone || !m.phone.trim()) missing.push('phone number');
+  if (!m.phone || !m.phone.trim()) missing.push('phone');
   if (!m.memberNo || m.memberNo === '???') missing.push('member number');
-  if (!m.idNumber || m.idNumber.includes('NEEDS') || m.idNumber === '/' || m.idNumber.length <= 4) missing.push('valid ID number');
   return missing;
 }
 
@@ -3766,7 +4200,7 @@ function searchSaleMember() {
     (m.memberNo||'').toLowerCase().includes(q) ||
     (m.idNumber||'').toLowerCase().includes(q) ||
     (m.phone||'').includes(q)
-  ).slice(0, 8);
+  ).slice(0, 20);
 
   res.style.display = 'block';
 
@@ -4123,6 +4557,13 @@ function completeSale() {
   const sales = DB.get('sales');
   sales.push(sale);
   DB.set('sales', sales);
+
+  // Award loyalty points if member linked
+  if (sale.memberId && sale.total > 0) {
+    var pts = awardLoyaltyPoints(sale.memberId, sale.total);
+    if (pts > 0) setTimeout(function(){ showToast('&#x1F4B3; +'+pts+' loyalty points for '+sale.memberName+'!','success',3000); }, 500);
+  }
+
   // Push to cloud immediately — don't wait for the debounce timer
   if (typeof jjPush === 'function') { _JJL = 0; jjPush(true); }
 
@@ -4702,6 +5143,341 @@ function catInfo(cat) {
   return PCD_CATS[cat] || PCD_CATS['Other'];
 }
 
+// ── Expense categories ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// LOYALTY SYSTEM
+// ═══════════════════════════════════════════════════════════════
+var LOYALTY = {
+  pointsPerRand:   0.01,
+  pointsPerCredit: 1000,
+  creditValue:     500,
+  milestoneAmount: 10000
+};
+
+function getLoyaltyTier(totalSpend) {
+  if (totalSpend >= 15000) return {name:'Platinum', color:'#94a3b8', icon:'💎'};
+  if (totalSpend >= 7500)  return {name:'Gold',     color:'#d97706', icon:'🥇'};
+  if (totalSpend >= 2500)  return {name:'Silver',   color:'#64748b', icon:'🥈'};
+  return                          {name:'Bronze',   color:'#92400e', icon:'🥉'};
+}
+
+function getMemberPoints(m) { return m.loyaltyPoints || 0; }
+
+function getMemberTotalSpend(memberId) {
+  return (DB.get('sales')||[]).filter(function(s){ return !s.voided&&s.memberId===memberId; }).reduce(function(a,s){ return a+s.total; },0);
+}
+
+function awardLoyaltyPoints(memberId, saleAmount) {
+  var members = DB.get('members')||[];
+  var idx = members.findIndex(function(m){ return m.id===memberId; });
+  if (idx===-1) return 0;
+  var m = members[idx];
+  var newPts  = Math.floor(saleAmount * LOYALTY.pointsPerRand);
+  var oldTotal = m.lifetimeSpend || 0;
+  var newTotal = oldTotal + saleAmount;
+  m.loyaltyPoints = (m.loyaltyPoints||0) + newPts;
+  m.lifetimeSpend = newTotal;
+  if (oldTotal < LOYALTY.milestoneAmount && newTotal >= LOYALTY.milestoneAmount) {
+    m.milestoneReached = new Date().toISOString();
+    setTimeout(function(){ showMilestoneBanner(m); }, 500);
+  }
+  members[idx] = m;
+  DB.set('members', members);
+  return newPts;
+}
+
+function redeemLoyaltyPoints(memberId, points) {
+  var members = DB.get('members')||[];
+  var idx = members.findIndex(function(m){ return m.id===memberId; });
+  if (idx===-1) return 0;
+  var m = members[idx];
+  if ((m.loyaltyPoints||0) < points) return 0;
+  var credit = Math.floor(points / LOYALTY.pointsPerCredit) * LOYALTY.creditValue;
+  m.loyaltyPoints = (m.loyaltyPoints||0) - points;
+  if (!m.loyaltyHistory) m.loyaltyHistory = [];
+  m.loyaltyHistory.push({date:new Date().toISOString(),type:'redeem',points:-points,credit});
+  members[idx] = m;
+  DB.set('members', members);
+  return credit;
+}
+
+function checkBirthdays() {
+  var today  = new Date();
+  var todayMD = String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
+  (DB.get('members')||[]).forEach(function(m) {
+    if (!m.birthday) return;
+    if (m.birthday.slice(5) !== todayMD) return;
+    var key = 'bday_'+m.id+'_'+today.toISOString().slice(0,10);
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key,'1');
+    showBirthdayBanner(m);
+  });
+}
+
+function showBirthdayBanner(m) {
+  if (document.getElementById('bday-'+m.id)) return;
+  var b = document.createElement('div');
+  b.id  = 'bday-'+m.id;
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9100;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;padding:14px 16px;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+  b.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div style="flex:1">'
+    +'<div style="font-size:16px;font-weight:900;margin-bottom:3px">🎂 It\'s '+m.name+'\'s birthday!</div>'
+    +'<div style="font-size:12px;opacity:.9">Member #'+m.memberNo+' &middot; '+getMemberPoints(m)+' points</div></div>'
+    +'<button onclick="document.getElementById(\'bday-'+m.id+'\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:50%;width:28px;height:28px;font-size:14px;cursor:pointer">&#215;</button></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+    +(m.phone?'<a href="https://wa.me/'+normalisePhone(m.phone)+'" target="_blank" style="flex:1;padding:8px;background:#25D366;border:none;border-radius:10px;color:#fff;font-size:12px;font-weight:800;text-align:center;text-decoration:none;min-width:90px">&#x1F4AC; WhatsApp</a>':'')
+    +(m.email?'<a href="mailto:'+m.email+'?subject=Happy Birthday!&body=Hi '+m.name+',%0AHappy birthday from Jack %26 Jill\'s Adventure Club!" style="flex:1;padding:8px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);border-radius:10px;color:#fff;font-size:12px;font-weight:800;text-align:center;text-decoration:none;min-width:90px">&#x2709; Email</a>':'')
+    +'<button onclick="openBirthdayGift(\''+m.id+'\')" style="flex:1;padding:8px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);border-radius:10px;color:#fff;font-size:12px;font-weight:800;cursor:pointer;min-width:90px">&#x1F381; Give gift</button>'
+    +'</div>';
+  document.body.insertBefore(b, document.body.firstChild);
+}
+
+function openBirthdayGift(memberId) {
+  var m = (DB.get('members')||[]).find(function(x){ return x.id===memberId; });
+  if (!m) return;
+  var products = (DB.get('products')||[]).filter(function(p){ return (p.qty||0)>0; });
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9200;display:flex;align-items:flex-end;justify-content:center';
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto">'
+    +'<div style="font-size:16px;font-weight:900;margin-bottom:4px">&#x1F381; Gift for '+m.name+'</div>'
+    +'<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Select a complimentary product</div>'
+    +products.slice(0,20).map(function(p){
+      return '<div onclick="logBirthdayGift(\''+memberId+'\',\''+p.id+'\',this.closest(\'[style*=fixed]\'))" '
+        +'style="padding:10px 12px;background:var(--bg3);border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border:1.5px solid transparent" '
+        +'onmouseover="this.style.borderColor=\'var(--accent)\'" onmouseout="this.style.borderColor=\'transparent\'">'
+        +'<div><div style="font-size:13px;font-weight:700">'+(p.emoji||'')+' '+p.name+'</div>'
+        +'<div style="font-size:11px;color:var(--text3)">'+p.category+' &middot; '+p.qty+' in stock</div></div>'
+        +'<div style="font-weight:800;color:var(--accent)">'+fmt(p.price)+'</div></div>';
+    }).join('')
+    +'<button onclick="this.closest(\'[style*=fixed]\').remove()" style="width:100%;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px">Cancel</button>'
+    +'</div>';
+  document.body.appendChild(modal);
+}
+
+function logBirthdayGift(memberId, productId, modal) {
+  var m = (DB.get('members')||[]).find(function(x){ return x.id===memberId; });
+  var p = (DB.get('products')||[]).find(function(x){ return x.id===productId; });
+  if (!m||!p) return;
+  var prods = DB.get('products')||[];
+  var pi = prods.findIndex(function(x){ return x.id===productId; });
+  if (pi>-1) { prods[pi].qty=Math.max(0,(prods[pi].qty||0)-1); DB.set('products',prods); }
+  var exps = DB.get('expenses')||[];
+  exps.push({id:uid(),date:new Date().toISOString().slice(0,10),desc:'Birthday gift — '+m.name+' (#'+m.memberNo+')',amount:p.price||0,category:'Marketing',payMethod:'cost',status:'paid',notes:'Birthday gift 🎂'});
+  DB.set('expenses',exps);
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+  if (modal) modal.remove();
+  var banner = document.getElementById('bday-'+memberId);
+  if (banner) banner.remove();
+  showToast('🎁 '+p.name+' gifted to '+m.name+' ✓','success',4000);
+}
+
+function showMilestoneBanner(m) {
+  var b = document.createElement('div');
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9100;background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff;padding:14px 16px;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+  b.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px"><div>'
+    +'<div style="font-size:16px;font-weight:900;margin-bottom:3px">&#x1F947; '+m.name+' hit R10,000!</div>'
+    +'<div style="font-size:12px;opacity:.9">Member #'+m.memberNo+' &middot; '+getMemberPoints(m)+' points</div></div>'
+    +'<button onclick="this.parentElement.parentElement.remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:50%;width:28px;height:28px;font-size:14px;cursor:pointer">&#215;</button></div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px">'
+    +(m.phone?'<a href="https://wa.me/'+normalisePhone(m.phone)+'" target="_blank" style="flex:1;padding:8px;background:#25D366;border-radius:10px;color:#fff;font-size:12px;font-weight:800;text-align:center;text-decoration:none">&#x1F4AC; Congratulate</a>':'')
+    +'<button onclick="this.parentElement.parentElement.remove()" style="flex:1;padding:8px;background:rgba(255,255,255,.2);border:none;border-radius:10px;color:#fff;font-size:12px;font-weight:800;cursor:pointer">Dismiss</button>'
+    +'</div>';
+  document.body.insertBefore(b, document.body.firstChild);
+}
+
+// ── Default expense categories ────────────────────────────────────────────────
+
+function getExpCats() {
+  var saved = DB.getObj('expenseCategories', null);
+  if (!saved || !saved.length) { DB.setObj('expenseCategories', DEFAULT_EXP_CATS.slice()); return DEFAULT_EXP_CATS.slice(); }
+  return saved;
+}
+
+function saveExpCat(cat) {
+  cat = (cat||'').trim();
+  if (!cat) return;
+  var cats = getExpCats();
+  if (!cats.includes(cat)) { cats.push(cat); cats.sort(); DB.setObj('expenseCategories', cats); }
+}
+
+function populatePceCatList() {
+  var dl = document.getElementById('pce-cat-list');
+  if (dl) dl.innerHTML = getExpCats().map(function(c){ return '<option value="'+c+'">'; }).join('');
+}
+
+function pcdManageCats() {
+  var cats = getExpCats();
+  var el   = document.getElementById('pcd-cats-list');
+  if (!el) return;
+  el.innerHTML = cats.map(function(c) {
+    return '<div style="display:flex;align-items:center;gap:4px;background:var(--bg3);border-radius:20px;padding:4px 10px 4px 12px">'
+      + '<span style="font-size:12px;font-weight:600">'+c+'</span>'
+      + '<button onclick="pcdDeleteCat(\''+c+'\')" style="background:none;border:none;color:var(--text3);font-size:14px;cursor:pointer;padding:0 2px">&#215;</button>'
+      + '</div>';
+  }).join('')
+  + '<div style="display:flex;gap:6px;width:100%;margin-top:6px">'
+  + '<input id="pcd-new-cat-inp" type="text" placeholder="New category..." style="flex:1;padding:7px 10px;border:1.5px solid var(--accent);border-radius:8px;font-size:12px;background:var(--bg);color:var(--text)">'
+  + '<button onclick="pcdAddCat()" style="padding:7px 12px;background:var(--accent);border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">Add</button>'
+  + '</div>';
+}
+
+function pcdAddCat() {
+  var inp = document.getElementById('pcd-new-cat-inp');
+  if (!inp || !inp.value.trim()) return;
+  saveExpCat(inp.value.trim());
+  populatePceCatList();
+  pcdManageCats();
+  showToast('Category added', 'success');
+}
+
+function pcdDeleteCat(cat) {
+  var cats = getExpCats().filter(function(c){ return c !== cat; });
+  DB.setObj('expenseCategories', cats);
+  pcdManageCats();
+  populatePceCatList();
+}
+
+// ── Recurring expenses ────────────────────────────────────────────────────────
+function getRecurring() { return DB.getObj('recurringExpenses', []) || []; }
+
+function renderRecurringList() {
+  var list  = getRecurring();
+  var el    = document.getElementById('pcd-recurring-list');
+  if (!el) return;
+  if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">No recurring expenses yet. Add debit orders, rent, subscriptions etc.</div>'; return; }
+  var today = new Date();
+  el.innerHTML = list.map(function(r) {
+    var dueDay  = r.dueDay || 1;
+    var dueDate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+    if (dueDate < today) dueDate = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
+    var daysLeft = Math.ceil((dueDate - today) / 86400000);
+    var urgency  = daysLeft <= 2 ? 'var(--red)' : daysLeft <= 5 ? '#d97706' : 'var(--green)';
+    var paid     = r.lastPaid && new Date(r.lastPaid).getMonth()===today.getMonth() && new Date(r.lastPaid).getFullYear()===today.getFullYear();
+    var suffix   = dueDay===1?'st':dueDay===2?'nd':dueDay===3?'rd':'th';
+    return '<div style="background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px;border-left:3px solid '+(paid?'var(--green)':urgency)+'">'
+      + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
+      + '<div><div style="font-size:13px;font-weight:700">'+r.name+'</div>'
+      + '<div style="font-size:11px;color:var(--text3);margin-top:2px">'+r.category+' · '+r.payMethod+' · Due '+dueDay+suffix+' monthly'+(r.notes?' · '+r.notes:'')+'</div></div>'
+      + '<div style="text-align:right"><div style="font-size:15px;font-weight:800;color:var(--red)">'+fmt(r.amount)+'</div>'
+      + '<div style="font-size:10px;font-weight:700;color:'+(paid?'var(--green)':urgency)+'">'+(paid?'&#10003; Paid this month':daysLeft+' days')+'</div></div></div>'
+      + '<div style="display:flex;gap:5px;margin-top:8px">'
+      + (!paid ? '<button onclick="pcdMarkRecurringPaid(\''+r.id+'\')" style="flex:2;padding:6px;background:var(--green);border:none;border-radius:7px;font-size:11px;font-weight:700;color:#fff;cursor:pointer">&#10003; Mark paid</button>' : '')
+      + '<button onclick="pcdEditRecurring(\''+r.id+'\')" style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">Edit</button>'
+      + '<button onclick="pcdDeleteRecurring(\''+r.id+'\')" style="flex:1;padding:6px;background:var(--red-bg);border:1px solid var(--red);border-radius:7px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">Del</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+function pcdAddRecurring(existingId) {
+  var r    = existingId ? getRecurring().find(function(x){ return x.id===existingId; }) : null;
+  var cats = getExpCats();
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto">'
+    + '<div style="font-size:16px;font-weight:800;margin-bottom:14px">'+(r?'Edit':'Add')+' recurring expense</div>'
+    + '<div style="display:grid;gap:10px">'
+    + '<input id="rec-name"   type="text"   placeholder="Name *" value="'+(r?r.name:'')+'" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text);width:100%;box-sizing:border-box">'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    + '<input id="rec-amount" type="number" step="0.01" placeholder="Amount R *" value="'+(r?r.amount:'')+'" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text)">'
+    + '<input id="rec-due"    type="number" min="1" max="31" placeholder="Due day" value="'+(r?r.dueDay:1)+'" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text)">'
+    + '</div>'
+    + '<input id="rec-cat"   type="text" list="rec-cat-dl" placeholder="Category" value="'+(r?r.category:'Subscriptions')+'" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text);width:100%;box-sizing:border-box">'
+    + '<datalist id="rec-cat-dl">'+cats.map(function(c){ return '<option value="'+c+'">'; }).join('')+'</datalist>'
+    + '<select id="rec-pay" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text)">'
+    + ['eft','petty_cash','card','cash'].map(function(v){ return '<option value="'+v+'"'+(r&&r.payMethod===v?' selected':'')+'>'+{eft:'EFT / Debit order',petty_cash:'Petty cash',card:'Card',cash:'Cash'}[v]+'</option>'; }).join('')
+    + '</select>'
+    + '<div style="display:flex;align-items:center;gap:10px">'
+    + '<label style="font-size:12px;color:var(--text3);white-space:nowrap">Remind me</label>'
+    + '<input id="rec-remind" type="number" min="1" max="14" value="'+(r?r.remindDaysBefore:3)+'" style="width:60px;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text)">'
+    + '<label style="font-size:12px;color:var(--text3)">days before due date</label>'
+    + '</div>'
+    + '<input id="rec-notes" type="text" placeholder="Notes (account no., reference...)" value="'+(r?r.notes||'':'')+'" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text);width:100%;box-sizing:border-box">'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px">'
+    + '<button onclick="pcdSaveRecurring(\''+existingId+'\')" style="flex:2;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#fff;cursor:pointer">Save</button>'
+    + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+}
+
+function pcdSaveRecurring(existingId) {
+  var modal  = document.querySelector('[style*="position:fixed"][style*="9999"]');
+  var name   = (document.getElementById('rec-name')||{}).value.trim();
+  var amount = parseFloat((document.getElementById('rec-amount')||{}).value)||0;
+  var due    = parseInt((document.getElementById('rec-due')||{}).value)||1;
+  var cat    = (document.getElementById('rec-cat')||{}).value.trim()||'Other';
+  var pay    = (document.getElementById('rec-pay')||{}).value||'eft';
+  var remind = parseInt((document.getElementById('rec-remind')||{}).value)||3;
+  var notes  = (document.getElementById('rec-notes')||{}).value.trim();
+  if (!name||!amount) { showToast('Name and amount required', 'error'); return; }
+  var list = getRecurring();
+  if (existingId && existingId !== 'null') {
+    var idx = list.findIndex(function(r){ return r.id===existingId; });
+    if (idx>-1) list[idx] = Object.assign(list[idx],{name,amount,dueDay:due,category:cat,payMethod:pay,remindDaysBefore:remind,notes});
+  } else {
+    list.push({id:uid(),name,amount,dueDay:due,category:cat,payMethod:pay,remindDaysBefore:remind,notes,createdAt:new Date().toISOString()});
+  }
+  DB.setObj('recurringExpenses', list);
+  saveExpCat(cat);
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+  if (modal) modal.remove();
+  renderRecurringList();
+  showToast(name+' saved ✓','success');
+}
+
+function pcdMarkRecurringPaid(id) {
+  var list = getRecurring();
+  var r    = list.find(function(x){ return x.id===id; });
+  if (!r) return;
+  r.lastPaid = new Date().toISOString();
+  var exps = DB.get('expenses')||[];
+  exps.push({id:uid(),date:new Date().toISOString().slice(0,10),desc:r.name,amount:r.amount,category:r.category,payMethod:r.payMethod,status:'paid',notes:'Monthly recurring',recurringId:id});
+  DB.set('expenses',exps);
+  if (r.payMethod==='petty_cash') updatePettyCash(-r.amount,r.name,'expense',r.category);
+  DB.setObj('recurringExpenses',list);
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+  renderRecurringList();
+  renderPCDashboard();
+  showToast(r.name+' paid ✓','success');
+}
+
+function pcdEditRecurring(id) { pcdAddRecurring(id); }
+
+function pcdDeleteRecurring(id) {
+  if (!confirm('Delete this recurring expense?')) return;
+  DB.setObj('recurringExpenses', getRecurring().filter(function(r){ return r.id!==id; }));
+  jjPush(false);
+  renderRecurringList();
+}
+
+// ── Recurring reminders ───────────────────────────────────────────────────────
+function checkRecurringReminders() {
+  var list  = getRecurring();
+  var today = new Date();
+  list.forEach(function(r) {
+    var dueDay   = r.dueDay||1;
+    var remind   = r.remindDaysBefore||3;
+    var dueDate  = new Date(today.getFullYear(), today.getMonth(), dueDay);
+    if (dueDate<today) dueDate = new Date(today.getFullYear(), today.getMonth()+1, dueDay);
+    var daysLeft = Math.ceil((dueDate-today)/86400000);
+    var paid     = r.lastPaid && new Date(r.lastPaid).getMonth()===today.getMonth() && new Date(r.lastPaid).getFullYear()===today.getFullYear();
+    if (!paid && daysLeft<=remind) {
+      var key = 'rec_rem_'+r.id+'_'+dueDate.toISOString().slice(0,7);
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key,'1');
+        var msg = daysLeft===0?'DUE TODAY!':daysLeft===1?'due tomorrow':'due in '+daysLeft+' days';
+        showReminderBanner('rec_'+r.id, r.name+' '+msg, fmt(r.amount)+' · '+r.payMethod, function(){ switchTab('expenses',null); setTimeout(renderRecurringList,300); });
+      }
+    }
+  });
+}
+
+var _origStartReminders = startReminderScheduler;
+function startReminderScheduler() {
+  _origStartReminders();
+  checkRecurringReminders();
+  setInterval(checkRecurringReminders, 3600000); // check every hour
+}
+
 function pcdChangeMonth(delta) {
   _pcdMonth += delta;
   if (_pcdMonth > 11) { _pcdMonth = 0;  _pcdYear++; }
@@ -4710,27 +5486,114 @@ function pcdChangeMonth(delta) {
   renderPCDashboard();
 }
 
-function pcdSetBalance() {
-  var val = parseFloat(document.getElementById('pcd-set-input').value);
-  if (isNaN(val)) { showToast('Enter a valid amount', 'error'); return; }
-  updatePettyCash(val - getPettyCash().balance, 'Balance manually set to ' + fmt(val), 'set');
-  document.getElementById('pcd-set-input').value = '';
+function pcdToggleQuickExp() {
+  var el = document.getElementById('pcd-quick-exp');
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (!open) {
+    // Set default date to today
+    var dateEl = document.getElementById('pce-date');
+    if (dateEl) dateEl.value = new Date().toISOString().slice(0,10);
+    document.getElementById('pce-desc').focus();
+  }
+}
+
+function pcdLogExpense() {
+  var desc    = (document.getElementById('pce-desc')||{}).value.trim();
+  var amount  = parseFloat((document.getElementById('pce-amount')||{}).value)||0;
+  var cat     = (document.getElementById('pce-cat')||{}).value.trim()||'Other';
+  var date    = (document.getElementById('pce-date')||{}).value||new Date().toISOString().slice(0,10);
+  var notes   = (document.getElementById('pce-notes')||{}).value.trim();
+  var payMeth = (document.getElementById('pce-paymethod')||{}).value||'petty_cash';
+
+  if (!desc)   { showToast('Enter a description','error'); return; }
+  if (!amount) { showToast('Enter an amount','error'); return; }
+
+  saveExpCat(cat);
+
+  var exps = DB.get('expenses')||[];
+  exps.push({id:uid(), date, desc, amount, category:cat, payMethod:payMeth, status:'paid', notes});
+  DB.set('expenses', exps);
+
+  if (payMeth==='petty_cash') {
+    updatePettyCash(-amount, desc, 'expense', cat);
+  } else if (payMeth==='eft'||payMeth==='card') {
+    updateBankBalance(-amount, desc, 'expense', cat);
+  }
+
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+
+  document.getElementById('pce-desc').value   = '';
+  document.getElementById('pce-amount').value = '';
+  document.getElementById('pce-notes').value  = '';
+  document.getElementById('pcd-quick-exp').style.display = 'none';
+
   renderPCDashboard();
-  jjPush(false);
-  showToast('Petty cash balance set to ' + fmt(val) + ' ✓', 'success');
+  showToast(desc+' — '+fmt(amount)+' logged ✓','success');
+}
+
+// ── Bank / Card balance ───────────────────────────────────────────────────────
+function getBankBalance() {
+  return DB.getObj('bankBalance', {balance:0, history:[]});
+}
+
+function updateBankBalance(delta, reason, type, category) {
+  var bb = getBankBalance();
+  var oldBal = bb.balance || 0;
+  var newBal = Math.round((oldBal + delta) * 100) / 100;
+  bb.balance = newBal;
+  if (!bb.history) bb.history = [];
+  bb.history.push({
+    id: (typeof uid==='function'?uid():Date.now().toString(36)),
+    date: new Date().toISOString(), type: type||'change',
+    reason: reason||'', category: category||'',
+    delta: delta, oldBalance: oldBal, newBalance: newBal
+  });
+  DB.setObj('bankBalance', bb);
+  return newBal;
+}
+
+function pcdSetBankBalance() {
+  var val = parseFloat((document.getElementById('pcd-bank-set-input')||{}).value);
+  if (isNaN(val)||val<0) { showToast('Enter a valid amount','error'); return; }
+  var bb = getBankBalance();
+  updateBankBalance(val-(bb.balance||0), 'Bank balance set to '+fmt(val), 'set');
+  var inp = document.getElementById('pcd-bank-set-input');
+  if (inp) inp.value = '';
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+  renderPCDashboard();
+  showToast('Bank balance set to '+fmt(val)+' ✓','success');
+}
+
+function pcdSetBalance() {
+  var val = parseFloat((document.getElementById('pcd-set-input')||{}).value);
+  if (isNaN(val)||val<0) { showToast('Enter a valid amount','error'); return; }
+  var pc = getPettyCash();
+  updatePettyCash(val-(pc.balance||0), 'Opening/corrected balance set to '+fmt(val), 'set');
+  var inp = document.getElementById('pcd-set-input');
+  if (inp) inp.value = '';
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null; jjPush(false);
+  renderPCDashboard();
+  showToast('Petty cash balance set to '+fmt(val)+' ✓','success');
 }
 
 function renderPCDashboard() {
-  // Update balance display
-  var pc  = getPettyCash();
-  var bal = pc.balance || 0;
+  // Update both balance displays
+  var pc      = getPettyCash();
+  var bb      = getBankBalance();
+  var bal     = pc.balance || 0;
+  var bankBal = bb.balance || 0;
+
   var balEl = document.getElementById('pcd-balance');
-  if (balEl) {
-    balEl.textContent = fmt(bal);
-    balEl.style.color = bal < 0 ? '#fca5a5' : '#fff';
-  }
+  if (balEl) { balEl.textContent = fmt(bal); balEl.style.color = bal < 0 ? '#fca5a5' : '#fff'; }
   var statusEl = document.getElementById('pcd-bal-status');
-  if (statusEl) statusEl.textContent = bal < 0 ? '⚠️ Overdrawn' : bal < 200 ? '⚠️ Running low' : '✓ Healthy';
+  if (statusEl) statusEl.textContent = bal < 0 ? 'Overdrawn' : bal < 200 ? 'Running low' : 'Healthy';
+
+  var bankEl = document.getElementById('pcd-bank-balance');
+  if (bankEl) { bankEl.textContent = fmt(bankBal); bankEl.style.color = bankBal < 0 ? '#fca5a5' : '#fff'; }
+  var bankStatusEl = document.getElementById('pcd-bank-status');
+  if (bankStatusEl) bankStatusEl.textContent = bankBal < 0 ? 'Overdrawn' : bankBal < 500 ? 'Running low' : 'Healthy';
 
   // Month label
   var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -4914,6 +5777,11 @@ function renderPCDashboard() {
   });
 
   ledgerEl.innerHTML = html;
+
+  // Render supporting sections
+  populatePceCatList();
+  pcdManageCats();
+  renderRecurringList();
 }
 
 function pcdFilterCat(cat) {
@@ -5340,11 +6208,22 @@ function saveCashup() {
   });
   DB.set('expenses', allExps);
 
-  // ── 2. Top up petty cash with banked amount ────────────────────────────────
-  // This is the core link: every cent banked from the till goes into petty cash
+  // ── 2. Top up petty cash with banked cash amount ──────────────────────────────
   updatePettyCash(toBank,
     'Cashup banked — ' + new Date(today).toLocaleDateString('en-ZA') + ' (' + staffNames + ')',
     'cashup');
+
+  // ── 3. Top up bank balance with card + EFT declared ───────────────────────────
+  if (cardDeclared > 0) {
+    updateBankBalance(cardDeclared,
+      'Card/Yoco declared — ' + new Date(today).toLocaleDateString('en-ZA'),
+      'cashup_card');
+  }
+  if (eftDeclared > 0) {
+    updateBankBalance(eftDeclared,
+      'EFT declared — ' + new Date(today).toLocaleDateString('en-ZA'),
+      'cashup_eft');
+  }
 
   const pcAfter = getPettyCash().balance;
 
@@ -6221,7 +7100,7 @@ function renderWhStock(products, q) {
     return `<div class="card" style="margin-bottom:8px">
       <div class="flex-between">
         <div style="flex:1;min-width:0">
-          <div class="bold text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+          <div class="bold text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.emoji ? p.emoji + " " : ""}${p.name}</div>
           <div class="text-xs text-muted mt-4">${p.sku||'—'} · ${p.category||'—'}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -6769,7 +7648,7 @@ var JJ = {
   connected: false,
   keys: ['products','members','sales','staff','suppliers','expenses',
          'purchaseOrders','writeoffs','stockTransfers','grvRecords',
-         'cashups','rollingRecords','stocktakeReports','wageRecords','pettyCash']
+         'cashups','rollingRecords','stocktakeReports','wageRecords','pettyCash','bankBalance']
 };
 
 // ── Collect ALL local data into one object ──
@@ -7115,6 +7994,45 @@ function jjInitWithSeed() {
 
 // Keep jjInit for backward compatibility
 function jjInit() { jjInitWithSeed(); }
+
+// ── ONE-TIME FIX: push correct petty cash history to Firebase ─────────────────
+function fixPettyCashHistory() {
+  var correctHistory = [{"id":"imp000","date":"2026-05-01T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne & Jordan","category":"","delta":533,"oldBalance":7,"newBalance":540,"by":"import"},{"id":"imp001","date":"2026-05-01T20:00:00.000Z","type":"expense","reason":"Charne Friday wage","category":"Salaries","delta":-350,"oldBalance":540,"newBalance":190,"by":"import"},{"id":"imp002","date":"2026-05-02T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan","category":"","delta":886,"oldBalance":190,"newBalance":1076,"by":"import"},{"id":"imp003","date":"2026-05-03T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan","category":"","delta":96,"oldBalance":1076,"newBalance":1172,"by":"import"},{"id":"imp004","date":"2026-05-03T20:00:00.000Z","type":"expense","reason":"Rent contribution cash","category":"Rent","delta":-100,"oldBalance":1172,"newBalance":1072,"by":"import"},{"id":"imp005","date":"2026-05-04T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne & Jordan","category":"","delta":301,"oldBalance":1072,"newBalance":1373,"by":"import"},{"id":"imp006","date":"2026-05-04T20:00:00.000Z","type":"expense","reason":"Charne Mon+Tues wages","category":"Salaries","delta":-700,"oldBalance":1373,"newBalance":673,"by":"import"},{"id":"imp007","date":"2026-05-05T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne","category":"","delta":124,"oldBalance":673,"newBalance":797,"by":"import"},{"id":"imp008","date":"2026-05-05T20:00:00.000Z","type":"expense","reason":"Charne Wed wages","category":"Salaries","delta":-350,"oldBalance":797,"newBalance":447,"by":"import"},{"id":"imp009","date":"2026-05-06T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne","category":"","delta":588,"oldBalance":447,"newBalance":1035,"by":"import"},{"id":"imp010","date":"2026-05-07T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne","category":"","delta":650,"oldBalance":1035,"newBalance":1685,"by":"import"},{"id":"imp011","date":"2026-05-07T20:00:00.000Z","type":"expense","reason":"Charne Thurs wages","category":"Salaries","delta":-350,"oldBalance":1685,"newBalance":1335,"by":"import"},{"id":"imp012","date":"2026-05-08T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne & Jordan","category":"","delta":0,"oldBalance":1335,"newBalance":1335,"by":"import"},{"id":"imp013","date":"2026-05-08T20:00:00.000Z","type":"expense","reason":"Charne Friday wages","category":"Salaries","delta":-350,"oldBalance":1335,"newBalance":985,"by":"import"},{"id":"imp014","date":"2026-05-08T20:30:00.000Z","type":"expense","reason":"MacBook Pro maintenance","category":"Equipment","delta":-200,"oldBalance":985,"newBalance":785,"by":"import"},{"id":"imp015","date":"2026-05-09T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan","category":"","delta":1220,"oldBalance":785,"newBalance":2005,"by":"import"},{"id":"imp016","date":"2026-05-10T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan","category":"","delta":540,"oldBalance":2005,"newBalance":2545,"by":"import"},{"id":"imp017","date":"2026-05-10T20:00:00.000Z","type":"expense","reason":"Rent set aside cash","category":"Rent","delta":-300,"oldBalance":2545,"newBalance":2245,"by":"import"},{"id":"imp018","date":"2026-05-10T20:30:00.000Z","type":"expense","reason":"Electricity set aside cash","category":"Utilities","delta":-300,"oldBalance":2245,"newBalance":1945,"by":"import"},{"id":"imp019","date":"2026-05-10T21:00:00.000Z","type":"expense","reason":"Charne Monday wages","category":"Salaries","delta":-350,"oldBalance":1945,"newBalance":1595,"by":"import"},{"id":"imp020","date":"2026-05-11T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":904,"oldBalance":1595,"newBalance":2499,"by":"import"},{"id":"imp021","date":"2026-05-12T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne","category":"","delta":370,"oldBalance":2499,"newBalance":2869,"by":"import"},{"id":"imp022","date":"2026-05-12T20:00:00.000Z","type":"expense","reason":"Charne Tues wages","category":"Salaries","delta":-350,"oldBalance":2869,"newBalance":2519,"by":"import"},{"id":"imp023","date":"2026-05-12T20:30:00.000Z","type":"expense","reason":"Shaun PO110526-SHAUN","category":"Stock purchase","delta":-750,"oldBalance":2519,"newBalance":1769,"by":"import"},{"id":"imp024","date":"2026-05-13T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":-16,"oldBalance":1769,"newBalance":1753,"by":"import"},{"id":"imp025","date":"2026-05-14T10:00:00.000Z","type":"expense","reason":"Trink Consumables stationery cleaning ink","category":"Equipment","delta":-1205,"oldBalance":1753,"newBalance":548,"by":"import"},{"id":"imp026","date":"2026-05-14T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":489,"oldBalance":548,"newBalance":1037,"by":"import"},{"id":"imp027","date":"2026-05-15T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":540,"oldBalance":1037,"newBalance":1577,"by":"import"},{"id":"imp028","date":"2026-05-15T20:00:00.000Z","type":"expense","reason":"Charne wages Wed & Thurs","category":"Salaries","delta":-700,"oldBalance":1577,"newBalance":877,"by":"import"},{"id":"imp029","date":"2026-05-16T10:00:00.000Z","type":"expense","reason":"Charne wages Fri & Sat","category":"Salaries","delta":-700,"oldBalance":877,"newBalance":177,"by":"import"},{"id":"imp030","date":"2026-05-16T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":107,"oldBalance":177,"newBalance":284,"by":"import"},{"id":"imp031","date":"2026-05-17T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan","category":"","delta":285,"oldBalance":284,"newBalance":569,"by":"import"},{"id":"imp032","date":"2026-05-18T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":732,"oldBalance":569,"newBalance":1301,"by":"import"},{"id":"imp033","date":"2026-05-18T20:00:00.000Z","type":"expense","reason":"Charne Monday wage","category":"Salaries","delta":-350,"oldBalance":1301,"newBalance":951,"by":"import"},{"id":"imp034","date":"2026-05-19T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Jordan & Charne","category":"","delta":-6,"oldBalance":951,"newBalance":945,"by":"import"},{"id":"imp035","date":"2026-05-20T18:00:00.000Z","type":"cashup","reason":"Cashup banked - Charne","category":"","delta":514,"oldBalance":945,"newBalance":1459,"by":"import"},{"id":"imp036","date":"2026-05-20T20:00:00.000Z","type":"expense","reason":"Charne Tues & Wed wages","category":"Salaries","delta":-700,"oldBalance":1459,"newBalance":759,"by":"import"},{"id":"imp037","date":"2026-05-20T20:30:00.000Z","type":"expense","reason":"Rent set aside cash","category":"Rent","delta":-200,"oldBalance":759,"newBalance":559,"by":"import"},{"id":"imp038","date":"2026-05-20T21:00:00.000Z","type":"expense","reason":"Charne Thursday wage","category":"Salaries","delta":-350,"oldBalance":559,"newBalance":209,"by":"import"}];
+
+  // Keep any history entries dated AFTER 20 May (live cashups after our import range)
+  var existing = DB.getObj('pettyCash', {balance:0, history:[]});
+  var liveEntries = (existing.history || []).filter(function(h) {
+    return new Date(h.date) > new Date('2026-05-20T23:59:59Z') && h.by !== 'import';
+  });
+
+  // Recalculate balance by running through all entries in order
+  var allEntries = correctHistory.concat(liveEntries).sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
+  var runBal = 7;
+  allEntries.forEach(function(h) { runBal = Math.round((runBal + h.delta) * 100) / 100; h.newBalance = runBal; });
+
+  var pc = { balance: runBal, history: allEntries };
+  localStorage.setItem('pettyCash', JSON.stringify(pc));
+
+  // Push directly to Firebase
+  fetch('https://bizpos-jj-default-rtdb.firebaseio.com/bizpos.json', {cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      data.pettyCash = pc;
+      data._at = new Date().toISOString();
+      return fetch('https://bizpos-jj-default-rtdb.firebaseio.com/bizpos.json', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+      });
+    })
+    .then(function() {
+      showToast('Petty cash history fixed! Balance: ' + fmt(runBal), 'success', 6000);
+      renderPCDashboard && renderPCDashboard();
+    })
+    .catch(function(e) {
+      showToast('Fix applied locally. Push to sync: ' + e.message, 'warning', 5000);
+    });
+}
 
 // ── Backlog received POs into expenses ────────────────────────────────────────
 // Run once after pull to create expense records for any received PO
