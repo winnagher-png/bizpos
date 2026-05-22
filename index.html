@@ -7892,13 +7892,26 @@ function jjWrite(remote) {
         remArr.forEach(function(ri) {
           var existIdx = mergedIds.findIndex(function(li){ return li.id === ri.id; });
           if (existIdx === -1) {
-            mergedIds.push(ri); // new item from remote
+            mergedIds.push(ri); // new item from remote — always add, never drop
           } else {
-            // Keep whichever was updated more recently
-            var remDate = ri.updatedAt || ri.date || ri.createdAt || 0;
-            var locDate = mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
-            if (new Date(remDate) > new Date(locDate)) {
-              mergedIds[existIdx] = ri; // remote is newer
+            // For members specifically: merge fields so no data is lost
+            // Remote wins on name/contact fields only if it has a newer updatedAt
+            var remDate = new Date(ri.updatedAt || ri.joinDate || 0);
+            var locDate = new Date(mergedIds[existIdx].updatedAt || mergedIds[existIdx].joinDate || 0);
+            if (k === 'members') {
+              // Always keep local loyaltyPoints and storeCredit (most up to date)
+              var loyaltyPts   = Math.max(mergedIds[existIdx].loyaltyPoints||0, ri.loyaltyPoints||0);
+              var storeCredit  = Math.max(mergedIds[existIdx].storeCredit||0,   ri.storeCredit||0);
+              var lifetimeSpend= Math.max(mergedIds[existIdx].lifetimeSpend||0, ri.lifetimeSpend||0);
+              // Profile fields: use whichever is more recently updated
+              if (remDate > locDate) {
+                mergedIds[existIdx] = ri;
+              }
+              mergedIds[existIdx].loyaltyPoints  = loyaltyPts;
+              mergedIds[existIdx].storeCredit    = storeCredit;
+              mergedIds[existIdx].lifetimeSpend  = lifetimeSpend;
+            } else {
+              if (remDate > locDate) mergedIds[existIdx] = ri;
             }
           }
         });
@@ -8029,6 +8042,13 @@ function jjHookDB() {
       var now = new Date().toISOString();
       v = v.map(function(p) {
         return Object.assign({}, p, { _qtyUpdatedAt: p._qtyUpdatedAt || now });
+      });
+    }
+    // Stamp updatedAt on members so sync merge can resolve conflicts correctly
+    if (k === 'members' && Array.isArray(v)) {
+      var nowMs = new Date().toISOString();
+      v = v.map(function(m) {
+        return Object.assign({}, m, { updatedAt: m.updatedAt || nowMs });
       });
     }
     _origSet(k, v);
