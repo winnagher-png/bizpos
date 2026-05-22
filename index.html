@@ -3844,6 +3844,7 @@ function openMemberProfile(id) {
         +(credits>0?'<div style="font-size:11px;color:var(--accent);text-align:center;margin-top:8px;font-weight:700">Ask staff to apply credit at next purchase</div>':'')
         +'</div>';
     })()}
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:12px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:12px;font-weight:700;color:#16a34a">&#127873; STORE CREDIT</div><div id="member-store-credit-display" style="font-size:20px;font-weight:900;color:#16a34a">${fmt(m.storeCredit||0)}</div></div><button onclick="openIssueCreditModal('${m.id}')" style="width:100%;padding:8px;background:#16a34a;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">+ Issue credit</button></div>
     <div class="flex-between" style="margin-bottom:10px">
       <div class="section-title" style="margin:0">Purchase history</div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -3861,6 +3862,39 @@ function openMemberProfile(id) {
     </div>`).join('') : '<div class="text-sm text-muted">No purchases yet</div>'}
     <button class="btn btn-danger btn-sm" style="margin-top:12px" onclick="deleteMember('${m.id}')">Remove member</button>`;
   openModal('modal-member-profile');
+}
+
+function openIssueCreditModal(memberId) {
+  document.getElementById('issue-credit-member-id').value = memberId;
+  document.getElementById('issue-credit-amount').value = '';
+  document.getElementById('issue-credit-reason').value = '';
+  openModal('modal-issue-credit');
+}
+
+function saveIssueCredit() {
+  var memberId = document.getElementById('issue-credit-member-id').value;
+  var amount   = parseFloat(document.getElementById('issue-credit-amount').value) || 0;
+  var reason   = document.getElementById('issue-credit-reason').value.trim();
+  if (amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
+  if (!reason)     { showToast('Please enter a reason', 'error'); return; }
+  var members = DB.get('members') || [];
+  var idx = members.findIndex(function(m){ return m.id === memberId; });
+  if (idx === -1) return;
+  var m = members[idx];
+  m.storeCredit = (m.storeCredit || 0) + amount;
+  if (!m.storeCreditHistory) m.storeCreditHistory = [];
+  m.storeCreditHistory.push({
+    date: new Date().toISOString(),
+    type: 'issue',
+    amount: amount,
+    reason: reason,
+    by: currentUser ? currentUser.name : 'manager'
+  });
+  members[idx] = m;
+  DB.set('members', members);
+  closeModal('modal-issue-credit');
+  showToast('R'+amount.toFixed(2)+' store credit issued to '+m.name, 'success');
+  openMemberProfile(memberId);
 }
 
 function openEditMember(id) {
@@ -6196,20 +6230,23 @@ function saveCashup() {
   const cuNote        = document.getElementById('cashup-note').value.trim();
   const pcBefore      = getPettyCash().balance;
 
-  // ── 1. Save till cash expenses — deduplicate by date+amount to prevent doubles
+  // ── 1. Save till cash expenses — deduplicate by expense item ID to prevent doubles
   const allExps = DB.get('expenses');
   cashupExpenseItems.forEach(function(e) {
-    // Check for any existing till expense on same date with same amount
-    var isDuplicate = allExps.some(function(ex) {
-      var sameDate   = ex.date === today;
-      var sameAmount = Math.abs((ex.amount||0) - e.amount) < 0.01;
-      var isTillType = ex.payMethod === 'Cash Sales' || ex.payMethod === 'cash'
-                    || (ex.category||'').toLowerCase().includes('till');
-      return sameDate && sameAmount && isTillType;
-    });
+    var expId = e.id || uid();
+    // Exact ID match — never re-add
+    var isDuplicate = allExps.some(function(ex) { return ex.id === expId; });
+    // Also block: same cashupDate + same desc + same amount (covers legacy records without ID)
+    if (!isDuplicate) {
+      isDuplicate = allExps.some(function(ex) {
+        return ex.cashupDate === today
+          && Math.abs((ex.amount||0) - e.amount) < 0.01
+          && (ex.desc||'').toLowerCase().trim() === (e.desc||'till expense').toLowerCase().trim();
+      });
+    }
     if (!isDuplicate) {
       allExps.push({
-        id: e.id || uid(),
+        id: expId,
         desc: e.desc || 'Till expense',
         amount: e.amount,
         category: e.category || 'Till expense',
@@ -6217,7 +6254,7 @@ function saveCashup() {
         date: today,
         status: 'paid',
         notes: 'Declared at cash-up — ' + staffNames,
-        cashupDate: today  // tag so we can identify origin
+        cashupDate: today
       });
     }
   });
@@ -7746,15 +7783,28 @@ function jjWrite(remote) {
       }
 
       if (k === 'expenses' || k === 'cashups' || k === 'writeoffs' || k === 'grvRecords') {
-        // Append-only arrays: merge, never lose entries
+        // Merge arrays but respect local deletions — track deleted IDs so remote can't resurrect them
         var remoteArr = remote[k] || [];
         var localArr  = local || [];
+        var localIds = {};
+        localArr.forEach(function(li){ localIds[li.id] = true; });
+        var prevRemoteKey = '_prev_remote_ids_' + k;
+        var prevRemoteIds = {};
+        try { prevRemoteIds = JSON.parse(localStorage.getItem(prevRemoteKey) || '{}'); } catch(e){}
+        var deletedLocally = {};
+        Object.keys(prevRemoteIds).forEach(function(id){
+          if (!localIds[id]) deletedLocally[id] = true;
+        });
         var mergedArr = localArr.slice();
         remoteArr.forEach(function(ri) {
+          if (deletedLocally[ri.id]) return;
           if (!mergedArr.find(function(li){ return li.id === ri.id; })) {
             mergedArr.push(ri);
           }
         });
+        var newRemoteIds = {};
+        remoteArr.forEach(function(ri){ newRemoteIds[ri.id] = true; });
+        localStorage.setItem(prevRemoteKey, JSON.stringify(newRemoteIds));
         localStorage.setItem(k, JSON.stringify(mergedArr));
         return;
       }
@@ -7802,9 +7852,20 @@ function jjWrite(remote) {
           if (!lp) return rp; // new product from remote
           // Use remote as base (has latest price/name/category)
           var merged = JSON.parse(JSON.stringify(rp));
-          // Local qty always wins — it reflects stocktake or manual edits done on this device
-          merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
-          merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+          // Use qty from whichever device updated it most recently (_qtyUpdatedAt timestamp)
+          var locQtyDate = lp._qtyUpdatedAt ? new Date(lp._qtyUpdatedAt) : new Date(0);
+          var remQtyDate = rp._qtyUpdatedAt ? new Date(rp._qtyUpdatedAt) : new Date(0);
+          if (locQtyDate >= remQtyDate) {
+            // Local is newer (or equal) — local qty wins
+            merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
+            merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+            merged._qtyUpdatedAt = lp._qtyUpdatedAt || rp._qtyUpdatedAt;
+          } else {
+            // Remote is newer — remote qty wins
+            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : (parseInt(lp.qty)||0);
+            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : (parseInt(lp.qtyWh)||0);
+            merged._qtyUpdatedAt = rp._qtyUpdatedAt;
+          }
           return merged;
         });
 
@@ -7961,6 +8022,13 @@ function jjHookDB() {
   DB._jjHooked = true;
   var _origSet = DB.set.bind(DB);
   DB.set = function(k, v) {
+    // Stamp _qtyUpdatedAt on each product whenever products array is saved
+    if (k === 'products' && Array.isArray(v)) {
+      var now = new Date().toISOString();
+      v = v.map(function(p) {
+        return Object.assign({}, p, { _qtyUpdatedAt: p._qtyUpdatedAt || now });
+      });
+    }
     _origSet(k, v);
     if (JJ.keys.indexOf(k) > -1) {
       clearTimeout(JJ.timer);
@@ -12982,6 +13050,27 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <input id="pc-setter-reason" type="text" placeholder="e.g. Month end opening balance">
     </div>
     <button onclick="quickSetPettyCash()" class="btn btn-success btn-full">Set balance</button>
+  </div>
+</div>
+
+<!-- Issue Store Credit Modal -->
+<div class="modal-overlay" id="modal-issue-credit">
+  <div class="modal-sheet" style="max-height:60vh">
+    <div class="modal-handle"></div>
+    <div class="modal-title-row">
+      <div class="modal-title">🎁 Issue Store Credit</div>
+      <button class="close-btn" onclick="closeModal('modal-issue-credit')">✕</button>
+    </div>
+    <input type="hidden" id="issue-credit-member-id">
+    <div class="form-group">
+      <label class="form-label">Credit amount (R)</label>
+      <input id="issue-credit-amount" type="number" step="0.01" min="0.01" placeholder="e.g. 300.00">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Reason *</label>
+      <input id="issue-credit-reason" type="text" placeholder="e.g. Cleaning service — 2hrs @ R150/hr">
+    </div>
+    <button onclick="saveIssueCredit()" class="btn btn-success btn-full">Issue credit</button>
   </div>
 </div>
 
