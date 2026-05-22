@@ -1732,6 +1732,8 @@ function loginSuccess(staffMember) {
   setTimeout(checkClockInReminder, 800);
   // Check birthdays after login
   setTimeout(checkBirthdays, 2000);
+  // Backfill loyalty points from existing sales history (runs once per member)
+  setTimeout(backfillLoyaltyPoints, 500);
   // Start reminder scheduler if not already running
   if (!window._reminderStarted) { window._reminderStarted = true; startReminderScheduler(); }
 }
@@ -5147,6 +5149,23 @@ function getLoyaltyTier(totalSpend) {
 }
 
 function getMemberPoints(m) { return m.loyaltyPoints || 0; }
+
+function backfillLoyaltyPoints() {
+  var members = DB.get('members') || [];
+  var sales   = DB.get('sales')   || [];
+  var changed = false;
+  members = members.map(function(m) {
+    if (m.loyaltyPoints > 0) return m; // already has points, skip
+    var spend = sales.filter(function(s){ return !s.voided && s.memberId === m.id; })
+                     .reduce(function(a,s){ return a + s.total; }, 0);
+    if (spend <= 0) return m;
+    var pts = Math.floor(spend * LOYALTY.pointsPerRand);
+    if (pts <= 0) return m;
+    changed = true;
+    return Object.assign({}, m, { loyaltyPoints: pts, lifetimeSpend: spend });
+  });
+  if (changed) DB.set('members', members);
+}
 
 function getMemberTotalSpend(memberId) {
   return (DB.get('sales')||[]).filter(function(s){ return !s.voided&&s.memberId===memberId; }).reduce(function(a,s){ return a+s.total; },0);
