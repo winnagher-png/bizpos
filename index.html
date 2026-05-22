@@ -5564,7 +5564,9 @@ function pcdSetBalance() {
 }
 
 function renderPCDashboard() {
-  // Update both balance displays
+  // Never render if expenses tab is not active — prevents overlay on other tabs
+  var tabEl = document.getElementById('tab-expenses');
+  if (!tabEl || !tabEl.classList.contains('active')) return;
   var pc      = getPettyCash();
   var bb      = getBankBalance();
   var bal     = pc.balance || 0;
