@@ -4409,6 +4409,42 @@ function hideTip() {
   updateCartTotals();
 }
 
+function onPaymentMethodChange() {
+  var method = document.getElementById('sale-payment').value;
+  var splitSec = document.getElementById('split-section');
+  if (splitSec) splitSec.style.display = method === 'split' ? 'block' : 'none';
+  if (method !== 'split') {
+    ['split-cash','split-card','split-eft'].forEach(function(id){
+      var el = document.getElementById(id); if (el) el.value = '';
+    });
+  }
+  updateCartTotals();
+}
+
+function updateSplitTotal() {
+  var cash = parseFloat(document.getElementById('split-cash')?.value) || 0;
+  var card = parseFloat(document.getElementById('split-card')?.value) || 0;
+  var eft  = parseFloat(document.getElementById('split-eft')?.value)  || 0;
+  var paid = cash + card + eft;
+  var saleTotal = parseFloat(document.getElementById('sale-total-display')?.dataset?.raw) || 0;
+  var diff = Math.round((paid - saleTotal) * 100) / 100;
+  var statusEl = document.getElementById('split-status');
+  if (!statusEl) return;
+  if (paid === 0) {
+    statusEl.style.cssText = 'background:var(--bg);color:var(--text3);font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
+    statusEl.textContent = 'Enter amounts above';
+  } else if (Math.abs(diff) < 0.01) {
+    statusEl.style.cssText = 'background:#dcfce7;color:#16a34a;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
+    statusEl.textContent = '✓ Balanced — R' + paid.toFixed(2);
+  } else if (diff > 0) {
+    statusEl.style.cssText = 'background:#fef9c3;color:#854d0e;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
+    statusEl.textContent = 'Change due: R' + diff.toFixed(2);
+  } else {
+    statusEl.style.cssText = 'background:#fee2e2;color:#991b1b;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
+    statusEl.textContent = 'Short by R' + Math.abs(diff).toFixed(2);
+  }
+}
+
 function updateCartTotals() {
   const subtotal  = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
   const discount  = getDiscountAmount(subtotal);
