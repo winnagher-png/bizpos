@@ -11981,8 +11981,10 @@ function clearBCFile() {
   // Only seed if no real staff yet (or only the old mgr-001 fake)
   // Always re-seed if roles/rates look wrong
   var realStaff = existing.filter(function(s){ return s.id !== 'mgr-001' && s.name && s.pin; });
-  var hasCorrect = realStaff.some(function(s){ return s.name==='Charne' && s.payType==='daily'; });
-  if (hasCorrect) return; // already correctly set up
+  // Ensure ALL expected staff exist — re-seed if any are missing
+  var expectedNames = ['Charne','Tania','Mike','Jordan','Trainee'];
+  var hasAll = expectedNames.every(function(n){ return realStaff.some(function(s){ return s.name===n; }); });
+  if (hasAll) return; // all staff present
 
   var seeded = [
   {
