@@ -929,7 +929,7 @@ table.report-table .neg{color:var(--red)}
     </div>
     <div class="section-title">Cash-up history</div>
     <div id="cashup-date-fix-banner" style="background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May → 16 May and 18 May → 17 May cashups</div>
+      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May -> 16 May and 18 May -> 17 May cashups</div>
       <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
         style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
     </div>
@@ -1293,7 +1293,7 @@ table.report-table .neg{color:var(--red)}
           </div>
         </div>
         <div style="font-size:11px;color:var(--text3);line-height:1.5">
-          Example: R5500 sales, R4000 target, 10% → commission = R150 (10% of R1500 over target)
+          Example: R5500 sales, R4000 target, 10% -> commission = R150 (10% of R1500 over target)
         </div>
       </div>
     </div>
@@ -1976,7 +1976,7 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 // SKU GENERATOR
 // ============================================================
 
-// Word → abbreviation map for known domain terms
+// Word -> abbreviation map for known domain terms
 const SKU_WORD_MAP = {
   // Product types
   'preroll': 'PRE', 'prerolls': 'PRE', 'pre-roll': 'PRE', 'pre-rolls': 'PRE',
@@ -2045,7 +2045,7 @@ const SKU_WORD_MAP = {
   'ashtray': 'ASH',
 };
 
-// Category → prefix map
+// Category -> prefix map
 const CAT_PREFIX_MAP = {
   'od flower': 'OD-FLW',
   'od prerolls': 'OD-PRE',
@@ -2075,7 +2075,7 @@ const CAT_PREFIX_MAP = {
 function abbrevWord(word) {
   const lower = word.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (SKU_WORD_MAP[lower]) return SKU_WORD_MAP[lower];
-  // Extract digits (e.g. "80mg" → "80", "1g" → "1G")
+  // Extract digits (e.g. "80mg" -> "80", "1g" -> "1G")
   const numMatch = word.match(/^(\d+)(mg|g|ml|l)?$/i);
   if (numMatch) return numMatch[1] + (numMatch[2] ? numMatch[2].toUpperCase() : '');
   // Default: first 3 uppercase letters
@@ -2085,7 +2085,7 @@ function abbrevWord(word) {
 function getCategoryPrefix(cat) {
   const lower = (cat||'').toLowerCase().trim();
   if (CAT_PREFIX_MAP[lower]) return CAT_PREFIX_MAP[lower];
-  // Parse pattern like "OD Flower" → "OD-FLW", "GH Prerolls" → "GH-PRE"
+  // Parse pattern like "OD Flower" -> "OD-FLW", "GH Prerolls" -> "GH-PRE"
   const m = lower.match(/^(od|gh|gd|id)\s+(flower|prerolls|preroll)$/);
   if (m) {
     const code1 = m[1].toUpperCase();
@@ -2130,7 +2130,7 @@ function buildSKUFromName(name, category, price) {
     const parts = nameWords.map(w => abbrevWord(w)).filter((v,i,a) => a.indexOf(v)===i).slice(0,3);
     nameCode = parts.join('');
   } else {
-    // Use initials (first letter of each significant word) - like "Diamonds In Dirt" → "DID"
+    // Use initials (first letter of each significant word) - like "Diamonds In Dirt" -> "DID"
     const knownParts = nameWords.map(w => {
       const lower = w.toLowerCase().replace(/[^a-z0-9]/g,'');
       return SKU_WORD_MAP[lower] || null;
@@ -2996,7 +2996,7 @@ function renderVarianceReportContent(variances, date, committed, report) {
         <div class="text-xs text-muted">${v.category||''} ${v.sku?'· '+v.sku:''}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
-        <div class="text-sm">${v.expected} → <span class="bold">${v.counted}</span></div>
+        <div class="text-sm">${v.expected} -> <span class="bold">${v.counted}</span></div>
         <div class="text-xs ${cls}">${sign}${Math.abs(v.diff)} units · ${sign}${fmt(Math.abs(v.costImpact||0))}</div>
       </div>
     </div>`).join('') : `<div class="text-sm text-muted" style="padding:8px 0">None</div>`;
@@ -3269,7 +3269,7 @@ function checkReminders() {
     var lastStockKey = 'reminder_stocktake_' + now.toISOString().slice(0,10);
     if (!sessionStorage.getItem(lastStockKey)) {
       sessionStorage.setItem(lastStockKey, '1');
-      showReminderBanner('stocktake', 'Stocktake reminder', 'Time to count stock! Open Inventory → Stocktake to start your count.', function(){ switchTab('inventory'); });
+      showReminderBanner('stocktake', 'Stocktake reminder', 'Time to count stock! Open Inventory -> Stocktake to start your count.', function(){ switchTab('inventory'); });
     }
   }
 }
@@ -3511,7 +3511,7 @@ function openPODetail(id) {
   }
   // Mark as paid (manager only)
   if (po.payStatus !== 'paid' && po.stockStatus === 'received') {
-    h += '<button id="po-markpaid-btn" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px">💳 Mark as paid → log to expenses</button>';
+    h += '<button id="po-markpaid-btn" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px">💳 Mark as paid -> log to expenses</button>';
   }
   // Print / Download / Delete
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
@@ -3616,13 +3616,12 @@ function exportMembersCSV() {
   });
   var csv = rows.map(function(r){
     return r.map(function(cell){ return '"' + String(cell).replace(/"/g,'""') + '"'; }).join(',');
-  }).join('
-');
+  }).join('\n');
   var a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'JJ_Members_Contacts.csv';
   a.click();
-  showToast('Exported ' + members.length + ' members — import into Google Contacts', 'success', 4000);
+  showToast('Exported ' + members.length + ' members - import into Google Contacts', 'success', 4000);
 }
 
 function renderMembers() {
@@ -5146,7 +5145,7 @@ function openStaffProfile(id) {
     <div style="max-height:180px;overflow-y:auto">
       ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map((sh,shIdx)=>`
         <div class="shift-row" style="align-items:center">
-          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
+          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} -> ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
           <div style="text-align:right;margin-right:8px">
             <div class="text-sm">${sh.out?((new Date(sh.out)-new Date(sh.in))/3600000).toFixed(1)+'h':'—'}</div>
             ${s.rate&&sh.out?`<div class="text-xs amber">${fmt(calcShiftWages(s,sh.in,sh.out))}</div>`:''}
@@ -7251,14 +7250,14 @@ function renderWhTransfers() {
       <div class="flex-between">
         <div class="bold text-sm">${t.productName}</div>
         <span class="badge ${t.direction==='shop-to-warehouse'?'badge-blue':'badge-accent'}">
-          ${t.direction==='shop-to-warehouse'?'🏪→🏭':'🏭→🏪'} ${t.qty} units
+          ${t.direction==='shop-to-warehouse'?'🏪->🏭':'🏭->🏪'} ${t.qty} units
         </span>
       </div>
       <div class="text-xs text-muted mt-4">${fmtDateTime(t.date)} · ${t.staffName||'—'}</div>
       ${t.note?`<div class="text-xs text-muted mt-4">${t.note}</div>`:''}
       <div class="text-xs mt-4">
-        Shop: ${t.shopBefore}→<span class="bold">${t.shopAfter}</span> &nbsp;
-        Warehouse: ${t.whBefore}→<span class="bold">${t.whAfter}</span>
+        Shop: ${t.shopBefore}-><span class="bold">${t.shopAfter}</span> &nbsp;
+        Warehouse: ${t.whBefore}-><span class="bold">${t.whAfter}</span>
       </div>
     </div>`).join('');
 }
@@ -7378,8 +7377,8 @@ function updateTransferPreview() {
   prev.style.display = 'block';
   prev.innerHTML = `
     <div class="text-sm bold" style="margin-bottom:6px;color:${ok?'var(--text)':'var(--red)'}">${ok?'Transfer preview':'⚠ Insufficient stock'}</div>
-    <div class="flex-between text-sm mb-4"><span>${fromLabel} (from)</span><span>${fromQty} → <span class="bold ${ok?'':'red'}">${Math.max(0,fromQty-qty)}</span></span></div>
-    <div class="flex-between text-sm"><span>${toLabel} (to)</span><span>${toQty} → <span class="bold green">${toQty+qty}</span></span></div>
+    <div class="flex-between text-sm mb-4"><span>${fromLabel} (from)</span><span>${fromQty} -> <span class="bold ${ok?'':'red'}">${Math.max(0,fromQty-qty)}</span></span></div>
+    <div class="flex-between text-sm"><span>${toLabel} (to)</span><span>${toQty} -> <span class="bold green">${toQty+qty}</span></span></div>
     ${!ok?`<div class="text-xs red mt-4">Only ${fromQty} available at ${fromLabel}</div>`:''}`;
   document.getElementById('tr-submit-btn').style.cssText = ok ? 'display:block' : 'display:block;opacity:.5;pointer-events:none';
 }
@@ -7760,7 +7759,7 @@ function processNewGRVProducts(newItems, loc, supplierId, idx) {
 // ============================================================
 // CLOUD SYNC — JSONBin.io (free, no server needed)
 // ============================================================
-// All devices use the same API key → same bin → same data
+// All devices use the same API key -> same bin -> same data
 // Auto-syncs every 60s + after every save action
 
 var SYNC_API = 'https://api.jsonbin.io/v3';
@@ -8380,19 +8379,19 @@ function deduplicateExpenses() {
   return 0;
 }
 
-// ── ONE-TIME FIX: correct cashup date 17 May → 16 May ───────────────────────
+// ── ONE-TIME FIX: correct cashup date 17 May -> 16 May ───────────────────────
 function fixCashupDate17to16() {
   var cashups = DB.get('cashups') || [];
   var fixed = false;
   cashups.forEach(function(c) {
     var d = new Date(c.date);
     var yr = d.getFullYear(), mo = d.getMonth(), dy = d.getDate();
-    // Fix 17 May → 16 May
+    // Fix 17 May -> 16 May
     var is17May = (yr===2026 && mo===4 && dy===17);
-    // Fix 18 May → 17 May
+    // Fix 18 May -> 17 May
     var is18May = (yr===2026 && mo===4 && dy===18);
-    if (is17May) { d.setDate(16); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 17→16:', c.id); }
-    if (is18May) { d.setDate(17); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 18→17:', c.id); }
+    if (is17May) { d.setDate(16); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 17->16:', c.id); }
+    if (is18May) { d.setDate(17); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 18->17:', c.id); }
   });
   if (fixed) {
     DB.set('cashups', cashups);
@@ -9562,7 +9561,7 @@ function normalisePhone(raw) {
   if (digits.startsWith('27') && digits.length === 11) return digits;
   // Strip leading 0 and prepend 27
   if (digits.startsWith('0') && digits.length === 10) return '27' + digits.slice(1);
-  // 9 digit number — missing leading 0, treat as 0XX... → 27XX...
+  // 9 digit number — missing leading 0, treat as 0XX... -> 27XX...
   if (digits.length === 9) return '27' + digits;
   // fallback — just strip 0 and prepend 27
   return '27' + digits.replace(/^0+/, '');
@@ -9755,7 +9754,7 @@ function scanReceipt(input) {
   if (!apiKey) {
     statusEl.style.background = 'var(--red-bg)';
     statusEl.style.color = 'var(--red)';
-    statusEl.textContent = '❌ No AI key set — go to More → AI Command Centre → set API key first';
+    statusEl.textContent = '❌ No AI key set — go to More -> AI Command Centre -> set API key first';
     return;
   }
 
@@ -12671,8 +12670,8 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div class="form-group">
       <label class="form-label">Direction</label>
       <div class="loc-toggle">
-        <div class="loc-btn active" id="tr-dir-btn-sw" onclick="setTransferDir('shop-to-warehouse')">Shop → Warehouse</div>
-        <div class="loc-btn" id="tr-dir-btn-ws" onclick="setTransferDir('warehouse-to-shop')">Warehouse → Shop</div>
+        <div class="loc-btn active" id="tr-dir-btn-sw" onclick="setTransferDir('shop-to-warehouse')">Shop -> Warehouse</div>
+        <div class="loc-btn" id="tr-dir-btn-ws" onclick="setTransferDir('warehouse-to-shop')">Warehouse -> Shop</div>
       </div>
     </div>
     <div class="form-group">
@@ -12770,7 +12769,7 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
 
     <div style="background:#fef9c3;border:1.5px solid #d97706;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#713f12">
-      <strong>How it works:</strong> Select a flower product → declare grams used → count actual joints rolled → select which preroll product to add them to. 1g = 1 preroll by default.
+      <strong>How it works:</strong> Select a flower product -> declare grams used -> count actual joints rolled -> select which preroll product to add them to. 1g = 1 preroll by default.
     </div>
 
     <!-- Step 1: Source flower -->
@@ -13003,8 +13002,8 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div class="form-group">
       <label class="form-label">Direction</label>
       <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
-        <button id="qt-dir-w2s" onclick="setQTDir('w2s')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">🏭→🏪 To shop</button>
-        <button id="qt-dir-s2w" onclick="setQTDir('s2w')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">🏪→🏭 To warehouse</button>
+        <button id="qt-dir-w2s" onclick="setQTDir('w2s')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">🏭->🏪 To shop</button>
+        <button id="qt-dir-s2w" onclick="setQTDir('s2w')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">🏪->🏭 To warehouse</button>
       </div>
     </div>
     <div class="form-group">
