@@ -7451,6 +7451,17 @@ function openGRVForProduct(productId) {
 }
 
 function setGRVLoc(loc) {
+function setGRVLocation(loc) {
+  document.getElementById('grv-location').value = loc;
+  var shopBtn = document.getElementById('grv-loc-shop');
+  var whBtn   = document.getElementById('grv-loc-wh');
+  if (shopBtn && whBtn) {
+    shopBtn.style.background = loc === 'shop' ? 'var(--accent)' : 'transparent';
+    shopBtn.style.color      = loc === 'shop' ? '#fff' : 'var(--text3)';
+    whBtn.style.background   = loc === 'warehouse' ? 'var(--accent)' : 'transparent';
+    whBtn.style.color        = loc === 'warehouse' ? '#fff' : 'var(--text3)';
+  }
+}
   document.getElementById('grv-location').value = loc;
   var shopBtn = document.getElementById('grv-loc-shop');
   var whBtn   = document.getElementById('grv-loc-wh');
@@ -12701,6 +12712,13 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <button class="btn btn-secondary btn-sm" style="margin-bottom:10px" onclick="addGRVLine()">+ Add line</button>
     <div style="background:var(--bg3);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px">
       <div class="flex-between text-sm"><span>Total received value</span><span class="bold accent" id="grv-total">R0.00</span></div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Receive stock into</div>
+      <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
+        <button id="grv-loc-shop" onclick="setGRVLocation('shop')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">&#127978; Shop floor</button>
+        <button id="grv-loc-wh"   onclick="setGRVLocation('warehouse')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">&#127981; Warehouse</button>
+      </div>
     </div>
     <input type="hidden" id="grv-location" value="shop">
     <button class="btn btn-success btn-full" onclick="submitGRV()">Receive &amp; update stock</button>
