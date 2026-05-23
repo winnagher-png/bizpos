@@ -4415,7 +4415,7 @@ function updateCartTotals() {
   const delivery  = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
   const tip       = getTipAmount();
   const total     = Math.max(0, subtotal - discount + delivery + tip);
-  document.getElementById('sale-total-display').textContent = fmt(total);
+  var saleTotalEl = document.getElementById('sale-total-display'); saleTotalEl.textContent = fmt(total); saleTotalEl.dataset.raw = total;
 
   // Subtotal row — show whenever discount OR delivery OR tip makes things non-trivial
   const showBreakdown = discount > 0 || delivery > 0 || tip > 0;
