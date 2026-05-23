@@ -1617,7 +1617,7 @@ const DB = {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
 function fmt(n) { return 'R' + Number(n||0).toFixed(2) }
-function fmtDate(d) { return new Date(d).toLocaleDateString('en-ZA', {day:'2-digit',month:'short',year:'numeric'}) }
+function fmtDate(d) { var s=localDateStr(d); var p=s.split('-'); var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return p[2]+' '+months[parseInt(p[1])-1]+' '+p[0]; }
 function fmtDateTime(d) { return new Date(d).toLocaleString('en-ZA', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) }
 
 // ============================================================
@@ -6285,7 +6285,7 @@ function saveCashup() {
   const cashups = DB.get('cashups')||[];
   cashups.push({
     id: uid(),
-    date: today + 'T23:00:00.000Z',
+    date: today + 'T21:00:00.000Z',  // 23:00 SAST = 21:00 UTC — stays on correct local date
     staff: staffNames,
     staffId: currentUser?.id,
     staffName: currentUser?.name,
