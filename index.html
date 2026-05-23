@@ -655,6 +655,7 @@ table.report-table .neg{color:var(--red)}
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <button onclick="openBroadcast()" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">&#x1F4E2; Send broadcast</button>
+      <button onclick="exportMembersCSV()" style="padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer" title="Export contacts for WhatsApp">&#x1F4E5; Export</button>
       <div style="font-size:11px;color:var(--text3);text-align:right;min-width:70px" id="members-optin-summary"></div>
     </div>
     <div id="members-list"></div>
@@ -3597,6 +3598,33 @@ function updatePO(id, status) {
 // ============================================================
 // MEMBERS
 // ============================================================
+function exportMembersCSV() {
+  var members = (DB.get('members') || []).filter(function(m){ return m.name && m.name.trim(); });
+  // CSV for Google Contacts import
+  // Columns: First Name, Last Name, Phone 1 - Value
+  var rows = [['First Name','Last Name','Phone 1 - Value','Member No','Notes']];
+  members.forEach(function(m) {
+    var parts = (m.name || '').trim().split(' ');
+    var firstName = parts[0] + ' J&J Member';  // tag so they're identifiable on WhatsApp
+    var lastName  = parts.slice(1).join(' ') || '';
+    var phone = (m.phone || '').trim();
+    // Normalise SA numbers: 0xx -> +27xx
+    if (phone.startsWith('0') && phone.length === 10) phone = '+27' + phone.slice(1);
+    var memberNo = m.memberNo || '';
+    var notes = 'J&J Member' + (memberNo ? ' #' + memberNo : '') + (m.loyaltyPoints ? ' | ' + (m.loyaltyPoints||0) + ' pts' : '');
+    rows.push([firstName, lastName, phone, memberNo, notes]);
+  });
+  var csv = rows.map(function(r){
+    return r.map(function(cell){ return '"' + String(cell).replace(/"/g,'""') + '"'; }).join(',');
+  }).join('
+');
+  var a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'JJ_Members_Contacts.csv';
+  a.click();
+  showToast('Exported ' + members.length + ' members — import into Google Contacts', 'success', 4000);
+}
+
 function renderMembers() {
   const q = (document.getElementById('member-search').value||'').toLowerCase();
   const allMembers = DB.get('members');
