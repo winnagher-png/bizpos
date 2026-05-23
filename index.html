@@ -11978,13 +11978,12 @@ function clearBCFile() {
 // ── Seed staff if not yet set ──
 (function seedStaff() {
   var existing = DB.get('staff') || [];
-  // Only seed if no real staff yet (or only the old mgr-001 fake)
-  // Always re-seed if roles/rates look wrong
   var realStaff = existing.filter(function(s){ return s.id !== 'mgr-001' && s.name && s.pin; });
-  // Ensure ALL expected staff exist — re-seed if any are missing
+  // Always ensure ALL 5 staff profiles exist — merge any missing ones in
   var expectedNames = ['Charne','Tania','Mike','Jordan','Trainee'];
   var hasAll = expectedNames.every(function(n){ return realStaff.some(function(s){ return s.name===n; }); });
-  if (hasAll) return; // all staff present
+  if (hasAll) return;
+  // Force re-seed — do NOT return early for any reason
 
   var seeded = [
   {
@@ -12089,18 +12088,23 @@ function clearBCFile() {
   }
 ];
 
-  // Preserve any existing shifts from current staff
-  seeded = seeded.map(function(ns) {
-    var old = existing.find(function(os){ return os.name === ns.name || os.pin === ns.pin; });
-    if (old) {
-      ns.id        = old.id        || ns.id;
-      ns.shifts    = old.shifts    || [];
-      ns.clockedIn = old.clockedIn || false;
+  // Merge: keep all existing staff data, only ADD missing ones
+  var finalStaff = existing.filter(function(s){ return s.id !== 'mgr-001'; });
+  seeded.forEach(function(ns) {
+    var match = finalStaff.find(function(os){ return os.name === ns.name; });
+    if (!match) {
+      // This staff member is missing — add them
+      finalStaff.push(ns);
+    } else {
+      // Already exists — update pin/role/rate but keep shifts/clockedIn
+      match.pin     = match.pin     || ns.pin;
+      match.role    = match.role    || ns.role;
+      match.payType = match.payType || ns.payType;
+      match.rate    = match.rate    !== undefined ? match.rate : ns.rate;
     }
-    return ns;
   });
 
-  DB.set('staff', seeded);
+  DB.set('staff', finalStaff);
   // Push to Firebase
   clearTimeout(JJ.timer);
   JJ.timer = setTimeout(function(){ jjPush(true); }, 1000);
