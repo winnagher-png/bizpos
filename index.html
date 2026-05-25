@@ -2926,16 +2926,14 @@ function commitStocktake() {
     clearTimeout(JJ.timer);
     JJ.pushing = false;
     JJ.timer = null;
-    // Push now, and on success extend block to ensure it lands before pull can fire
-    jjPush(false);
-    // Belt-and-braces: push again after 5 seconds in case first attempt failed
-    setTimeout(function() {
-      if (typeof jjPush === 'function') jjPush(true);
-    }, 5000);
+    // Push immediately — triple push for reliability
+    jjPush(true);
+    setTimeout(function() { if (typeof jjPush === 'function') { JJ.pushing=false; jjPush(true); } }, 3000);
+    setTimeout(function() { if (typeof jjPush === 'function') { JJ.pushing=false; jjPush(true); } }, 8000);
     // Release pull block after 3 minutes
     setTimeout(function() { window._blockPullUntil = 0; }, 180000);
   }
-  showToast('Stocktake saved! Pushing to cloud...', 'success', 3000);
+  showToast('Stocktake saved! Syncing to cloud...', 'success', 3000);
 
   // Clear session
   DB.setObj('stocktakeSession', {});
@@ -8156,6 +8154,16 @@ function jjInitWithSeed() {
 
     // Re-render pin screen with updated staff from Firebase
     try { renderPinScreen(); } catch(e) { console.warn('renderPinScreen error:', e); }
+
+    // If stocktakeReports exist locally but Firebase may not have them, push them up
+    setTimeout(function() {
+      var reports = DB.get('stocktakeReports') || [];
+      if (reports.length > 0) {
+        JJ.pushing = false;
+        jjPush(true);
+        console.log('[BizPOS] Startup: pushed', reports.length, 'stocktake report(s) to cloud');
+      }
+    }, 6000);
 
     // Auto-pull every 10 seconds
     setInterval(function(){ jjPull(true); }, 10000);
