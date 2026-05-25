@@ -8165,6 +8165,17 @@ function jjInitWithSeed() {
       }
     }, 6000);
 
+    // ONE-TIME: Zero all warehouse (qtyWh) quantities so a fresh stocktake can be done
+    // Controlled by a flag so it only runs once
+    if (!localStorage.getItem('_whQtyZeroed_v1')) {
+      var prods = DB.get('products') || [];
+      prods = prods.map(function(p) { return Object.assign({}, p, { qtyWh: 0 }); });
+      DB.set('products', prods);
+      localStorage.setItem('_whQtyZeroed_v1', '1');
+      console.log('[BizPOS] Warehouse qty zeroed for fresh stocktake');
+      setTimeout(function() { JJ.pushing=false; jjPush(true); }, 2000);
+    }
+
     // Auto-pull every 10 seconds
     setInterval(function(){ jjPull(true); }, 10000);
 
