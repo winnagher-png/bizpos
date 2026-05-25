@@ -928,11 +928,7 @@ table.report-table .neg{color:var(--red)}
       <button class="btn btn-success" style="flex:2" onclick="saveCashup()">✓ Complete &amp; bank</button>
     </div>
     <div class="section-title">Cash-up history</div>
-    <div id="cashup-date-fix-banner" style="background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May -> 16 May and 18 May -> 17 May cashups</div>
-      <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
-        style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
-    </div>
+
     <div style="background:#e0f2fe;border:1.5px solid #0284c7;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;color:#0c4a6e"><strong>Petty cash fix:</strong> Rebuild correct May ledger with all wages &amp; expenses</div>
       <button onclick="fixPettyCashHistory()" style="padding:6px 14px;background:#0284c7;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix now</button>
@@ -3144,7 +3140,7 @@ function searchRollFlower() {
   });
   if (q) prods = prods.filter(function(p){ return (p.name||'').toLowerCase().includes(q); });
   res.innerHTML = prods.slice(0,8).map(function(p){
-    return '<div onclick="selectRollFlower(\''+p.id+'\')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between"><span>'+p.name+'</span><span style="color:var(--accent);font-weight:700">'+p.qty+'g</span></div>';
+    var stockG = (p.qtyWh||p.qty||0); return '<div onclick="selectRollFlower(\''+p.id+'\')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between"><span>'+p.name+'</span><span style="color:var(--accent);font-weight:700">'+stockG+'g</span></div>';
   }).join('') || '<div style="padding:8px;color:var(--text3);font-size:12px">No flower products found</div>';
 }
 
@@ -3201,8 +3197,9 @@ function commitRolling() {
   if (!_rollFlowerProduct) { showToast('Select a flower product first', 'error'); return; }
   var grams  = parseFloat((document.getElementById('roll-grams-used')||{}).value)||0;
   if (!grams || grams <= 0) { showToast('Enter grams used', 'error'); return; }
-  if (grams > _rollFlowerProduct.qty) {
-    if (!confirm('Only '+_rollFlowerProduct.qty+'g in stock but you used '+grams+'g — continue anyway?')) return;
+  var flowerStock = (_rollFlowerProduct.qtyWh || _rollFlowerProduct.qty || 0);
+  if (grams > flowerStock) {
+    if (!confirm('Only '+flowerStock+'g in warehouse but you used '+grams+'g — continue anyway?')) return;
   }
 
   var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||Math.round(grams);
@@ -3211,7 +3208,12 @@ function commitRolling() {
   if (!flower) { showToast('Flower product not found', 'error'); return; }
 
   // Deduct flower
-  flower.qty = Math.max(0, (flower.qty||0) - grams);
+  // Deduct from warehouse stock (flower is stored in warehouse)
+  if ((flower.qtyWh||0) > 0) {
+    flower.qtyWh = Math.max(0, (flower.qtyWh||0) - grams);
+  } else {
+    flower.qty = Math.max(0, (flower.qty||0) - grams);
+  }
 
   // Add prerolls if mode is prerolls
   if (_rollMode === 'prerolls') {
@@ -6295,33 +6297,26 @@ function saveCashup() {
   const cuNote        = document.getElementById('cashup-note').value.trim();
   const pcBefore      = getPettyCash().balance;
 
-  // ── 1. Save till cash expenses — deduplicate by expense item ID to prevent doubles
-  const allExps = DB.get('expenses');
+  // ── 1. Save till cash expenses — cashup till expenses ARE the expense log entries
+  // Dedup strictly: remove any previous till expenses for this cashup date first, then re-add
+  var allExps = DB.get('expenses').filter(function(ex) {
+    // Remove previous till expenses for today that came from cashup (prevents duplicates on re-cashup)
+    var isTillFromCashup = (ex.cashupDate === today) && (ex.payMethod === 'Cash Sales' || ex.payMethod === 'cash');
+    return !isTillFromCashup;
+  });
   cashupExpenseItems.forEach(function(e) {
-    var expId = e.id || uid();
-    // Exact ID match — never re-add
-    var isDuplicate = allExps.some(function(ex) { return ex.id === expId; });
-    // Also block: same cashupDate + same desc + same amount (covers legacy records without ID)
-    if (!isDuplicate) {
-      isDuplicate = allExps.some(function(ex) {
-        return ex.cashupDate === today
-          && Math.abs((ex.amount||0) - e.amount) < 0.01
-          && (ex.desc||'').toLowerCase().trim() === (e.desc||'till expense').toLowerCase().trim();
-      });
-    }
-    if (!isDuplicate) {
-      allExps.push({
-        id: expId,
-        desc: e.desc || 'Till expense',
-        amount: e.amount,
-        category: e.category || 'Till expense',
-        payMethod: 'Cash Sales',
-        date: today,
-        status: 'paid',
-        notes: 'Declared at cash-up — ' + staffNames,
-        cashupDate: today
-      });
-    }
+    allExps.push({
+      id: e.id || uid(),
+      desc: e.desc || 'Till expense',
+      amount: e.amount,
+      category: e.category || 'Till expense',
+      payMethod: 'Cash Sales',
+      date: today,
+      status: 'paid',
+      notes: 'Declared at cash-up — ' + staffNames,
+      cashupDate: today,
+      fromCashup: true
+    });
   });
   DB.set('expenses', allExps);
 
