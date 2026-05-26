@@ -655,7 +655,6 @@ table.report-table .neg{color:var(--red)}
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <button onclick="openBroadcast()" style="flex:1;padding:10px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">&#x1F4E2; Send broadcast</button>
-      <button onclick="exportMembersCSV()" style="padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer" title="Export contacts for WhatsApp">&#x1F4E5; Export</button>
       <div style="font-size:11px;color:var(--text3);text-align:right;min-width:70px" id="members-optin-summary"></div>
     </div>
     <div id="members-list"></div>
@@ -928,7 +927,11 @@ table.report-table .neg{color:var(--red)}
       <button class="btn btn-success" style="flex:2" onclick="saveCashup()">✓ Complete &amp; bank</button>
     </div>
     <div class="section-title">Cash-up history</div>
-
+    <div id="cashup-date-fix-banner" style="background:#fff3cd;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;color:#92400e"><strong>Date fix:</strong> Corrects 17 May → 16 May and 18 May → 17 May cashups</div>
+      <button onclick="fixCashupDate17to16();document.getElementById('cashup-date-fix-banner').style.display='none'"
+        style="padding:6px 14px;background:#f59e0b;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix date</button>
+    </div>
     <div style="background:#e0f2fe;border:1.5px solid #0284c7;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;color:#0c4a6e"><strong>Petty cash fix:</strong> Rebuild correct May ledger with all wages &amp; expenses</div>
       <button onclick="fixPettyCashHistory()" style="padding:6px 14px;background:#0284c7;border:none;border-radius:8px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap">Fix now</button>
@@ -1289,7 +1292,7 @@ table.report-table .neg{color:var(--red)}
           </div>
         </div>
         <div style="font-size:11px;color:var(--text3);line-height:1.5">
-          Example: R5500 sales, R4000 target, 10% -> commission = R150 (10% of R1500 over target)
+          Example: R5500 sales, R4000 target, 10% → commission = R150 (10% of R1500 over target)
         </div>
       </div>
     </div>
@@ -1614,7 +1617,7 @@ const DB = {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
 function fmt(n) { return 'R' + Number(n||0).toFixed(2) }
-function fmtDate(d) { var s=localDateStr(d); var p=s.split('-'); var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return p[2]+' '+months[parseInt(p[1])-1]+' '+p[0]; }
+function fmtDate(d) { return new Date(d).toLocaleDateString('en-ZA', {day:'2-digit',month:'short',year:'numeric'}) }
 function fmtDateTime(d) { return new Date(d).toLocaleString('en-ZA', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) }
 
 // ============================================================
@@ -1729,8 +1732,6 @@ function loginSuccess(staffMember) {
   setTimeout(checkClockInReminder, 800);
   // Check birthdays after login
   setTimeout(checkBirthdays, 2000);
-  // Backfill loyalty points from existing sales history (runs once per member)
-  setTimeout(backfillLoyaltyPoints, 500);
   // Start reminder scheduler if not already running
   if (!window._reminderStarted) { window._reminderStarted = true; startReminderScheduler(); }
 }
@@ -1972,7 +1973,7 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 // SKU GENERATOR
 // ============================================================
 
-// Word -> abbreviation map for known domain terms
+// Word → abbreviation map for known domain terms
 const SKU_WORD_MAP = {
   // Product types
   'preroll': 'PRE', 'prerolls': 'PRE', 'pre-roll': 'PRE', 'pre-rolls': 'PRE',
@@ -2041,7 +2042,7 @@ const SKU_WORD_MAP = {
   'ashtray': 'ASH',
 };
 
-// Category -> prefix map
+// Category → prefix map
 const CAT_PREFIX_MAP = {
   'od flower': 'OD-FLW',
   'od prerolls': 'OD-PRE',
@@ -2071,7 +2072,7 @@ const CAT_PREFIX_MAP = {
 function abbrevWord(word) {
   const lower = word.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (SKU_WORD_MAP[lower]) return SKU_WORD_MAP[lower];
-  // Extract digits (e.g. "80mg" -> "80", "1g" -> "1G")
+  // Extract digits (e.g. "80mg" → "80", "1g" → "1G")
   const numMatch = word.match(/^(\d+)(mg|g|ml|l)?$/i);
   if (numMatch) return numMatch[1] + (numMatch[2] ? numMatch[2].toUpperCase() : '');
   // Default: first 3 uppercase letters
@@ -2081,7 +2082,7 @@ function abbrevWord(word) {
 function getCategoryPrefix(cat) {
   const lower = (cat||'').toLowerCase().trim();
   if (CAT_PREFIX_MAP[lower]) return CAT_PREFIX_MAP[lower];
-  // Parse pattern like "OD Flower" -> "OD-FLW", "GH Prerolls" -> "GH-PRE"
+  // Parse pattern like "OD Flower" → "OD-FLW", "GH Prerolls" → "GH-PRE"
   const m = lower.match(/^(od|gh|gd|id)\s+(flower|prerolls|preroll)$/);
   if (m) {
     const code1 = m[1].toUpperCase();
@@ -2126,7 +2127,7 @@ function buildSKUFromName(name, category, price) {
     const parts = nameWords.map(w => abbrevWord(w)).filter((v,i,a) => a.indexOf(v)===i).slice(0,3);
     nameCode = parts.join('');
   } else {
-    // Use initials (first letter of each significant word) - like "Diamonds In Dirt" -> "DID"
+    // Use initials (first letter of each significant word) - like "Diamonds In Dirt" → "DID"
     const knownParts = nameWords.map(w => {
       const lower = w.toLowerCase().replace(/[^a-z0-9]/g,'');
       return SKU_WORD_MAP[lower] || null;
@@ -2926,14 +2927,16 @@ function commitStocktake() {
     clearTimeout(JJ.timer);
     JJ.pushing = false;
     JJ.timer = null;
-    // Push immediately — triple push for reliability
-    jjPush(true);
-    setTimeout(function() { if (typeof jjPush === 'function') { JJ.pushing=false; jjPush(true); } }, 3000);
-    setTimeout(function() { if (typeof jjPush === 'function') { JJ.pushing=false; jjPush(true); } }, 8000);
+    // Push now, and on success extend block to ensure it lands before pull can fire
+    jjPush(false);
+    // Belt-and-braces: push again after 5 seconds in case first attempt failed
+    setTimeout(function() {
+      if (typeof jjPush === 'function') jjPush(true);
+    }, 5000);
     // Release pull block after 3 minutes
     setTimeout(function() { window._blockPullUntil = 0; }, 180000);
   }
-  showToast('Stocktake saved! Syncing to cloud...', 'success', 3000);
+  showToast('Stocktake saved! Pushing to cloud...', 'success', 3000);
 
   // Clear session
   DB.setObj('stocktakeSession', {});
@@ -2990,7 +2993,7 @@ function renderVarianceReportContent(variances, date, committed, report) {
         <div class="text-xs text-muted">${v.category||''} ${v.sku?'· '+v.sku:''}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
-        <div class="text-sm">${v.expected} -> <span class="bold">${v.counted}</span></div>
+        <div class="text-sm">${v.expected} → <span class="bold">${v.counted}</span></div>
         <div class="text-xs ${cls}">${sign}${Math.abs(v.diff)} units · ${sign}${fmt(Math.abs(v.costImpact||0))}</div>
       </div>
     </div>`).join('') : `<div class="text-sm text-muted" style="padding:8px 0">None</div>`;
@@ -3138,7 +3141,7 @@ function searchRollFlower() {
   });
   if (q) prods = prods.filter(function(p){ return (p.name||'').toLowerCase().includes(q); });
   res.innerHTML = prods.slice(0,8).map(function(p){
-    var stockG = (p.qtyWh||p.qty||0); return '<div onclick="selectRollFlower(\''+p.id+'\')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between"><span>'+p.name+'</span><span style="color:var(--accent);font-weight:700">'+stockG+'g</span></div>';
+    return '<div onclick="selectRollFlower(\''+p.id+'\')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;display:flex;justify-content:space-between"><span>'+p.name+'</span><span style="color:var(--accent);font-weight:700">'+p.qty+'g</span></div>';
   }).join('') || '<div style="padding:8px;color:var(--text3);font-size:12px">No flower products found</div>';
 }
 
@@ -3195,9 +3198,8 @@ function commitRolling() {
   if (!_rollFlowerProduct) { showToast('Select a flower product first', 'error'); return; }
   var grams  = parseFloat((document.getElementById('roll-grams-used')||{}).value)||0;
   if (!grams || grams <= 0) { showToast('Enter grams used', 'error'); return; }
-  var flowerStock = (_rollFlowerProduct.qtyWh || _rollFlowerProduct.qty || 0);
-  if (grams > flowerStock) {
-    if (!confirm('Only '+flowerStock+'g in warehouse but you used '+grams+'g — continue anyway?')) return;
+  if (grams > _rollFlowerProduct.qty) {
+    if (!confirm('Only '+_rollFlowerProduct.qty+'g in stock but you used '+grams+'g — continue anyway?')) return;
   }
 
   var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||Math.round(grams);
@@ -3206,12 +3208,7 @@ function commitRolling() {
   if (!flower) { showToast('Flower product not found', 'error'); return; }
 
   // Deduct flower
-  // Deduct from warehouse stock (flower is stored in warehouse)
-  if ((flower.qtyWh||0) > 0) {
-    flower.qtyWh = Math.max(0, (flower.qtyWh||0) - grams);
-  } else {
-    flower.qty = Math.max(0, (flower.qty||0) - grams);
-  }
+  flower.qty = Math.max(0, (flower.qty||0) - grams);
 
   // Add prerolls if mode is prerolls
   if (_rollMode === 'prerolls') {
@@ -3269,7 +3266,7 @@ function checkReminders() {
     var lastStockKey = 'reminder_stocktake_' + now.toISOString().slice(0,10);
     if (!sessionStorage.getItem(lastStockKey)) {
       sessionStorage.setItem(lastStockKey, '1');
-      showReminderBanner('stocktake', 'Stocktake reminder', 'Time to count stock! Open Inventory -> Stocktake to start your count.', function(){ switchTab('inventory'); });
+      showReminderBanner('stocktake', 'Stocktake reminder', 'Time to count stock! Open Inventory → Stocktake to start your count.', function(){ switchTab('inventory'); });
     }
   }
 }
@@ -3511,7 +3508,7 @@ function openPODetail(id) {
   }
   // Mark as paid (manager only)
   if (po.payStatus !== 'paid' && po.stockStatus === 'received') {
-    h += '<button id="po-markpaid-btn" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px">💳 Mark as paid -> log to expenses</button>';
+    h += '<button id="po-markpaid-btn" style="width:100%;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px">💳 Mark as paid → log to expenses</button>';
   }
   // Print / Download / Delete
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
@@ -3598,32 +3595,6 @@ function updatePO(id, status) {
 // ============================================================
 // MEMBERS
 // ============================================================
-function exportMembersCSV() {
-  var members = (DB.get('members') || []).filter(function(m){ return m.name && m.name.trim(); });
-  // CSV for Google Contacts import
-  // Columns: First Name, Last Name, Phone 1 - Value
-  var rows = [['First Name','Last Name','Phone 1 - Value','Member No','Notes']];
-  members.forEach(function(m) {
-    var parts = (m.name || '').trim().split(' ');
-    var firstName = parts[0] + ' J&J Member';  // tag so they're identifiable on WhatsApp
-    var lastName  = parts.slice(1).join(' ') || '';
-    var phone = (m.phone || '').trim();
-    // Normalise SA numbers: 0xx -> +27xx
-    if (phone.startsWith('0') && phone.length === 10) phone = '+27' + phone.slice(1);
-    var memberNo = m.memberNo || '';
-    var notes = 'J&J Member' + (memberNo ? ' #' + memberNo : '') + (m.loyaltyPoints ? ' | ' + (m.loyaltyPoints||0) + ' pts' : '');
-    rows.push([firstName, lastName, phone, memberNo, notes]);
-  });
-  var csv = rows.map(function(r){
-    return r.map(function(cell){ return '"' + String(cell).replace(/"/g,'""') + '"'; }).join(',');
-  }).join('\n');
-  var a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-  a.download = 'JJ_Members_Contacts.csv';
-  a.click();
-  showToast('Exported ' + members.length + ' members - import into Google Contacts', 'success', 4000);
-}
-
 function renderMembers() {
   const q = (document.getElementById('member-search').value||'').toLowerCase();
   const allMembers = DB.get('members');
@@ -3871,7 +3842,6 @@ function openMemberProfile(id) {
         +(credits>0?'<div style="font-size:11px;color:var(--accent);text-align:center;margin-top:8px;font-weight:700">Ask staff to apply credit at next purchase</div>':'')
         +'</div>';
     })()}
-    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:12px;margin-bottom:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:12px;font-weight:700;color:#16a34a">&#127873; STORE CREDIT</div><div id="member-store-credit-display" style="font-size:20px;font-weight:900;color:#16a34a">${fmt(m.storeCredit||0)}</div></div><button onclick="openIssueCreditModal('${m.id}')" style="width:100%;padding:8px;background:#16a34a;border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer">+ Issue credit</button></div>
     <div class="flex-between" style="margin-bottom:10px">
       <div class="section-title" style="margin:0">Purchase history</div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -3889,39 +3859,6 @@ function openMemberProfile(id) {
     </div>`).join('') : '<div class="text-sm text-muted">No purchases yet</div>'}
     <button class="btn btn-danger btn-sm" style="margin-top:12px" onclick="deleteMember('${m.id}')">Remove member</button>`;
   openModal('modal-member-profile');
-}
-
-function openIssueCreditModal(memberId) {
-  document.getElementById('issue-credit-member-id').value = memberId;
-  document.getElementById('issue-credit-amount').value = '';
-  document.getElementById('issue-credit-reason').value = '';
-  openModal('modal-issue-credit');
-}
-
-function saveIssueCredit() {
-  var memberId = document.getElementById('issue-credit-member-id').value;
-  var amount   = parseFloat(document.getElementById('issue-credit-amount').value) || 0;
-  var reason   = document.getElementById('issue-credit-reason').value.trim();
-  if (amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
-  if (!reason)     { showToast('Please enter a reason', 'error'); return; }
-  var members = DB.get('members') || [];
-  var idx = members.findIndex(function(m){ return m.id === memberId; });
-  if (idx === -1) return;
-  var m = members[idx];
-  m.storeCredit = (m.storeCredit || 0) + amount;
-  if (!m.storeCreditHistory) m.storeCreditHistory = [];
-  m.storeCreditHistory.push({
-    date: new Date().toISOString(),
-    type: 'issue',
-    amount: amount,
-    reason: reason,
-    by: currentUser ? currentUser.name : 'manager'
-  });
-  members[idx] = m;
-  DB.set('members', members);
-  closeModal('modal-issue-credit');
-  showToast('R'+amount.toFixed(2)+' store credit issued to '+m.name, 'success');
-  openMemberProfile(memberId);
 }
 
 function openEditMember(id) {
@@ -3959,15 +3896,17 @@ let saleDiscountVisible = false;
 // ── Member completeness check ──
 function memberIsComplete(m) {
   if (!m) return false;
-  // Only require a name — never block a sale just because memberNo or phone is missing
-  return !!(m.name && m.name.trim());
+  // Only require name + member number to be selectable on POS
+  // ID number is optional — don't block sales for members without it
+  const hasName     = !!(m.name && m.name.trim());
+  const hasMemberNo = !!(m.memberNo && m.memberNo.trim() && m.memberNo !== '???');
+  return hasName && hasMemberNo;
 }
 
 function memberMissingFields(m) {
-  // Informational only — no longer blocks sale selection
   const missing = [];
-  if (!m.memberNo || m.memberNo === '???' || !m.memberNo.trim()) missing.push('member number');
   if (!m.phone || !m.phone.trim()) missing.push('phone');
+  if (!m.memberNo || m.memberNo === '???') missing.push('member number');
   return missing;
 }
 
@@ -4253,16 +4192,16 @@ function searchSaleMember() {
   const matchRows = matches.map(m => {
     const complete = memberIsComplete(m);
     const missing = complete ? [] : memberMissingFields(m);
-    return `<div onclick="selectSaleMember('${m.id}')"
-      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:pointer;
-      opacity:1;border:1px solid ${missing.length?'var(--amber)':'var(--border)'};display:flex;align-items:center;gap:10px">
-      <div class="avatar-circle" style="background:var(--accent);width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
+    return `<div onclick="${complete ? `selectSaleMember('${m.id}')` : `showMemberIncomplete('${m.id}')`}"
+      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:${complete?'pointer':'default'};
+      opacity:${complete?'1':'0.5'};border:1px solid ${complete?'var(--border)':'var(--red)'};display:flex;align-items:center;gap:10px">
+      <div class="avatar-circle" style="background:${complete?'var(--accent)':'var(--border2)'};width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div class="text-sm bold" style="color:var(--text)">${m.name}</div>
+        <div class="text-sm bold" style="color:${complete?'var(--text)':'var(--text3)'}">${m.name}</div>
         <div class="text-xs text-muted">#${m.memberNo||'???'} · ${m.phone||'no phone'}</div>
         ${!complete ? `<div class="text-xs" style="color:var(--red);margin-top:2px">⚠ Missing: ${missing.join(', ')}</div>` : ''}
       </div>
-      ${missing.length ? '<div style="font-size:13px;color:var(--amber)">⚠</div>' : ''}
+      ${complete ? '' : '<div style="font-size:18px;color:var(--red)">🔒</div>'}
     </div>`;
   }).join('');
 
@@ -4436,49 +4375,13 @@ function hideTip() {
   updateCartTotals();
 }
 
-function onPaymentMethodChange() {
-  var method = document.getElementById('sale-payment').value;
-  var splitSec = document.getElementById('split-section');
-  if (splitSec) splitSec.style.display = method === 'split' ? 'block' : 'none';
-  if (method !== 'split') {
-    ['split-cash','split-card','split-eft'].forEach(function(id){
-      var el = document.getElementById(id); if (el) el.value = '';
-    });
-  }
-  updateCartTotals();
-}
-
-function updateSplitTotal() {
-  var cash = parseFloat(document.getElementById('split-cash')?.value) || 0;
-  var card = parseFloat(document.getElementById('split-card')?.value) || 0;
-  var eft  = parseFloat(document.getElementById('split-eft')?.value)  || 0;
-  var paid = cash + card + eft;
-  var saleTotal = parseFloat(document.getElementById('sale-total-display')?.dataset?.raw) || 0;
-  var diff = Math.round((paid - saleTotal) * 100) / 100;
-  var statusEl = document.getElementById('split-status');
-  if (!statusEl) return;
-  if (paid === 0) {
-    statusEl.style.cssText = 'background:var(--bg);color:var(--text3);font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
-    statusEl.textContent = 'Enter amounts above';
-  } else if (Math.abs(diff) < 0.01) {
-    statusEl.style.cssText = 'background:#dcfce7;color:#16a34a;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
-    statusEl.textContent = '✓ Balanced — R' + paid.toFixed(2);
-  } else if (diff > 0) {
-    statusEl.style.cssText = 'background:#fef9c3;color:#854d0e;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
-    statusEl.textContent = 'Change due: R' + diff.toFixed(2);
-  } else {
-    statusEl.style.cssText = 'background:#fee2e2;color:#991b1b;font-size:13px;font-weight:600;padding:8px 10px;border-radius:8px;text-align:center';
-    statusEl.textContent = 'Short by R' + Math.abs(diff).toFixed(2);
-  }
-}
-
 function updateCartTotals() {
   const subtotal  = saleCart.reduce((a,i)=>a+i.price*i.qty,0);
   const discount  = getDiscountAmount(subtotal);
   const delivery  = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
   const tip       = getTipAmount();
   const total     = Math.max(0, subtotal - discount + delivery + tip);
-  var saleTotalEl = document.getElementById('sale-total-display'); saleTotalEl.textContent = fmt(total); saleTotalEl.dataset.raw = total;
+  document.getElementById('sale-total-display').textContent = fmt(total);
 
   // Subtotal row — show whenever discount OR delivery OR tip makes things non-trivial
   const showBreakdown = discount > 0 || delivery > 0 || tip > 0;
@@ -4584,8 +4487,8 @@ function completeSale() {
     if (p) p.qty = (parseInt(p.qty)||0) - (parseInt(item.qty)||1); // allow negative
   });
   DB.set('products', products);
-
-  const paymentMethod  = document.getElementById('sale-payment').value;
+  // Block pull for 60 seconds so Firebase doesn't overwrite the deducted stock
+  window._blockPullUntil = Date.now() + 60000;
   const deliveryFee    = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
   const deliveryAddress= _isDelivery ? (document.getElementById('sale-delivery-address')?.value||'') : '';
 
@@ -4646,8 +4549,11 @@ function completeSale() {
     if (pts > 0) setTimeout(function(){ showToast('&#x1F4B3; +'+pts+' loyalty points for '+sale.memberName+'!','success',3000); }, 500);
   }
 
-  // Push to cloud immediately — don't wait for the debounce timer
-  if (typeof jjPush === 'function') { _JJL = 0; jjPush(true); }
+  // Push to cloud immediately
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  // Second push 5s later as backup
+  setTimeout(function(){ jjPush(true); }, 5000);
 
   closeModal('modal-new-sale');
   renderSales();
@@ -5145,7 +5051,7 @@ function openStaffProfile(id) {
     <div style="max-height:180px;overflow-y:auto">
       ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map((sh,shIdx)=>`
         <div class="shift-row" style="align-items:center">
-          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} -> ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
+          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
           <div style="text-align:right;margin-right:8px">
             <div class="text-sm">${sh.out?((new Date(sh.out)-new Date(sh.in))/3600000).toFixed(1)+'h':'—'}</div>
             ${s.rate&&sh.out?`<div class="text-xs amber">${fmt(calcShiftWages(s,sh.in,sh.out))}</div>`:''}
@@ -5244,23 +5150,6 @@ function getLoyaltyTier(totalSpend) {
 }
 
 function getMemberPoints(m) { return m.loyaltyPoints || 0; }
-
-function backfillLoyaltyPoints() {
-  var members = DB.get('members') || [];
-  var sales   = DB.get('sales')   || [];
-  var changed = false;
-  members = members.map(function(m) {
-    if (m.loyaltyPoints > 0) return m; // already has points, skip
-    var spend = sales.filter(function(s){ return !s.voided && s.memberId === m.id; })
-                     .reduce(function(a,s){ return a + s.total; }, 0);
-    if (spend <= 0) return m;
-    var pts = Math.floor(spend * LOYALTY.pointsPerRand);
-    if (pts <= 0) return m;
-    changed = true;
-    return Object.assign({}, m, { loyaltyPoints: pts, lifetimeSpend: spend });
-  });
-  if (changed) DB.set('members', members);
-}
 
 function getMemberTotalSpend(memberId) {
   return (DB.get('sales')||[]).filter(function(s){ return !s.voided&&s.memberId===memberId; }).reduce(function(a,s){ return a+s.total; },0);
@@ -5689,7 +5578,7 @@ function renderPCDashboard() {
   var balEl = document.getElementById('pcd-balance');
   if (balEl) { balEl.textContent = fmt(bal); balEl.style.color = bal < 0 ? '#fca5a5' : '#fff'; }
   var statusEl = document.getElementById('pcd-bal-status');
-  if (statusEl) { var pc2=getPettyCash(); statusEl.textContent = bal < 0 && !pc2._manuallySet ? '⚠️ Overdrawn' : bal === 0 ? 'Set opening balance' : bal < 200 ? 'Running low' : 'Healthy'; }
+  if (statusEl) statusEl.textContent = bal < 0 ? 'Overdrawn' : bal < 200 ? 'Running low' : 'Healthy';
 
   var bankEl = document.getElementById('pcd-bank-balance');
   if (bankEl) { bankEl.textContent = fmt(bankBal); bankEl.style.color = bankBal < 0 ? '#fca5a5' : '#fff'; }
@@ -5730,15 +5619,11 @@ function renderPCDashboard() {
   });
 
   // All expenses for this month
-  // Till expenses declared at cashup (payMethod=Cash Sales / cash + cashupDate set) are already
-  // captured in the cashup row's tillExp field — do NOT show them as separate ledger rows.
   exps.forEach(function(e) {
     var d = new Date(e.date);
     if (d.getMonth() !== _pcdMonth || d.getFullYear() !== _pcdYear) return;
     var isTill = e.payMethod === 'Cash Sales' || e.payMethod === 'cash' || (e.category||'').toLowerCase().includes('till');
     var isPC   = e.payMethod === 'petty_cash' || e.payMethod === 'Petty Cash';
-    // Skip till expenses that were declared at cashup — already shown in the cashup row
-    if (isTill && e.cashupDate) return;
     events.push({
       id: e.id, date: e.date+'T20:00:00Z', dateStr: e.date,
       type: 'out', entryType: isPC ? 'pc_expense' : isTill ? 'till_expense' : 'expense',
@@ -5822,7 +5707,7 @@ function renderPCDashboard() {
   }
 
   var html = '';
-  Object.keys(byDate).sort().reverse().forEach(function(dateStr) {  // newest date first
+  Object.keys(byDate).sort().forEach(function(dateStr) {
     var dayEvents = byDate[dateStr];
     var dayIn  = dayEvents.filter(e=>e.type==='in').reduce((a,e)=>a+e.amount,0);
     var dayOut = dayEvents.filter(e=>e.type==='out').reduce((a,e)=>a+e.amount,0);
@@ -6257,7 +6142,7 @@ function updatePettyCash(delta, reason, type, category) {
   pc.lastUpdated = new Date().toISOString();
   pc.lastReason  = reason;
   // Always push a history entry
-  if (!pc.history) pc.history = [{"date": "2026-05-01T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 533, "oldBalance": 7, "newBalance": 540, "by": "import"}, {"date": "2026-05-01T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wage", "category": "Salaries", "delta": -350, "oldBalance": 540, "newBalance": 190, "by": "import"}, {"date": "2026-05-02T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 886, "oldBalance": 190, "newBalance": 1076, "by": "import"}, {"date": "2026-05-03T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 96, "oldBalance": 1076, "newBalance": 1172, "by": "import"}, {"date": "2026-05-03T20:00:00.000Z", "type": "expense", "reason": "Rent contribution cash", "category": "Rent", "delta": -100, "oldBalance": 1172, "newBalance": 1072, "by": "import"}, {"date": "2026-05-04T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 301, "oldBalance": 1072, "newBalance": 1373, "by": "import"}, {"date": "2026-05-04T20:00:00.000Z", "type": "expense", "reason": "Charne Mon+Tues wages", "category": "Salaries", "delta": -700, "oldBalance": 1373, "newBalance": 673, "by": "import"}, {"date": "2026-05-05T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 124, "oldBalance": 673, "newBalance": 797, "by": "import"}, {"date": "2026-05-05T20:00:00.000Z", "type": "expense", "reason": "Charne Wed wages", "category": "Salaries", "delta": -350, "oldBalance": 797, "newBalance": 447, "by": "import"}, {"date": "2026-05-06T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 588, "oldBalance": 447, "newBalance": 1035, "by": "import"}, {"date": "2026-05-07T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 650, "oldBalance": 1035, "newBalance": 1685, "by": "import"}, {"date": "2026-05-07T20:00:00.000Z", "type": "expense", "reason": "Charne Thurs wages", "category": "Salaries", "delta": -350, "oldBalance": 1685, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 0, "oldBalance": 1335, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wages", "category": "Salaries", "delta": -350, "oldBalance": 1335, "newBalance": 985, "by": "import"}, {"date": "2026-05-08T20:30:00.000Z", "type": "expense", "reason": "MacBook Pro maintenance", "category": "Equipment", "delta": -200, "oldBalance": 985, "newBalance": 785, "by": "import"}, {"date": "2026-05-09T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 1220, "oldBalance": 785, "newBalance": 2005, "by": "import"}, {"date": "2026-05-10T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 540, "oldBalance": 2005, "newBalance": 2545, "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -300, "oldBalance": 2545, "newBalance": 2245, "by": "import"}, {"date": "2026-05-10T20:30:00.000Z", "type": "expense", "reason": "Electricity set aside cash", "category": "Utilities", "delta": -300, "oldBalance": 2245, "newBalance": 1945, "by": "import"}, {"date": "2026-05-10T21:00:00.000Z", "type": "expense", "reason": "Charne Monday wages", "category": "Salaries", "delta": -350, "oldBalance": 1945, "newBalance": 1595, "by": "import"}, {"date": "2026-05-11T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 904, "oldBalance": 1595, "newBalance": 2499, "by": "import"}, {"date": "2026-05-12T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 370, "oldBalance": 2499, "newBalance": 2869, "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "reason": "Charne Tues wages", "category": "Salaries", "delta": -350, "oldBalance": 2869, "newBalance": 2519, "by": "import"}, {"date": "2026-05-12T20:30:00.000Z", "type": "expense", "reason": "Shaun PO110526-SHAUN", "category": "Stock purchase", "delta": -750, "oldBalance": 2519, "newBalance": 1769, "by": "import"}, {"date": "2026-05-13T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -16, "oldBalance": 1769, "newBalance": 1753, "by": "import"}, {"date": "2026-05-14T10:00:00.000Z", "type": "expense", "reason": "Trink Consumables stationery cleaning ink", "category": "Equipment", "delta": -1205, "oldBalance": 1753, "newBalance": 548, "by": "import"}, {"date": "2026-05-14T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 489, "oldBalance": 548, "newBalance": 1037, "by": "import"}, {"date": "2026-05-15T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 540, "oldBalance": 1037, "newBalance": 1577, "by": "import"}, {"date": "2026-05-15T20:00:00.000Z", "type": "expense", "reason": "Charne wages Wed & Thurs", "category": "Salaries", "delta": -700, "oldBalance": 1577, "newBalance": 877, "by": "import"}, {"date": "2026-05-16T10:00:00.000Z", "type": "expense", "reason": "Charne wages Fri & Sat", "category": "Salaries", "delta": -700, "oldBalance": 877, "newBalance": 177, "by": "import"}, {"date": "2026-05-16T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 107, "oldBalance": 177, "newBalance": 284, "by": "import"}, {"date": "2026-05-17T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 285, "oldBalance": 284, "newBalance": 569, "by": "import"}, {"date": "2026-05-18T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 732, "oldBalance": 569, "newBalance": 1301, "by": "import"}, {"date": "2026-05-18T20:00:00.000Z", "type": "expense", "reason": "Charne Monday wage", "category": "Salaries", "delta": -350, "oldBalance": 1301, "newBalance": 951, "by": "import"}, {"date": "2026-05-19T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -6, "oldBalance": 951, "newBalance": 945, "by": "import"}, {"date": "2026-05-20T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 514, "oldBalance": 945, "newBalance": 1459, "by": "import"}, {"date": "2026-05-20T20:00:00.000Z", "type": "expense", "reason": "Charne Tues & Wed wages", "category": "Salaries", "delta": -700, "oldBalance": 1459, "newBalance": 759, "by": "import"}, {"date": "2026-05-20T20:30:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -200, "oldBalance": 759, "newBalance": 559, "by": "import"}, {"date": "2026-05-20T21:00:00.000Z", "type": "expense", "reason": "Charne Thursday wage", "category": "Salaries", "delta": -350, "oldBalance": 559, "newBalance": 209, "by": "import"},{"date": "2026-05-21T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 475, "oldBalance": 209, "newBalance": 684, "by": "import"},{"date": "2026-05-22T08:00:00.000Z", "type": "set", "reason": "Opening balance correction - verified against petty cash sheet", "category": "", "delta": 100, "oldBalance": 684, "newBalance": 784, "by": "manager"}];
+  if (!pc.history) pc.history = [{"date": "2026-05-01T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 533, "oldBalance": 7, "newBalance": 540, "by": "import"}, {"date": "2026-05-01T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wage", "category": "Salaries", "delta": -350, "oldBalance": 540, "newBalance": 190, "by": "import"}, {"date": "2026-05-02T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 886, "oldBalance": 190, "newBalance": 1076, "by": "import"}, {"date": "2026-05-03T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 96, "oldBalance": 1076, "newBalance": 1172, "by": "import"}, {"date": "2026-05-03T20:00:00.000Z", "type": "expense", "reason": "Rent contribution cash", "category": "Rent", "delta": -100, "oldBalance": 1172, "newBalance": 1072, "by": "import"}, {"date": "2026-05-04T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 301, "oldBalance": 1072, "newBalance": 1373, "by": "import"}, {"date": "2026-05-04T20:00:00.000Z", "type": "expense", "reason": "Charne Mon+Tues wages", "category": "Salaries", "delta": -700, "oldBalance": 1373, "newBalance": 673, "by": "import"}, {"date": "2026-05-05T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 124, "oldBalance": 673, "newBalance": 797, "by": "import"}, {"date": "2026-05-05T20:00:00.000Z", "type": "expense", "reason": "Charne Wed wages", "category": "Salaries", "delta": -350, "oldBalance": 797, "newBalance": 447, "by": "import"}, {"date": "2026-05-06T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 588, "oldBalance": 447, "newBalance": 1035, "by": "import"}, {"date": "2026-05-07T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 650, "oldBalance": 1035, "newBalance": 1685, "by": "import"}, {"date": "2026-05-07T20:00:00.000Z", "type": "expense", "reason": "Charne Thurs wages", "category": "Salaries", "delta": -350, "oldBalance": 1685, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne & Jordan", "category": "", "delta": 0, "oldBalance": 1335, "newBalance": 1335, "by": "import"}, {"date": "2026-05-08T20:00:00.000Z", "type": "expense", "reason": "Charne Friday wages", "category": "Salaries", "delta": -350, "oldBalance": 1335, "newBalance": 985, "by": "import"}, {"date": "2026-05-08T20:30:00.000Z", "type": "expense", "reason": "MacBook Pro maintenance", "category": "Equipment", "delta": -200, "oldBalance": 985, "newBalance": 785, "by": "import"}, {"date": "2026-05-09T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 1220, "oldBalance": 785, "newBalance": 2005, "by": "import"}, {"date": "2026-05-10T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 540, "oldBalance": 2005, "newBalance": 2545, "by": "import"}, {"date": "2026-05-10T20:00:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -300, "oldBalance": 2545, "newBalance": 2245, "by": "import"}, {"date": "2026-05-10T20:30:00.000Z", "type": "expense", "reason": "Electricity set aside cash", "category": "Utilities", "delta": -300, "oldBalance": 2245, "newBalance": 1945, "by": "import"}, {"date": "2026-05-10T21:00:00.000Z", "type": "expense", "reason": "Charne Monday wages", "category": "Salaries", "delta": -350, "oldBalance": 1945, "newBalance": 1595, "by": "import"}, {"date": "2026-05-11T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 904, "oldBalance": 1595, "newBalance": 2499, "by": "import"}, {"date": "2026-05-12T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 370, "oldBalance": 2499, "newBalance": 2869, "by": "import"}, {"date": "2026-05-12T20:00:00.000Z", "type": "expense", "reason": "Charne Tues wages", "category": "Salaries", "delta": -350, "oldBalance": 2869, "newBalance": 2519, "by": "import"}, {"date": "2026-05-12T20:30:00.000Z", "type": "expense", "reason": "Shaun PO110526-SHAUN", "category": "Stock purchase", "delta": -750, "oldBalance": 2519, "newBalance": 1769, "by": "import"}, {"date": "2026-05-13T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -16, "oldBalance": 1769, "newBalance": 1753, "by": "import"}, {"date": "2026-05-14T10:00:00.000Z", "type": "expense", "reason": "Trink Consumables stationery cleaning ink", "category": "Equipment", "delta": -1205, "oldBalance": 1753, "newBalance": 548, "by": "import"}, {"date": "2026-05-14T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 489, "oldBalance": 548, "newBalance": 1037, "by": "import"}, {"date": "2026-05-15T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 540, "oldBalance": 1037, "newBalance": 1577, "by": "import"}, {"date": "2026-05-15T20:00:00.000Z", "type": "expense", "reason": "Charne wages Wed & Thurs", "category": "Salaries", "delta": -700, "oldBalance": 1577, "newBalance": 877, "by": "import"}, {"date": "2026-05-16T10:00:00.000Z", "type": "expense", "reason": "Charne wages Fri & Sat", "category": "Salaries", "delta": -700, "oldBalance": 877, "newBalance": 177, "by": "import"}, {"date": "2026-05-16T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 107, "oldBalance": 177, "newBalance": 284, "by": "import"}, {"date": "2026-05-17T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan", "category": "", "delta": 285, "oldBalance": 284, "newBalance": 569, "by": "import"}, {"date": "2026-05-18T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": 732, "oldBalance": 569, "newBalance": 1301, "by": "import"}, {"date": "2026-05-18T20:00:00.000Z", "type": "expense", "reason": "Charne Monday wage", "category": "Salaries", "delta": -350, "oldBalance": 1301, "newBalance": 951, "by": "import"}, {"date": "2026-05-19T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Jordan & Charne", "category": "", "delta": -6, "oldBalance": 951, "newBalance": 945, "by": "import"}, {"date": "2026-05-20T18:00:00.000Z", "type": "cashup", "reason": "Cashup banked - Charne", "category": "", "delta": 514, "oldBalance": 945, "newBalance": 1459, "by": "import"}, {"date": "2026-05-20T20:00:00.000Z", "type": "expense", "reason": "Charne Tues & Wed wages", "category": "Salaries", "delta": -700, "oldBalance": 1459, "newBalance": 759, "by": "import"}, {"date": "2026-05-20T20:30:00.000Z", "type": "expense", "reason": "Rent set aside cash", "category": "Rent", "delta": -200, "oldBalance": 759, "newBalance": 559, "by": "import"}, {"date": "2026-05-20T21:00:00.000Z", "type": "expense", "reason": "Charne Thursday wage", "category": "Salaries", "delta": -350, "oldBalance": 559, "newBalance": 209, "by": "import"}];
   pc.history.push({
     id: (typeof uid === 'function' ? uid() : Date.now().toString(36)),
     date: new Date().toISOString(),
@@ -6295,26 +6180,30 @@ function saveCashup() {
   const cuNote        = document.getElementById('cashup-note').value.trim();
   const pcBefore      = getPettyCash().balance;
 
-  // ── 1. Save till cash expenses — cashup till expenses ARE the expense log entries
-  // Dedup strictly: remove any previous till expenses for this cashup date first, then re-add
-  var allExps = DB.get('expenses').filter(function(ex) {
-    // Remove previous till expenses for today that came from cashup (prevents duplicates on re-cashup)
-    var isTillFromCashup = (ex.cashupDate === today) && (ex.payMethod === 'Cash Sales' || ex.payMethod === 'cash');
-    return !isTillFromCashup;
-  });
+  // ── 1. Save till cash expenses — deduplicate by date+amount to prevent doubles
+  const allExps = DB.get('expenses');
   cashupExpenseItems.forEach(function(e) {
-    allExps.push({
-      id: e.id || uid(),
-      desc: e.desc || 'Till expense',
-      amount: e.amount,
-      category: e.category || 'Till expense',
-      payMethod: 'Cash Sales',
-      date: today,
-      status: 'paid',
-      notes: 'Declared at cash-up — ' + staffNames,
-      cashupDate: today,
-      fromCashup: true
+    // Check for any existing till expense on same date with same amount
+    var isDuplicate = allExps.some(function(ex) {
+      var sameDate   = ex.date === today;
+      var sameAmount = Math.abs((ex.amount||0) - e.amount) < 0.01;
+      var isTillType = ex.payMethod === 'Cash Sales' || ex.payMethod === 'cash'
+                    || (ex.category||'').toLowerCase().includes('till');
+      return sameDate && sameAmount && isTillType;
     });
+    if (!isDuplicate) {
+      allExps.push({
+        id: e.id || uid(),
+        desc: e.desc || 'Till expense',
+        amount: e.amount,
+        category: e.category || 'Till expense',
+        payMethod: 'Cash Sales',
+        date: today,
+        status: 'paid',
+        notes: 'Declared at cash-up — ' + staffNames,
+        cashupDate: today  // tag so we can identify origin
+      });
+    }
   });
   DB.set('expenses', allExps);
 
@@ -6341,7 +6230,7 @@ function saveCashup() {
   const cashups = DB.get('cashups')||[];
   cashups.push({
     id: uid(),
-    date: today + 'T21:00:00.000Z',  // 23:00 SAST = 21:00 UTC — stays on correct local date
+    date: today + 'T23:00:00.000Z',
     staff: staffNames,
     staffId: currentUser?.id,
     staffName: currentUser?.name,
@@ -7243,14 +7132,14 @@ function renderWhTransfers() {
       <div class="flex-between">
         <div class="bold text-sm">${t.productName}</div>
         <span class="badge ${t.direction==='shop-to-warehouse'?'badge-blue':'badge-accent'}">
-          ${t.direction==='shop-to-warehouse'?'🏪->🏭':'🏭->🏪'} ${t.qty} units
+          ${t.direction==='shop-to-warehouse'?'🏪→🏭':'🏭→🏪'} ${t.qty} units
         </span>
       </div>
       <div class="text-xs text-muted mt-4">${fmtDateTime(t.date)} · ${t.staffName||'—'}</div>
       ${t.note?`<div class="text-xs text-muted mt-4">${t.note}</div>`:''}
       <div class="text-xs mt-4">
-        Shop: ${t.shopBefore}-><span class="bold">${t.shopAfter}</span> &nbsp;
-        Warehouse: ${t.whBefore}-><span class="bold">${t.whAfter}</span>
+        Shop: ${t.shopBefore}→<span class="bold">${t.shopAfter}</span> &nbsp;
+        Warehouse: ${t.whBefore}→<span class="bold">${t.whAfter}</span>
       </div>
     </div>`).join('');
 }
@@ -7370,8 +7259,8 @@ function updateTransferPreview() {
   prev.style.display = 'block';
   prev.innerHTML = `
     <div class="text-sm bold" style="margin-bottom:6px;color:${ok?'var(--text)':'var(--red)'}">${ok?'Transfer preview':'⚠ Insufficient stock'}</div>
-    <div class="flex-between text-sm mb-4"><span>${fromLabel} (from)</span><span>${fromQty} -> <span class="bold ${ok?'':'red'}">${Math.max(0,fromQty-qty)}</span></span></div>
-    <div class="flex-between text-sm"><span>${toLabel} (to)</span><span>${toQty} -> <span class="bold green">${toQty+qty}</span></span></div>
+    <div class="flex-between text-sm mb-4"><span>${fromLabel} (from)</span><span>${fromQty} → <span class="bold ${ok?'':'red'}">${Math.max(0,fromQty-qty)}</span></span></div>
+    <div class="flex-between text-sm"><span>${toLabel} (to)</span><span>${toQty} → <span class="bold green">${toQty+qty}</span></span></div>
     ${!ok?`<div class="text-xs red mt-4">Only ${fromQty} available at ${fromLabel}</div>`:''}`;
   document.getElementById('tr-submit-btn').style.cssText = ok ? 'display:block' : 'display:block;opacity:.5;pointer-events:none';
 }
@@ -7471,17 +7360,6 @@ function openGRVForProduct(productId) {
 }
 
 function setGRVLoc(loc) {
-function setGRVLocation(loc) {
-  document.getElementById('grv-location').value = loc;
-  var shopBtn = document.getElementById('grv-loc-shop');
-  var whBtn   = document.getElementById('grv-loc-wh');
-  if (shopBtn && whBtn) {
-    shopBtn.style.background = loc === 'shop' ? 'var(--accent)' : 'transparent';
-    shopBtn.style.color      = loc === 'shop' ? '#fff' : 'var(--text3)';
-    whBtn.style.background   = loc === 'warehouse' ? 'var(--accent)' : 'transparent';
-    whBtn.style.color        = loc === 'warehouse' ? '#fff' : 'var(--text3)';
-  }
-}
   document.getElementById('grv-location').value = loc;
   var shopBtn = document.getElementById('grv-loc-shop');
   var whBtn   = document.getElementById('grv-loc-wh');
@@ -7752,7 +7630,7 @@ function processNewGRVProducts(newItems, loc, supplierId, idx) {
 // ============================================================
 // CLOUD SYNC — JSONBin.io (free, no server needed)
 // ============================================================
-// All devices use the same API key -> same bin -> same data
+// All devices use the same API key → same bin → same data
 // Auto-syncs every 60s + after every save action
 
 var SYNC_API = 'https://api.jsonbin.io/v3';
@@ -7852,28 +7730,15 @@ function jjWrite(remote) {
       }
 
       if (k === 'expenses' || k === 'cashups' || k === 'writeoffs' || k === 'grvRecords') {
-        // Merge arrays but respect local deletions — track deleted IDs so remote can't resurrect them
+        // Append-only arrays: merge, never lose entries
         var remoteArr = remote[k] || [];
         var localArr  = local || [];
-        var localIds = {};
-        localArr.forEach(function(li){ localIds[li.id] = true; });
-        var prevRemoteKey = '_prev_remote_ids_' + k;
-        var prevRemoteIds = {};
-        try { prevRemoteIds = JSON.parse(localStorage.getItem(prevRemoteKey) || '{}'); } catch(e){}
-        var deletedLocally = {};
-        Object.keys(prevRemoteIds).forEach(function(id){
-          if (!localIds[id]) deletedLocally[id] = true;
-        });
         var mergedArr = localArr.slice();
         remoteArr.forEach(function(ri) {
-          if (deletedLocally[ri.id]) return;
           if (!mergedArr.find(function(li){ return li.id === ri.id; })) {
             mergedArr.push(ri);
           }
         });
-        var newRemoteIds = {};
-        remoteArr.forEach(function(ri){ newRemoteIds[ri.id] = true; });
-        localStorage.setItem(prevRemoteKey, JSON.stringify(newRemoteIds));
         localStorage.setItem(k, JSON.stringify(mergedArr));
         return;
       }
@@ -7921,20 +7786,9 @@ function jjWrite(remote) {
           if (!lp) return rp; // new product from remote
           // Use remote as base (has latest price/name/category)
           var merged = JSON.parse(JSON.stringify(rp));
-          // Use qty from whichever device updated it most recently (_qtyUpdatedAt timestamp)
-          var locQtyDate = lp._qtyUpdatedAt ? new Date(lp._qtyUpdatedAt) : new Date(0);
-          var remQtyDate = rp._qtyUpdatedAt ? new Date(rp._qtyUpdatedAt) : new Date(0);
-          if (locQtyDate >= remQtyDate) {
-            // Local is newer (or equal) — local qty wins
-            merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
-            merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
-            merged._qtyUpdatedAt = lp._qtyUpdatedAt || rp._qtyUpdatedAt;
-          } else {
-            // Remote is newer — remote qty wins
-            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : (parseInt(lp.qty)||0);
-            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : (parseInt(lp.qtyWh)||0);
-            merged._qtyUpdatedAt = rp._qtyUpdatedAt;
-          }
+          // Local qty always wins — it reflects stocktake or manual edits done on this device
+          merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
+          merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
           return merged;
         });
 
@@ -7959,26 +7813,13 @@ function jjWrite(remote) {
         remArr.forEach(function(ri) {
           var existIdx = mergedIds.findIndex(function(li){ return li.id === ri.id; });
           if (existIdx === -1) {
-            mergedIds.push(ri); // new item from remote — always add, never drop
+            mergedIds.push(ri); // new item from remote
           } else {
-            // For members specifically: merge fields so no data is lost
-            // Remote wins on name/contact fields only if it has a newer updatedAt
-            var remDate = new Date(ri.updatedAt || ri.joinDate || 0);
-            var locDate = new Date(mergedIds[existIdx].updatedAt || mergedIds[existIdx].joinDate || 0);
-            if (k === 'members') {
-              // Always keep local loyaltyPoints and storeCredit (most up to date)
-              var loyaltyPts   = Math.max(mergedIds[existIdx].loyaltyPoints||0, ri.loyaltyPoints||0);
-              var storeCredit  = Math.max(mergedIds[existIdx].storeCredit||0,   ri.storeCredit||0);
-              var lifetimeSpend= Math.max(mergedIds[existIdx].lifetimeSpend||0, ri.lifetimeSpend||0);
-              // Profile fields: use whichever is more recently updated
-              if (remDate > locDate) {
-                mergedIds[existIdx] = ri;
-              }
-              mergedIds[existIdx].loyaltyPoints  = loyaltyPts;
-              mergedIds[existIdx].storeCredit    = storeCredit;
-              mergedIds[existIdx].lifetimeSpend  = lifetimeSpend;
-            } else {
-              if (remDate > locDate) mergedIds[existIdx] = ri;
+            // Keep whichever was updated more recently
+            var remDate = ri.updatedAt || ri.date || ri.createdAt || 0;
+            var locDate = mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
+            if (new Date(remDate) > new Date(locDate)) {
+              mergedIds[existIdx] = ri; // remote is newer
             }
           }
         });
@@ -8104,20 +7945,6 @@ function jjHookDB() {
   DB._jjHooked = true;
   var _origSet = DB.set.bind(DB);
   DB.set = function(k, v) {
-    // Stamp _qtyUpdatedAt on each product whenever products array is saved
-    if (k === 'products' && Array.isArray(v)) {
-      var now = new Date().toISOString();
-      v = v.map(function(p) {
-        return Object.assign({}, p, { _qtyUpdatedAt: p._qtyUpdatedAt || now });
-      });
-    }
-    // Stamp updatedAt on members so sync merge can resolve conflicts correctly
-    if (k === 'members' && Array.isArray(v)) {
-      var nowMs = new Date().toISOString();
-      v = v.map(function(m) {
-        return Object.assign({}, m, { updatedAt: m.updatedAt || nowMs });
-      });
-    }
     _origSet(k, v);
     if (JJ.keys.indexOf(k) > -1) {
       clearTimeout(JJ.timer);
@@ -8154,27 +7981,6 @@ function jjInitWithSeed() {
 
     // Re-render pin screen with updated staff from Firebase
     try { renderPinScreen(); } catch(e) { console.warn('renderPinScreen error:', e); }
-
-    // If stocktakeReports exist locally but Firebase may not have them, push them up
-    setTimeout(function() {
-      var reports = DB.get('stocktakeReports') || [];
-      if (reports.length > 0) {
-        JJ.pushing = false;
-        jjPush(true);
-        console.log('[BizPOS] Startup: pushed', reports.length, 'stocktake report(s) to cloud');
-      }
-    }, 6000);
-
-    // ONE-TIME: Zero all warehouse (qtyWh) quantities so a fresh stocktake can be done
-    // Controlled by a flag so it only runs once
-    if (!localStorage.getItem('_whQtyZeroed_v1')) {
-      var prods = DB.get('products') || [];
-      prods = prods.map(function(p) { return Object.assign({}, p, { qtyWh: 0 }); });
-      DB.set('products', prods);
-      localStorage.setItem('_whQtyZeroed_v1', '1');
-      console.log('[BizPOS] Warehouse qty zeroed for fresh stocktake');
-      setTimeout(function() { JJ.pushing=false; jjPush(true); }, 2000);
-    }
 
     // Auto-pull every 10 seconds
     setInterval(function(){ jjPull(true); }, 10000);
@@ -8393,19 +8199,19 @@ function deduplicateExpenses() {
   return 0;
 }
 
-// ── ONE-TIME FIX: correct cashup date 17 May -> 16 May ───────────────────────
+// ── ONE-TIME FIX: correct cashup date 17 May → 16 May ───────────────────────
 function fixCashupDate17to16() {
   var cashups = DB.get('cashups') || [];
   var fixed = false;
   cashups.forEach(function(c) {
     var d = new Date(c.date);
     var yr = d.getFullYear(), mo = d.getMonth(), dy = d.getDate();
-    // Fix 17 May -> 16 May
+    // Fix 17 May → 16 May
     var is17May = (yr===2026 && mo===4 && dy===17);
-    // Fix 18 May -> 17 May
+    // Fix 18 May → 17 May
     var is18May = (yr===2026 && mo===4 && dy===18);
-    if (is17May) { d.setDate(16); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 17->16:', c.id); }
-    if (is18May) { d.setDate(17); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 18->17:', c.id); }
+    if (is17May) { d.setDate(16); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 17→16:', c.id); }
+    if (is18May) { d.setDate(17); c.date = d.toISOString(); fixed = true; console.log('Fixed cashup 18→17:', c.id); }
   });
   if (fixed) {
     DB.set('cashups', cashups);
@@ -9575,7 +9381,7 @@ function normalisePhone(raw) {
   if (digits.startsWith('27') && digits.length === 11) return digits;
   // Strip leading 0 and prepend 27
   if (digits.startsWith('0') && digits.length === 10) return '27' + digits.slice(1);
-  // 9 digit number — missing leading 0, treat as 0XX... -> 27XX...
+  // 9 digit number — missing leading 0, treat as 0XX... → 27XX...
   if (digits.length === 9) return '27' + digits;
   // fallback — just strip 0 and prepend 27
   return '27' + digits.replace(/^0+/, '');
@@ -9768,7 +9574,7 @@ function scanReceipt(input) {
   if (!apiKey) {
     statusEl.style.background = 'var(--red-bg)';
     statusEl.style.color = 'var(--red)';
-    statusEl.textContent = '❌ No AI key set — go to More -> AI Command Centre -> set API key first';
+    statusEl.textContent = '❌ No AI key set — go to More → AI Command Centre → set API key first';
     return;
   }
 
@@ -9965,15 +9771,12 @@ function setPettyCashBalance() {
 function quickSetPettyCash() {
   var amount = parseFloat(document.getElementById('pc-setter-amount').value);
   if (isNaN(amount) || amount < 0) { showToast('Enter a valid amount', 'error'); return; }
-  var reason = document.getElementById('pc-setter-reason').value.trim() || 'Opening balance correction';
+  var reason = document.getElementById('pc-setter-reason').value.trim() || 'Opening balance set';
   var pc = DB.getObj('pettyCash', {balance:0, history:[]});
   var oldBal = pc.balance || 0;
-  // Hard set — this is a correction, not an addition
   pc.balance = amount;
-  pc._manuallySet = true; // flag so overdrawn warning never shows after manual set
   pc.history = pc.history || [];
   pc.history.push({
-    id: (typeof uid==='function'?uid():Date.now().toString(36)),
     date: new Date().toISOString(), type: 'set',
     oldBalance: oldBal, newBalance: amount,
     delta: amount - oldBal, reason: reason,
@@ -9981,10 +9784,10 @@ function quickSetPettyCash() {
   });
   DB.setObj('pettyCash', pc);
   closeModal('modal-petty-cash-setter');
-  showToast('Petty cash balance set to R' + amount.toFixed(2) + ' ✓', 'success');
+  showToast('Petty cash set to R' + amount.toFixed(2), 'success');
+  // Also update cashup display if open
   var dispEl = document.getElementById('cashup-pc-display');
   if (dispEl) dispEl.textContent = fmt(amount);
-  renderPCDashboard();
 }
 
 
@@ -11991,12 +11794,11 @@ function clearBCFile() {
 // ── Seed staff if not yet set ──
 (function seedStaff() {
   var existing = DB.get('staff') || [];
+  // Only seed if no real staff yet (or only the old mgr-001 fake)
+  // Always re-seed if roles/rates look wrong
   var realStaff = existing.filter(function(s){ return s.id !== 'mgr-001' && s.name && s.pin; });
-  // Always ensure ALL 5 staff profiles exist — merge any missing ones in
-  var expectedNames = ['Charne','Tania','Mike','Jordan','Trainee'];
-  var hasAll = expectedNames.every(function(n){ return realStaff.some(function(s){ return s.name===n; }); });
-  if (hasAll) return;
-  // Force re-seed — do NOT return early for any reason
+  var hasCorrect = realStaff.some(function(s){ return s.name==='Charne' && s.payType==='daily'; });
+  if (hasCorrect) return; // already correctly set up
 
   var seeded = [
   {
@@ -12101,23 +11903,18 @@ function clearBCFile() {
   }
 ];
 
-  // Merge: keep all existing staff data, only ADD missing ones
-  var finalStaff = existing.filter(function(s){ return s.id !== 'mgr-001'; });
-  seeded.forEach(function(ns) {
-    var match = finalStaff.find(function(os){ return os.name === ns.name; });
-    if (!match) {
-      // This staff member is missing — add them
-      finalStaff.push(ns);
-    } else {
-      // Already exists — update pin/role/rate but keep shifts/clockedIn
-      match.pin     = match.pin     || ns.pin;
-      match.role    = match.role    || ns.role;
-      match.payType = match.payType || ns.payType;
-      match.rate    = match.rate    !== undefined ? match.rate : ns.rate;
+  // Preserve any existing shifts from current staff
+  seeded = seeded.map(function(ns) {
+    var old = existing.find(function(os){ return os.name === ns.name || os.pin === ns.pin; });
+    if (old) {
+      ns.id        = old.id        || ns.id;
+      ns.shifts    = old.shifts    || [];
+      ns.clockedIn = old.clockedIn || false;
     }
+    return ns;
   });
 
-  DB.set('staff', finalStaff);
+  DB.set('staff', seeded);
   // Push to Firebase
   clearTimeout(JJ.timer);
   JJ.timer = setTimeout(function(){ jjPush(true); }, 1000);
@@ -12684,8 +12481,8 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div class="form-group">
       <label class="form-label">Direction</label>
       <div class="loc-toggle">
-        <div class="loc-btn active" id="tr-dir-btn-sw" onclick="setTransferDir('shop-to-warehouse')">Shop -> Warehouse</div>
-        <div class="loc-btn" id="tr-dir-btn-ws" onclick="setTransferDir('warehouse-to-shop')">Warehouse -> Shop</div>
+        <div class="loc-btn active" id="tr-dir-btn-sw" onclick="setTransferDir('shop-to-warehouse')">Shop → Warehouse</div>
+        <div class="loc-btn" id="tr-dir-btn-ws" onclick="setTransferDir('warehouse-to-shop')">Warehouse → Shop</div>
       </div>
     </div>
     <div class="form-group">
@@ -12760,13 +12557,6 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div style="background:var(--bg3);border-radius:var(--radius);padding:10px 12px;margin-bottom:12px">
       <div class="flex-between text-sm"><span>Total received value</span><span class="bold accent" id="grv-total">R0.00</span></div>
     </div>
-    <div style="margin-bottom:12px">
-      <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Receive stock into</div>
-      <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
-        <button id="grv-loc-shop" onclick="setGRVLocation('shop')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">&#127978; Shop floor</button>
-        <button id="grv-loc-wh"   onclick="setGRVLocation('warehouse')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">&#127981; Warehouse</button>
-      </div>
-    </div>
     <input type="hidden" id="grv-location" value="shop">
     <button class="btn btn-success btn-full" onclick="submitGRV()">Receive &amp; update stock</button>
   </div>
@@ -12783,7 +12573,7 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
 
     <div style="background:#fef9c3;border:1.5px solid #d97706;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#713f12">
-      <strong>How it works:</strong> Select a flower product -> declare grams used -> count actual joints rolled -> select which preroll product to add them to. 1g = 1 preroll by default.
+      <strong>How it works:</strong> Select a flower product → declare grams used → count actual joints rolled → select which preroll product to add them to. 1g = 1 preroll by default.
     </div>
 
     <!-- Step 1: Source flower -->
@@ -13016,8 +12806,8 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     <div class="form-group">
       <label class="form-label">Direction</label>
       <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px">
-        <button id="qt-dir-w2s" onclick="setQTDir('w2s')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">🏭->🏪 To shop</button>
-        <button id="qt-dir-s2w" onclick="setQTDir('s2w')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">🏪->🏭 To warehouse</button>
+        <button id="qt-dir-w2s" onclick="setQTDir('w2s')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">🏭→🏪 To shop</button>
+        <button id="qt-dir-s2w" onclick="setQTDir('s2w')" style="flex:1;padding:9px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">🏪→🏭 To warehouse</button>
       </div>
     </div>
     <div class="form-group">
@@ -13176,27 +12966,6 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <input id="pc-setter-reason" type="text" placeholder="e.g. Month end opening balance">
     </div>
     <button onclick="quickSetPettyCash()" class="btn btn-success btn-full">Set balance</button>
-  </div>
-</div>
-
-<!-- Issue Store Credit Modal -->
-<div class="modal-overlay" id="modal-issue-credit">
-  <div class="modal-sheet" style="max-height:60vh">
-    <div class="modal-handle"></div>
-    <div class="modal-title-row">
-      <div class="modal-title">🎁 Issue Store Credit</div>
-      <button class="close-btn" onclick="closeModal('modal-issue-credit')">✕</button>
-    </div>
-    <input type="hidden" id="issue-credit-member-id">
-    <div class="form-group">
-      <label class="form-label">Credit amount (R)</label>
-      <input id="issue-credit-amount" type="number" step="0.01" min="0.01" placeholder="e.g. 300.00">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Reason *</label>
-      <input id="issue-credit-reason" type="text" placeholder="e.g. Cleaning service — 2hrs @ R150/hr">
-    </div>
-    <button onclick="saveIssueCredit()" class="btn btn-success btn-full">Issue credit</button>
   </div>
 </div>
 
