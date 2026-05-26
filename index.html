@@ -4505,9 +4505,23 @@ function cartRemove(i) {
   renderSaleCart();
 }
 
+function onPaymentMethodChange() {
+  var method = (document.getElementById('sale-payment')||{}).value || 'cash';
+  var splitSec = document.getElementById('split-section');
+  if (splitSec) splitSec.style.display = method === 'split' ? 'block' : 'none';
+  if (method !== 'split') {
+    ['split-cash','split-card','split-eft'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+  }
+  renderSaleCart();
+}
+
 function completeSale() {
   try {
   if (!saleCart.length) { showToast('Cart is empty', 'error'); return; }
+  const paymentMethod = document.getElementById('sale-payment').value;
   const products = DB.get('products');
   // Check SHOP stock only (sales deduct from shop floor)
   // Stock check — warn if low but always allow sale (stock can go negative)
@@ -4572,7 +4586,7 @@ function completeSale() {
       reason: document.getElementById('discount-reason').value.trim()
     } : null,
     total,
-    paymentMethod: document.getElementById('sale-payment').value,
+    paymentMethod: paymentMethod,
     note: document.getElementById('sale-note').value.trim(),
     tip: tipAmt > 0 ? tipAmt : 0,
     isDelivery: _isDelivery,
