@@ -2638,6 +2638,11 @@ function saveWriteoff() {
   const wo = DB.get('writeoffs');
   wo.unshift({ id: uid(), productId: pid, productName: p.name, qty, reason, notes, value: qty*p.cost, date: new Date().toISOString(), staffId: currentUser?.id, staffName: currentUser?.name });
   DB.set('writeoffs', wo);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-writeoff');
   renderInventory();
   renderWriteoffs();
@@ -3091,6 +3096,11 @@ function saveSupplier() {
   if (id) { const i=sups.findIndex(s=>s.id===id); if(i>-1) sups[i]={...sups[i],...data}; }
   else { sups.push({id:uid(),...data}); }
   DB.set('suppliers', sups);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-supplier');
   renderSuppliers();
 }
@@ -3098,6 +3108,11 @@ function saveSupplier() {
 function deleteSupplier(id) {
   if (!confirm('Delete supplier?')) return;
   DB.set('suppliers', DB.get('suppliers').filter(s=>s.id!==id));
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   renderSuppliers();
 }
 
@@ -3235,6 +3250,11 @@ function commitRolling() {
     prerollName: _rollPrerollProduct ? _rollPrerollProduct.name : null
   });
   DB.set('rollingRecords', records);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
 
   showToast(grams+'g rolled into '+actual+' joints ✓', 'success');
   closeModal('modal-rolling');
@@ -3332,11 +3352,16 @@ function findOpenPOForSupplier(supplierId) {
 function checkReorderPoints() {
   var products = DB.get('products') || [];
 
-  // Only show low-stock alerts — no auto PO creation
+  // Only alert on products that:
+  // 1. Have a reorderAt point set (> 0)
+  // 2. Have stock that has gone low (not just products that were never stocked)
   var lowStock = [];
   products.forEach(function(p) {
-    if (!p.reorderAt || p.reorderAt <= 0) return;
-    if ((p.qty||0) <= p.reorderAt) lowStock.push(p.name);
+    if (!p.reorderAt || p.reorderAt <= 0) return;  // no reorder point set — skip
+    var shopQty = parseInt(p.qty) || 0;
+    var whQty   = parseInt(p.qtyWh) || 0;
+    var totalQty = shopQty + whQty;
+    if (totalQty <= p.reorderAt) lowStock.push(p.name);
   });
 
   if (lowStock.length) {
@@ -3551,6 +3576,11 @@ function openPODetail(id) {
     if (confirm('Delete this PO permanently?')) {
       var all = DB.get('purchaseOrders').filter(function(p){ return p.id !== id; });
       DB.set('purchaseOrders', all);
+      // Block pull and push immediately so delete survives the next sync
+      window._blockPullUntil = Date.now() + 60000;
+      clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+      jjPush(false);
+      setTimeout(function(){ jjPush(true); }, 4000);
       closeModal('modal-po-detail');
       renderPO();
       showToast('Purchase order deleted', 'success');
@@ -3587,6 +3617,10 @@ function updatePO(id, status) {
     renderInventory();
   }
   DB.set('purchaseOrders', pos);
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-po-detail');
   renderPO();
   updatePOBadge();
@@ -3639,6 +3673,11 @@ function toggleMemberMarketing(id) {
   if (i === -1) return;
   members[i].marketingOptIn = members[i].marketingOptIn === false ? true : false;
   DB.set('members', members);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   renderMembers();
   showToast(members[i].name + (members[i].marketingOptIn ? ' opted IN to broadcasts' : ' opted OUT of broadcasts'), members[i].marketingOptIn ? 'success' : 'warning');
 }
@@ -3790,6 +3829,11 @@ function saveMember() {
     members.push({id:uid(), marketingOptIn:true, loyaltyPoints:0, lifetimeSpend:0, ...data});
   }
   DB.set('members', members);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-member');
   renderMembers();
 }
@@ -5913,6 +5957,11 @@ function saveExpense() {
 function deleteExpense(id) {
   if (!confirm('Delete this expense?')) return;
   DB.set('expenses', DB.get('expenses').filter(e=>e.id!==id));
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   renderExpenses();
 }
 
@@ -6529,7 +6578,7 @@ function renderInventoryReport(el) {
         ${products.map(p=>{
           const margin = p.price && p.cost ? ((p.price-p.cost)/p.price*100).toFixed(1) : '—';
           const shopQ = p.qty||0; const whQ = p.qtyWh||0; const totQ = shopQ+whQ;
-          const st = shopQ<=0?'red':shopQ<=p.lowAt?'amber':'';
+          const st = (shopQ<=0 && whQ<=0) ? '' : shopQ<=0?'red':shopQ<=(p.lowAt||0)?'amber':'';
           return `<tr><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</td><td>${p.category||'—'}</td><td class="num ${st}">${shopQ}</td><td class="num" style="color:var(--blue)">${whQ}</td><td class="num">${totQ}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(totQ*(p.cost||0))}</td><td class="num ${parseFloat(margin)>30?'pos':parseFloat(margin)<15?'neg':''}">${margin}%</td></tr>`;
         }).join('')}
       </table></div>
@@ -6920,6 +6969,9 @@ function quickAddProductToPO() {
   var products = DB.get('products') || [];
   products.push(newProduct);
   DB.set('products', products);
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
 
   // Add to PO lines automatically
   poLines.push({ productId: newProduct.id, productName: name, qty: qty, unitCost: cost });
@@ -6990,6 +7042,10 @@ function savePOEditor(status) {
     }
   }
   DB.set('purchaseOrders', pos);
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-po-editor');
   renderPO();
   updatePOBadge();
@@ -7042,6 +7098,11 @@ function saveBulkPrices() {
     if (p) { p.price=v.price; p.cost=v.cost; }
   });
   DB.set('products', products);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-edit-category');
   renderInventory();
   alert('Prices updated!');
@@ -9685,6 +9746,11 @@ function markExpensePaid(id) {
   e.status = 'paid';
   e.paidDate = new Date().toISOString().slice(0,10);
   DB.set('expenses', exps);
+  // Push to Firebase immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   renderExpenses();
   showToast('Marked as paid', 'success');
 }
