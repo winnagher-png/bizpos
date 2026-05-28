@@ -1218,6 +1218,23 @@ table.report-table .neg{color:var(--red)}
     <div class="form-group"><label class="form-label">Email</label><input id="m-email" type="email"></div>
     <div class="form-group"><label class="form-label">Birthday <span style="font-size:10px;color:var(--text3);font-weight:400">(auto-filled from ID number)</span></label><input id="m-birthday" type="date" readonly style="background:var(--bg3);color:var(--text3)"></div>
     <div class="form-group"><label class="form-label">Address</label><textarea id="m-addr" rows="2"></textarea></div>
+
+    <!-- Marketing opt-in -->
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:700">📢 Marketing &amp; broadcasts</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">Receive WhatsApp &amp; email promotions</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <span id="m-optin-label" style="font-size:11px;font-weight:700;color:var(--text3)">OFF</span>
+          <div id="m-optin-toggle" onclick="toggleMemberOptIn()" style="width:44px;height:24px;border-radius:12px;background:var(--border);position:relative;cursor:pointer;transition:.2s">
+            <div id="m-optin-knob" style="position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s"></div>
+          </div>
+        </label>
+      </div>
+    </div>
+    <input type="hidden" id="m-optin-value" value="1">
     <input type="hidden" id="m-id-hidden">
     <button class="btn btn-primary btn-full" onclick="saveMember()">Save member</button>
   </div>
@@ -1528,6 +1545,10 @@ table.report-table .neg{color:var(--red)}
       <button id="tip-toggle-btn" class="btn btn-secondary" style="flex:1" onclick="toggleTip()">💚 Add tip</button>
     </div>
     <button class="btn btn-success btn-full" onclick="completeSale()">Complete sale</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+      <button id="btn-apply-credit" onclick="openApplyCredit()" style="display:none;padding:9px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:10px;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer">&#x1F4B3; Use credit</button>
+      <button id="btn-redeem-loyalty" onclick="openLoyaltyRedeem()" style="display:none;padding:9px;background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;font-size:12px;font-weight:700;color:var(--text2);cursor:pointer">&#x1F3C6; Redeem points</button>
+    </div>
   </div>
 </div>
 
@@ -3683,12 +3704,40 @@ function toggleMemberMarketing(id) {
 }
 
 function openAddMember() {
-  ['m-name','m-num','m-id','m-phone','m-email','m-addr','m-id-hidden'].forEach(id=>document.getElementById(id).value='');
+  ['m-name','m-num','m-id','m-phone','m-email','m-addr','m-id-hidden'].forEach(id=>{ var el=document.getElementById(id); if(el) el.value=''; });
+  var bdEl = document.getElementById('m-birthday'); if (bdEl) bdEl.value = '';
+  var idRes = document.getElementById('m-id-result'); if (idRes) { idRes.style.display='none'; idRes.textContent=''; }
+  setMemberOptInUI(true); // default opt IN for new members
   document.getElementById('modal-member-title').textContent = 'Add member';
   openModal('modal-member');
 }
 
-function parseSAID() {
+function toggleMemberOptIn() {
+  var val     = document.getElementById('m-optin-value');
+  var toggle  = document.getElementById('m-optin-toggle');
+  var knob    = document.getElementById('m-optin-knob');
+  var label   = document.getElementById('m-optin-label');
+  var isOn    = val.value === '1';
+  var nowOn   = !isOn;
+  val.value   = nowOn ? '1' : '0';
+  toggle.style.background = nowOn ? 'var(--accent)' : 'var(--border)';
+  knob.style.left         = nowOn ? '22px' : '2px';
+  label.textContent       = nowOn ? 'ON' : 'OFF';
+  label.style.color       = nowOn ? 'var(--accent)' : 'var(--text3)';
+}
+
+function setMemberOptInUI(isOn) {
+  var val    = document.getElementById('m-optin-value');
+  var toggle = document.getElementById('m-optin-toggle');
+  var knob   = document.getElementById('m-optin-knob');
+  var label  = document.getElementById('m-optin-label');
+  if (!val) return;
+  val.value              = isOn ? '1' : '0';
+  toggle.style.background = isOn ? 'var(--accent)' : 'var(--border)';
+  knob.style.left        = isOn ? '22px' : '2px';
+  label.textContent      = isOn ? 'ON' : 'OFF';
+  label.style.color      = isOn ? 'var(--accent)' : 'var(--text3)';
+}
   var idVal  = (document.getElementById('m-id')||{}).value.trim().replace(/\D/g,'');
   var res    = document.getElementById('m-id-result');
   var bdEl   = document.getElementById('m-birthday');
@@ -3764,6 +3813,98 @@ function validateLuhn(idStr) {
   return sum % 10 === 0;
 }
 
+// ── Account Credit System ─────────────────────────────────────────────────────
+function getMemberCredit(m) { return parseFloat(m.accountCredit) || 0; }
+
+function addMemberCredit(memberId, amount, reason) {
+  var members = DB.get('members') || [];
+  var idx = members.findIndex(function(m){ return m.id === memberId; });
+  if (idx === -1) return 0;
+  var m   = members[idx];
+  var old = getMemberCredit(m);
+  m.accountCredit = Math.round((old + amount) * 100) / 100;
+  if (!m.creditHistory) m.creditHistory = [];
+  m.creditHistory.push({ date: new Date().toISOString(), delta: amount, balance: m.accountCredit, reason: reason||'', staffName: currentUser?currentUser.name:null });
+  members[idx] = m;
+  DB.set('members', members);
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  return m.accountCredit;
+}
+
+function openAddCreditModal(memberId) {
+  var m = (DB.get('members')||[]).find(function(x){ return x.id===memberId; });
+  if (!m) return;
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9200;display:flex;align-items:flex-end;justify-content:center';
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:400px">'
+    + '<div style="font-size:16px;font-weight:900;margin-bottom:4px">&#x1F4B3; Account credit — '+m.name+'</div>'
+    + '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Current balance: <b>'+fmt(getMemberCredit(m))+'</b></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'
+    + '<div><label style="font-size:11px;color:var(--text3);font-weight:600">Amount (R)</label>'
+    + '<input id="crd-amount" type="number" step="0.01" placeholder="0.00" style="width:100%;padding:10px;border:1.5px solid var(--accent);border-radius:10px;font-size:15px;font-weight:800;background:var(--bg);color:var(--text)"></div>'
+    + '<div><label style="font-size:11px;color:var(--text3);font-weight:600">Type</label>'
+    + '<select id="crd-type" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text)">'
+    + '<option value="credit">Add credit</option><option value="deduct">Deduct credit</option><option value="loyalty">Loyalty reward (R500)</option>'
+    + '</select></div></div>'
+    + '<input id="crd-reason" type="text" placeholder="Reason (loyalty reward, gift, refund...)" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text);margin-bottom:12px">'
+    + '<div style="display:flex;gap:8px">'
+    + '<button onclick="saveAddCredit(\''+memberId+'\',this.closest(\'[style*=fixed]\')" style="flex:2;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#fff;cursor:pointer">Save</button>'
+    + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:14px;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+  setTimeout(function(){ var el=document.getElementById('crd-amount'); if(el) el.focus(); }, 100);
+}
+
+function saveAddCredit(memberId, modal) {
+  var type   = (document.getElementById('crd-type')||{}).value||'credit';
+  var amount = type==='loyalty' ? 500 : parseFloat((document.getElementById('crd-amount')||{}).value)||0;
+  var reason = (document.getElementById('crd-reason')||{}).value.trim() || (type==='loyalty'?'Loyalty reward':type==='deduct'?'Credit deducted':'Credit added');
+  if (!amount) { showToast('Enter an amount','error'); return; }
+  var delta  = type==='deduct' ? -amount : amount;
+  var newBal = addMemberCredit(memberId, delta, reason);
+  if (modal) modal.remove();
+  showToast('Credit updated — balance: '+fmt(newBal),'success');
+  openMemberDetail && openMemberDetail(memberId);
+}
+
+var _appliedAccountCredit = 0;
+
+function openApplyCredit() {
+  if (!currentSaleMemberId) { showToast('Link a member to this sale first','warning'); return; }
+  var m = (DB.get('members')||[]).find(function(x){ return x.id===currentSaleMemberId; });
+  if (!m) return;
+  var credit   = getMemberCredit(m);
+  if (credit <= 0) { showToast(m.name+' has no account credit','warning'); return; }
+  var cartTotal = saleCart.reduce(function(a,i){ return a+(i.price*i.qty); },0);
+  var applyAmt  = Math.min(credit, cartTotal);
+  var modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9200;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px;padding:20px;width:100%;max-width:360px">'
+    + '<div style="font-size:17px;font-weight:900;margin-bottom:4px">&#x1F4B3; Apply credit — '+m.name+'</div>'
+    + '<div style="background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">'
+    + '<div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px">AVAILABLE CREDIT</div>'
+    + '<div style="font-size:28px;font-weight:900;color:var(--accent)">'+fmt(credit)+'</div></div>'
+    + '<div style="margin-bottom:12px"><label style="font-size:11px;color:var(--text3);font-weight:600">Amount to apply (max '+fmt(applyAmt)+')</label>'
+    + '<input id="apply-crd-amt" type="number" step="0.01" value="'+applyAmt.toFixed(2)+'" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--accent);border-radius:10px;font-size:18px;font-weight:800;text-align:center;background:var(--bg);color:var(--text);margin-top:4px"></div>'
+    + '<div style="display:flex;gap:8px">'
+    + '<button onclick="confirmApplyCredit(\''+m.id+'\','+credit+',this.closest(\'[style*=fixed]\')" style="flex:2;padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:800;color:#fff;cursor:pointer">Apply to sale</button>'
+    + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:14px;cursor:pointer">Cancel</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+}
+
+function confirmApplyCredit(memberId, availCredit, modal) {
+  var amt = parseFloat((document.getElementById('apply-crd-amt')||{}).value)||0;
+  if (amt <= 0) { showToast('Enter an amount','error'); return; }
+  if (amt > availCredit) { showToast('Exceeds available credit','error'); return; }
+  _appliedAccountCredit = amt;
+  if (modal) modal.remove();
+  renderSaleCart();
+  showToast(fmt(amt)+' credit will be applied at checkout','success');
+}
+
 function getSAIDAge(idNumber) {
   if (!idNumber || idNumber.length < 6) return null;
   var id = idNumber.replace(/\D/g,'');
@@ -3820,7 +3961,8 @@ function saveMember() {
     phone:    (document.getElementById('m-phone').value||'').trim(),
     email:    (document.getElementById('m-email').value||'').trim(),
     address:  (document.getElementById('m-addr').value||'').trim(),
-    birthday: birthdayVal
+    birthday: birthdayVal,
+    marketingOptIn: (document.getElementById('m-optin-value')||{}).value !== '0'
   };
   if (id) {
     var i = members.findIndex(function(m){ return m.id===id; });
@@ -3895,6 +4037,7 @@ function openMemberProfile(id) {
           ${m.marketingOptIn!==false?'📢 Broadcasts ON':'🔕 Broadcasts OFF'}
         </button>
         <button class="btn btn-secondary btn-sm" onclick="openEditMember('${m.id}')">Edit</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddCreditModal('${m.id}')">&#x1F4B3; Credit</button>
       </div>
     </div>
     ${sales.length ? sales.map(s=>`<div class="card" onclick="closeModal('modal-member-profile');openSaleDetail('${s.id}')">
@@ -3918,6 +4061,7 @@ function openEditMember(id) {
   document.getElementById('m-addr').value = m.address||'';
   var bdEl = document.getElementById('m-birthday');
   if (bdEl) bdEl.value = m.birthday||'';
+  setMemberOptInUI(m.marketingOptIn !== false);
   document.getElementById('modal-member-title').textContent = 'Edit member';
   openModal('modal-member');
 }
@@ -3940,18 +4084,29 @@ let saleDiscountVisible = false;
 // ── Member completeness check ──
 function memberIsComplete(m) {
   if (!m) return false;
-  // Only require name + member number to be selectable on POS
-  // ID number is optional — don't block sales for members without it
-  const hasName     = !!(m.name && m.name.trim());
-  const hasMemberNo = !!(m.memberNo && m.memberNo.trim() && m.memberNo !== '???');
-  return hasName && hasMemberNo;
+  // Must have name and member number
+  if (!m.name || !m.name.trim()) return false;
+  if (!m.memberNo || m.memberNo === '???') return false;
+  // Compliance: underage is always blocked; no_id is greyed out
+  if (m.posCompliance === 'underage') return false;
+  // Allow through if no ID — staff can verify manually
+  return true;
 }
 
 function memberMissingFields(m) {
-  const missing = [];
-  if (!m.phone || !m.phone.trim()) missing.push('phone');
-  if (!m.memberNo || m.memberNo === '???') missing.push('member number');
+  var missing = [];
+  if (!m.phone || (m.phone||'').replace(/\D/g,'').length < 9) missing.push('valid phone');
+  if (!m.idNumber || (m.idNumber||'').replace(/\D/g,'').length < 13) missing.push('valid 13-digit ID');
+  if (m.posCompliance === 'underage') missing.push('must be 18+ (ID shows underage)');
   return missing;
+}
+
+function memberComplianceLabel(m) {
+  // Returns a coloured status label for the member result
+  if (m.posCompliance === 'underage') return '<span style="color:#dc2626;font-size:10px;font-weight:700">🚫 UNDERAGE</span>';
+  if (m.posCompliance === 'no_id')    return '<span style="color:#d97706;font-size:10px;font-weight:700">⚠ No valid ID</span>';
+  if (m.age)                          return '<span style="color:#16a34a;font-size:10px">Age ' + m.age + '</span>';
+  return '';
 }
 
 var _saleMethodFilter = '';
@@ -4234,18 +4389,23 @@ function searchSaleMember() {
   res.style.display = 'block';
 
   const matchRows = matches.map(m => {
-    const complete = memberIsComplete(m);
-    const missing = complete ? [] : memberMissingFields(m);
-    return `<div onclick="${complete ? `selectSaleMember('${m.id}')` : `showMemberIncomplete('${m.id}')`}"
-      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:${complete?'pointer':'default'};
-      opacity:${complete?'1':'0.5'};border:1px solid ${complete?'var(--border)':'var(--red)'};display:flex;align-items:center;gap:10px">
-      <div class="avatar-circle" style="background:${complete?'var(--accent)':'var(--border2)'};width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
+    const complete  = memberIsComplete(m);
+    const underage  = m.posCompliance === 'underage';
+    const missing   = complete ? [] : memberMissingFields(m);
+    const compLabel = memberComplianceLabel(m);
+    const pts       = m.loyaltyPoints ? ' · ' + m.loyaltyPoints + ' pts' : '';
+    return `<div onclick="${complete ? `selectSaleMember('${m.id}')` : underage ? `showMemberIncomplete('${m.id}')` : `selectSaleMember('${m.id}')`}"
+      style="padding:10px;background:var(--bg3);border-radius:var(--radius-sm);margin-bottom:4px;cursor:${underage?'not-allowed':'pointer'};
+      opacity:${underage?'0.45':'1'};border:1.5px solid ${underage?'#dc2626':complete?'var(--border)':'#d97706'};display:flex;align-items:center;gap:10px">
+      <div class="avatar-circle" style="background:${underage?'#dc2626':complete?'var(--accent)':'#d97706'};width:36px;height:36px;font-size:13px;flex-shrink:0">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div class="text-sm bold" style="color:${complete?'var(--text)':'var(--text3)'}">${m.name}</div>
-        <div class="text-xs text-muted">#${m.memberNo||'???'} · ${m.phone||'no phone'}</div>
-        ${!complete ? `<div class="text-xs" style="color:var(--red);margin-top:2px">⚠ Missing: ${missing.join(', ')}</div>` : ''}
+        <div class="text-sm bold">${m.name}</div>
+        <div class="text-xs text-muted">#${m.memberNo||'???'} · ${m.phone||'no phone'}${pts}</div>
+        <div style="margin-top:2px">${compLabel}</div>
+        ${underage ? `<div class="text-xs" style="color:#dc2626;font-weight:700;margin-top:2px">🚫 Cannot sell — member is underage</div>` :
+          missing.length ? `<div class="text-xs" style="color:#d97706;margin-top:2px">⚠ ${missing.join(', ')} — verify before selling</div>` : ''}
       </div>
-      ${complete ? '' : '<div style="font-size:18px;color:var(--red)">🔒</div>'}
+      ${underage ? '<div style="font-size:18px">🚫</div>' : ''}
     </div>`;
   }).join('');
 
@@ -4265,35 +4425,52 @@ function searchSaleMember() {
 function showMemberIncomplete(id) {
   const m = DB.get('members').find(x=>x.id===id);
   if (!m) return;
-  const missing = memberMissingFields(m);
   const warn = document.getElementById('sale-member-warning');
   warn.style.display = 'block';
-  warn.innerHTML = `<div style="background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius-sm);padding:10px">
-    <div class="text-sm bold red">Cannot link ${m.name} to sale</div>
-    <div class="text-xs text-muted mt-4">Missing: ${missing.join(', ')}</div>
-    <div class="text-xs text-muted mt-4">Update their profile in the Members tab first.</div>
-  </div>`;
-  setTimeout(() => { warn.style.display='none'; }, 4000);
+  if (m.posCompliance === 'underage') {
+    warn.innerHTML = `<div style="background:#fef2f2;border:1.5px solid #dc2626;border-radius:var(--radius-sm);padding:10px">
+      <div class="text-sm bold" style="color:#dc2626">🚫 Cannot sell to ${m.name}</div>
+      <div class="text-xs text-muted mt-4">ID number indicates this member is under 18 years old.</div>
+      <div class="text-xs text-muted mt-4">If they believe this is incorrect, ask them to provide their physical ID for verification and update their record in the Members tab.</div>
+    </div>`;
+  } else {
+    const missing = memberMissingFields(m);
+    warn.innerHTML = `<div style="background:var(--red-bg);border:1px solid var(--red);border-radius:var(--radius-sm);padding:10px">
+      <div class="text-sm bold red">⚠ ${m.name} has incomplete details</div>
+      <div class="text-xs text-muted mt-4">Issues: ${missing.join(', ')}</div>
+      <div class="text-xs text-muted mt-4">You can still complete the sale — but update their profile in Members when possible.</div>
+    </div>`;
+  }
+  setTimeout(() => { warn.style.display='none'; }, 5000);
 }
 
 function selectSaleMember(id) {
   const m = DB.get('members').find(x=>x.id===id);
   if (!m) return;
-  if (!memberIsComplete(m)) { showMemberIncomplete(id); return; }
+  if (m.posCompliance === 'underage') { showMemberIncomplete(id); return; }
   saleSelectedMember = m;
+  currentSaleMemberId = id;
   document.getElementById('sale-member-results').style.display = 'none';
   document.getElementById('sale-member-search').value = '';
   document.getElementById('sale-member-warning').style.display = 'none';
   const sel = document.getElementById('sale-member-selected');
   sel.style.display = 'block';
+  var credit  = getMemberCredit(m);
+  var pts     = getMemberPoints(m);
+  var credits = Math.floor(pts / LOYALTY.pointsPerCredit) * LOYALTY.creditValue;
   sel.innerHTML = `<div style="background:var(--accent-bg);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:10px;display:flex;align-items:center;gap:10px">
     <div class="avatar-circle" style="background:var(--accent);width:36px;height:36px;font-size:13px">${m.name.split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase()}</div>
     <div style="flex:1">
       <div class="text-sm bold">${m.name}</div>
-      <div class="text-xs text-muted">#${m.memberNo} · ${m.phone}</div>
+      <div class="text-xs text-muted">#${m.memberNo}${credit>0?' · <span style="color:var(--accent);font-weight:700">'+fmt(credit)+' credit</span>':''}${pts>0?' · '+pts+' pts':''}</div>
     </div>
-    <button onclick="clearSaleMember()" style="color:var(--text3);font-size:20px;padding:4px">✕</button>
+    <button onclick="clearSaleMember()" style="color:var(--text3);font-size:20px;padding:4px">&#215;</button>
   </div>`;
+  // Show/hide credit and loyalty buttons
+  var creditBtn  = document.getElementById('btn-apply-credit');
+  var loyaltyBtn = document.getElementById('btn-redeem-loyalty');
+  if (creditBtn)  creditBtn.style.display  = credit > 0 ? 'block' : 'none';
+  if (loyaltyBtn) loyaltyBtn.style.display = credits > 0 ? 'block' : 'none';
 }
 
 function clearSaleMember() {
@@ -4606,6 +4783,16 @@ function completeSale() {
     var pts = awardLoyaltyPoints(sale.memberId, sale.total);
     if (pts > 0) setTimeout(function(){ showToast('&#x1F4B3; +'+pts+' loyalty points for '+sale.memberName+'!','success',3000); }, 500);
   }
+
+  // Deduct applied account credit from member balance
+  if (_appliedAccountCredit > 0 && sale.memberId) {
+    addMemberCredit(sale.memberId, -_appliedAccountCredit, 'Used at POS — sale ' + sale.id.slice(-6));
+    _appliedAccountCredit = 0;
+  }
+
+  // Hide credit/loyalty buttons
+  var cb = document.getElementById('btn-apply-credit');   if (cb) cb.style.display='none';
+  var lb = document.getElementById('btn-redeem-loyalty'); if (lb) lb.style.display='none';
 
   // Push to cloud immediately
   clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
@@ -6571,32 +6758,192 @@ function renderSalesReport(from, to, el) {
 }
 
 function renderInventoryReport(el) {
-  const products = DB.get('products');
-  const totalValue = products.reduce((a,p)=>a+p.qty*(p.cost||0),0);
-  const totalRetail = products.reduce((a,p)=>a+p.qty*(p.price||0),0);
-  const outOfStock = products.filter(p=>p.qty<=0);
-  const lowStock = products.filter(p=>p.qty>0&&p.qty<=p.lowAt);
+  const products  = DB.get('products') || [];
+  const { from, to } = getReportDates();
+  const allSales  = DB.get('sales') || [];
+  const sales     = allSales.filter(s => !s.voided && inRange(s.date, from, to));
 
-  reportData = products;
+  // Build product performance data
+  const perf = {};
+  products.forEach(function(p) {
+    perf[p.id] = {
+      p, unitsSold: 0, revenue: 0, cogs: 0,
+      shopQty: p.qty||0, whQty: p.qtyWh||0
+    };
+  });
+  sales.forEach(function(s) {
+    (s.items||[]).forEach(function(item) {
+      if (!perf[item.productId]) return;
+      perf[item.productId].unitsSold += item.qty||1;
+      perf[item.productId].revenue   += (item.price||0) * (item.qty||1);
+    });
+  });
+  Object.values(perf).forEach(function(d) {
+    d.cogs = d.unitsSold * (d.p.cost||0);
+    d.grossProfit = d.revenue - d.cogs;
+    d.margin = d.revenue > 0 ? (d.grossProfit / d.revenue * 100).toFixed(1) : null;
+    d.stockValue = (d.shopQty + d.whQty) * (d.p.cost||0);
+    d.stockRetail = (d.shopQty + d.whQty) * (d.p.price||0);
+  });
+
+  const rows = Object.values(perf);
+  const totalStockValue  = rows.reduce((a,d)=>a+d.stockValue, 0);
+  const totalStockRetail = rows.reduce((a,d)=>a+d.stockRetail, 0);
+  const totalRevenue     = rows.reduce((a,d)=>a+d.revenue, 0);
+  const outOfStock       = rows.filter(d=>d.shopQty<=0 && d.whQty<=0).length;
+  const lowStock         = rows.filter(d=>(d.shopQty+d.whQty)>0 && d.shopQty<=(d.p.lowAt||0)).length;
+
+  // Sort by revenue desc by default
+  const sorted = rows.slice().sort((a,b) => b.revenue - a.revenue);
+  reportData   = products;
+
+  const rowsHtml = sorted.map(function(d) {
+    const p      = d.p;
+    const totQty = d.shopQty + d.whQty;
+    const isOut  = totQty <= 0;
+    const isLow  = !isOut && d.shopQty <= (p.lowAt||0);
+    const qtyColor = isOut ? 'var(--red)' : isLow ? '#d97706' : 'var(--text)';
+    const mgColor  = d.margin===null ? '' : parseFloat(d.margin)>=30 ? 'pos' : parseFloat(d.margin)<15 ? 'neg' : '';
+    return '<tr style="'+(isOut?'opacity:.5':'')+'"><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + (p.emoji?p.emoji+' ':'')+p.name
+      + '</td><td style="color:var(--text3)">'+(p.category||'—')+'</td>'
+      + '<td class="num" style="color:'+qtyColor+';font-weight:700">'+d.shopQty+'</td>'
+      + '<td class="num" style="color:var(--blue)">'+d.whQty+'</td>'
+      + '<td class="num bold">'+d.unitsSold+'</td>'
+      + '<td class="num">'+(d.revenue>0?'<span style="color:var(--green)">'+fmt(d.revenue)+'</span>':'—')+'</td>'
+      + '<td class="num">'+fmt(p.cost||0)+'</td>'
+      + '<td class="num">'+fmt(p.price||0)+'</td>'
+      + '<td class="num '+(d.margin!==null?mgColor:'')+'">'+(d.margin!==null?d.margin+'%':'—')+'</td>'
+      + '<td class="num">'+fmt(d.stockValue)+'</td></tr>';
+  }).join('');
+
+  // Best sellers (top 5 by units sold)
+  const bestSellers = sorted.filter(d=>d.unitsSold>0).slice(0,5);
+  const slowMovers  = sorted.filter(d=>d.unitsSold===0 && (d.shopQty+d.whQty)>0).slice(0,5);
+
   el.innerHTML = `
-    <div class="report-kpi-grid">
+    <div class="report-kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
       <div class="kpi-tile"><div class="kpi-label">Products</div><div class="kpi-val">${products.length}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Stock value (cost)</div><div class="kpi-val accent">${fmt(totalValue)}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Retail value</div><div class="kpi-val green">${fmt(totalRetail)}</div></div>
-      <div class="kpi-tile"><div class="kpi-label">Out of stock</div><div class="kpi-val red">${outOfStock.length}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Stock value</div><div class="kpi-val accent">${fmt(totalStockValue)}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Retail value</div><div class="kpi-val green">${fmt(totalStockRetail)}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Revenue (period)</div><div class="kpi-val green">${fmt(totalRevenue)}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Out of stock</div><div class="kpi-val red">${outOfStock}</div></div>
+      <div class="kpi-tile"><div class="kpi-label">Low stock</div><div class="kpi-val amber">${lowStock}</div></div>
     </div>
-    <div class="report-section">
-      <div class="section-title">Full inventory</div>
+
+    ${bestSellers.length ? `
+    <div class="report-section" style="margin-bottom:14px">
+      <div class="section-title">🏆 Best sellers (period)</div>
       <div class="table-wrap"><table class="report-table">
-        <tr><th>Product</th><th>Category</th><th class="num">🏪 Shop</th><th class="num">🏭 WH</th><th class="num">Total</th><th class="num">Cost</th><th class="num">Price</th><th class="num">Value</th><th class="num">Margin</th></tr>
-        ${products.map(p=>{
-          const margin = p.price && p.cost ? ((p.price-p.cost)/p.price*100).toFixed(1) : '—';
-          const shopQ = p.qty||0; const whQ = p.qtyWh||0; const totQ = shopQ+whQ;
-          const st = (shopQ<=0 && whQ<=0) ? '' : shopQ<=0?'red':shopQ<=(p.lowAt||0)?'amber':'';
-          return `<tr><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</td><td>${p.category||'—'}</td><td class="num ${st}">${shopQ}</td><td class="num" style="color:var(--blue)">${whQ}</td><td class="num">${totQ}</td><td class="num">${fmt(p.cost)}</td><td class="num">${fmt(p.price)}</td><td class="num">${fmt(totQ*(p.cost||0))}</td><td class="num ${parseFloat(margin)>30?'pos':parseFloat(margin)<15?'neg':''}">${margin}%</td></tr>`;
-        }).join('')}
+        <tr><th>Product</th><th class="num">Units sold</th><th class="num">Revenue</th><th class="num">In stock</th></tr>
+        ${bestSellers.map(d=>`<tr><td>${d.p.emoji||''}${d.p.emoji?' ':''}${d.p.name}</td><td class="num bold">${d.unitsSold}</td><td class="num green">${fmt(d.revenue)}</td><td class="num">${d.shopQty+d.whQty}</td></tr>`).join('')}
       </table></div>
+    </div>` : ''}
+
+    ${slowMovers.length ? `
+    <div class="report-section" style="margin-bottom:14px">
+      <div class="section-title">🐌 Slow movers (in stock, zero sales this period)</div>
+      <div class="table-wrap"><table class="report-table">
+        <tr><th>Product</th><th>Category</th><th class="num">Shop</th><th class="num">Warehouse</th><th class="num">Stock value</th></tr>
+        ${slowMovers.map(d=>`<tr><td>${d.p.emoji||''}${d.p.emoji?' ':''}${d.p.name}</td><td style="color:var(--text3)">${d.p.category||'—'}</td><td class="num">${d.shopQty}</td><td class="num" style="color:var(--blue)">${d.whQty}</td><td class="num">${fmt(d.stockValue)}</td></tr>`).join('')}
+      </table></div>
+    </div>` : ''}
+
+    <div class="report-section">
+      <div class="section-title">All products</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <button onclick="sortProductReport('revenue')" style="padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;font-weight:700;cursor:pointer">Sort: Revenue</button>
+        <button onclick="sortProductReport('units')"   style="padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;font-weight:700;cursor:pointer">Sort: Units sold</button>
+        <button onclick="sortProductReport('stock')"   style="padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;font-weight:700;cursor:pointer">Sort: Stock</button>
+        <button onclick="sortProductReport('margin')"  style="padding:5px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);font-size:11px;font-weight:700;cursor:pointer">Sort: Margin</button>
+      </div>
+      <div class="table-wrap"><table class="report-table" id="product-report-table">
+        <tr><th>Product</th><th>Category</th><th class="num">🏪</th><th class="num">🏭</th><th class="num">Sold</th><th class="num">Revenue</th><th class="num">Cost</th><th class="num">Price</th><th class="num">Margin</th><th class="num">Value</th></tr>
+        ${rowsHtml}
+      </table></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+      <button onclick="exportProductReportCSV()" class="btn btn-secondary">&#x1F4E5; Export CSV</button>
+      <button onclick="printProductReport()" class="btn btn-secondary">&#x1F5A8; Print</button>
     </div>`;
+
+  // Store for sort/export/print
+  window._lastProductReportData = { rows, from, to, totalStockValue, totalStockRetail, totalRevenue };
+}
+
+function sortProductReport(by) {
+  var d = window._lastProductReportData;
+  if (!d) return;
+  var sorted = d.rows.slice().sort(function(a,b) {
+    if (by==='revenue') return b.revenue - a.revenue;
+    if (by==='units')   return b.unitsSold - a.unitsSold;
+    if (by==='stock')   return (b.shopQty+b.whQty) - (a.shopQty+a.whQty);
+    if (by==='margin')  return (parseFloat(b.margin)||0) - (parseFloat(a.margin)||0);
+    return 0;
+  });
+  var table = document.getElementById('product-report-table');
+  if (!table) return;
+  var tbody = sorted.map(function(d) {
+    var p=d.p, totQty=d.shopQty+d.whQty, isOut=totQty<=0, isLow=!isOut&&d.shopQty<=(p.lowAt||0);
+    var qtyColor=isOut?'var(--red)':isLow?'#d97706':'var(--text)';
+    var mgColor=d.margin===null?'':parseFloat(d.margin)>=30?'pos':parseFloat(d.margin)<15?'neg':'';
+    return '<tr style="'+(isOut?'opacity:.5':'')+'"><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      +(p.emoji?p.emoji+' ':'')+p.name+'</td><td style="color:var(--text3)">'+(p.category||'—')+'</td>'
+      +'<td class="num" style="color:'+qtyColor+';font-weight:700">'+d.shopQty+'</td>'
+      +'<td class="num" style="color:var(--blue)">'+d.whQty+'</td>'
+      +'<td class="num bold">'+d.unitsSold+'</td>'
+      +'<td class="num">'+(d.revenue>0?'<span style="color:var(--green)">'+fmt(d.revenue)+'</span>':'—')+'</td>'
+      +'<td class="num">'+fmt(p.cost||0)+'</td>'
+      +'<td class="num">'+fmt(p.price||0)+'</td>'
+      +'<td class="num '+(d.margin!==null?mgColor:'')+'">'+(d.margin!==null?d.margin+'%':'—')+'</td>'
+      +'<td class="num">'+fmt(d.stockValue)+'</td></tr>';
+  }).join('');
+  // Keep header row, replace data rows
+  var header = table.rows[0];
+  table.innerHTML = '';
+  table.appendChild(header);
+  table.insertAdjacentHTML('beforeend', tbody);
+}
+
+function exportProductReportCSV() {
+  var d = window._lastProductReportData;
+  if (!d) { alert('Run the inventory report first'); return; }
+  var q = function(s){ return '"'+String(s||'').replace(/"/g,'""')+'"'; };
+  var rows = ['\uFEFF' + 'Product,Category,Shop Qty,Warehouse Qty,Total Qty,Units Sold,Revenue,Cost Price,Sell Price,Gross Profit,Margin %,Stock Value'];
+  d.rows.forEach(function(r) {
+    rows.push([q(r.p.name), q(r.p.category||''), r.shopQty, r.whQty, r.shopQty+r.whQty,
+      r.unitsSold, r.revenue.toFixed(2), (r.p.cost||0).toFixed(2), (r.p.price||0).toFixed(2),
+      r.grossProfit.toFixed(2), r.margin!==null?r.margin:'', r.stockValue.toFixed(2)].join(','));
+  });
+  var blob = new Blob([rows.join('\r\n')], {type:'text/csv;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'JJ_Products_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  showToast('Product report CSV downloaded ✓', 'success');
+}
+
+function printProductReport() {
+  var d = window._lastProductReportData;
+  if (!d) { alert('Run the inventory report first'); return; }
+  var rows = d.rows.slice().sort(function(a,b){ return b.revenue - a.revenue; });
+  var rowsHtml = rows.map(function(r) {
+    return '<tr><td>'+(r.p.emoji||'')+' '+r.p.name+'</td><td>'+r.p.category+'</td>'
+      +'<td style="text-align:right">'+r.shopQty+'</td><td style="text-align:right">'+r.whQty+'</td>'
+      +'<td style="text-align:right">'+r.unitsSold+'</td><td style="text-align:right">R'+r.revenue.toFixed(2)+'</td>'
+      +'<td style="text-align:right">R'+(r.p.cost||0).toFixed(2)+'</td><td style="text-align:right">R'+(r.p.price||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right">'+(r.margin!==null?r.margin+'%':'—')+'</td>'
+      +'<td style="text-align:right">R'+r.stockValue.toFixed(2)+'</td></tr>';
+  }).join('');
+  printReport("Jack & Jill's Adventure Club — Product Report",
+    new Date(d.from).toLocaleDateString('en-ZA') + ' to ' + new Date(d.to).toLocaleDateString('en-ZA'),
+    '<div class="kpi-row"><div class="kpi"><div class="kpi-label">Products</div><div class="kpi-val">'+(d.rows.length)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Stock value</div><div class="kpi-val">R'+d.totalStockValue.toFixed(2)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Retail value</div><div class="kpi-val green">R'+d.totalStockRetail.toFixed(2)+'</div></div>'
+    +'<div class="kpi"><div class="kpi-label">Revenue (period)</div><div class="kpi-val green">R'+d.totalRevenue.toFixed(2)+'</div></div></div>'
+    +'<table><thead><tr><th>Product</th><th>Category</th><th>Shop</th><th>WH</th><th>Sold</th><th>Revenue</th><th>Cost</th><th>Price</th><th>Margin</th><th>Value</th></tr></thead>'
+    +'<tbody>'+rowsHtml+'</tbody></table>'
+  );
 }
 
 function renderProfitReport(from, to, el) {
@@ -9463,37 +9810,87 @@ function normalisePhone(raw) {
 }
 
 
-// Auto-fix member phone numbers that are missing leading zero (from spreadsheet paste)
-function fixMemberPhones() {
+// ── Comprehensive member data fixer ──────────────────────────────────────────
+// Runs on startup — fixes phones, IDs, extracts birthdays, flags compliance
+function fixMemberPhones() { fixAllMemberData(); } // keep old name as alias
+
+function fixAllMemberData() {
   try {
     var members = DB.get('members') || [];
-    var fixed = 0;
-    var updated = members.map(function(m) {
-      var p = (m.phone || '').trim();
-      if (!p) return m;
-      var digits = p.replace(/\D/g, '');
-      // Needs fix: 9-digit number (missing leading 0) that does not start with 27
-      if (digits.length === 9 && !digits.startsWith('27')) {
-        m = Object.assign({}, m, { phone: '0' + digits });
-        fixed++;
+    var changed = 0;
+
+    members = members.map(function(m) {
+      var updated = Object.assign({}, m);
+      var dirty   = false;
+
+      // ── 1. Fix phone number ──────────────────────────────────────────────
+      var phone = (m.phone || '').replace(/\D/g, '');
+      if (phone.length === 9 && !phone.startsWith('27')) {
+        // Missing leading 0 (spreadsheet dropped it)
+        updated.phone = '0' + phone;
+        dirty = true;
+      } else if (phone.length === 8) {
+        // Very short — missing leading 0 too
+        updated.phone = '0' + phone;
+        dirty = true;
       }
-      return m;
-    });
-    // Also set marketingOptIn:true on any member missing the field
-    var optFixed = 0;
-    updated = updated.map(function(m) {
+
+      // ── 2. Fix ID number ─────────────────────────────────────────────────
+      var idNum = (m.idNumber || '').replace(/\D/g, '');
+      if (idNum.length === 12) {
+        // Missing leading 0 (spreadsheet dropped it)
+        updated.idNumber = '0' + idNum;
+        idNum = updated.idNumber;
+        dirty = true;
+      }
+
+      // ── 3. Extract birthday from ID if not set ───────────────────────────
+      if (!m.birthday && idNum.length >= 6) {
+        var bday = getSAIDBirthday(idNum);
+        if (bday) {
+          updated.birthday = bday;
+          dirty = true;
+        }
+      }
+
+      // ── 4. Determine compliance status ───────────────────────────────────
+      var finalPhone = (updated.phone || '').replace(/\D/g, '');
+      var finalId    = (updated.idNumber || '').replace(/\D/g, '');
+      var hasValidPhone = finalPhone.length === 10 || (finalPhone.length === 11 && finalPhone.startsWith('27'));
+      var hasValidId    = finalId.length === 13;
+      var age           = hasValidId ? getSAIDAge(finalId) : null;
+      var isOfAge       = age !== null ? age >= 18 : null; // null = unknown
+      var compliance    = hasValidId && isOfAge ? 'ok'
+                        : !hasValidId           ? 'no_id'
+                        : !isOfAge              ? 'underage'
+                        : 'unknown';
+
+      if (updated.posCompliance !== compliance || updated.age !== age) {
+        updated.posCompliance = compliance;
+        updated.age = age;
+        dirty = true;
+      }
+
+      // ── 5. Set marketingOptIn default ────────────────────────────────────
       if (m.marketingOptIn === undefined || m.marketingOptIn === null) {
-        optFixed++;
-        return Object.assign({}, m, { marketingOptIn: true });
+        updated.marketingOptIn = true;
+        dirty = true;
       }
-      return m;
+
+      if (dirty) changed++;
+      return updated;
     });
-    if (fixed > 0 || optFixed > 0) {
-      DB.set('members', updated);
-      if (fixed > 0) console.log('Phone fix: ' + fixed + ' members updated with leading 0');
-      if (optFixed > 0) console.log('Marketing opt-in: ' + optFixed + ' members defaulted to opted IN');
+
+    if (changed > 0) {
+      DB.set('members', members);
+      window._blockPullUntil = Date.now() + 60000;
+      clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+      jjPush(false);
+      console.log('fixAllMemberData: ' + changed + ' members updated');
     }
-  } catch(e) { console.warn('fixMemberPhones error:', e); }
+  } catch(e) {
+    console.error('fixAllMemberData error:', e);
+  }
 }
 function sendBroadcast() {
   var msg     = document.getElementById('bc-message').value.trim();
@@ -9603,31 +10000,62 @@ function shareBCImageNow() {
 
 function sendEmailBroadcast() {
   var msg     = document.getElementById('bc-message').value.trim();
-  var link    = document.getElementById('bc-link').value.trim();
+  var subject = document.getElementById('bc-subject').value.trim() || 'Message from Jack & Jill\'s Adventure Club';
   var members = DB.get('members') || [];
-  var selected = members.filter(function(m){ return _broadcastSelected[m.id] && m.email && m.email !== '/'; });
+  var selected = members.filter(function(m){ return _broadcastSelected[m.id] && m.marketingOptIn !== false && m.email && m.email.trim(); });
+  if (!selected.length) { showToast('No members with email selected', 'error'); return; }
+  var emails = selected.map(function(m){ return m.email; }).join(',');
+  var mailto = 'mailto:?bcc=' + encodeURIComponent(emails) + '&subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(msg);
+  window.open(mailto);
+  showToast(selected.length + ' email draft opened', 'success');
+}
 
-  if (!msg && !link) { showToast('Enter a message first', 'error'); return; }
-  if (!selected.length) { showToast('No members with email addresses selected', 'error'); return; }
+function exportMembersForWhatsApp() {
+  var members = DB.get('members') || [];
 
-  var emails  = selected.map(function(m){ return m.email; }).join(',');
-  var subject = document.getElementById('bc-subject').value.trim() || "Jack & Jill's Adventure Club";
-  var body    = msg + (link ? '\n\n' + link : '') + '\n\nJack & Jill\'s Adventure Club';
+  // Only opted-in members with valid phone numbers
+  var eligible = members.filter(function(m) {
+    if (m.marketingOptIn === false) return false;
+    var phone = (m.phone || '').replace(/\D/g, '');
+    return phone.length >= 9;
+  });
 
-  if (_bcFileData) {
-    var a2 = document.createElement('a');
-    a2.href = _bcFileData.dataUrl; a2.download = _bcFileData.name;
-    document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
-    showToast('File downloaded — attach it to the email that opens', 'success', 5000);
-    setTimeout(function() {
-      window.location.href = 'mailto:' + encodeURIComponent(emails)
-        + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-    }, 1500);
-  } else {
-    window.location.href = 'mailto:' + encodeURIComponent(emails)
-      + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-    showToast('Email client opened with ' + selected.length + ' recipients', 'success');
+  if (!eligible.length) {
+    showToast('No opted-in members with phone numbers found', 'error');
+    return;
   }
+
+  // Build VCF (vCard) file — imports into phone contacts
+  var vcf = eligible.map(function(m) {
+    var phone = (m.phone || '').replace(/\D/g, '');
+    // Ensure starts with 0
+    if (phone.length === 9) phone = '0' + phone;
+    // Format as +27 international
+    var intl = phone.startsWith('0') ? '+27' + phone.slice(1) : '+' + phone;
+    // Prefix name with "JJ |" so easy to find in WhatsApp Broadcast
+    var displayName = 'JJ | ' + m.name;
+    return 'BEGIN:VCARD\nVERSION:3.0\nFN:' + displayName + '\nN:' + m.name + ';;;;\nTEL;TYPE=CELL:' + intl + '\nNOTE:Member #' + (m.memberNo||'') + ' - Jack & Jill Adventure Club\nEND:VCARD';
+  }).join('\n\n');
+
+  // Download VCF file
+  var blob = new Blob([vcf], {type: 'text/vcard;charset=utf-8'});
+  var a    = document.createElement('a');
+  a.href   = URL.createObjectURL(blob);
+  a.download = 'JJ_Members_' + new Date().toISOString().slice(0,10) + '.vcf';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+
+  // Also show a CSV option
+  var csv = '\uFEFF' + 'Name,Phone,Member No,Birthday\n' + eligible.map(function(m) {
+    var phone = (m.phone || '').replace(/\D/g, '');
+    if (phone.length === 9) phone = '0' + phone;
+    return '"JJ | ' + m.name + '","' + phone + '","' + (m.memberNo||'') + '","' + (m.birthday||'') + '"';
+  }).join('\n');
+
+  // Show tip
+  var tip = document.getElementById('bc-export-tip');
+  if (tip) tip.style.display = 'block';
+
+  showToast(eligible.length + ' contacts exported as VCF ✓ — import into your phone contacts', 'success', 6000);
 }
 
 
@@ -13002,9 +13430,21 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
     </div>
 
     <!-- Send buttons -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
       <button onclick="sendBroadcast()" style="padding:12px;background:#25D366;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">💬 Send via WhatsApp</button>
       <button onclick="sendEmailBroadcast()" style="padding:12px;background:var(--blue);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">📧 Send via Email</button>
+    </div>
+    <button onclick="exportMembersForWhatsApp()" style="width:100%;padding:11px;background:var(--bg3);border:1.5px solid #25D366;border-radius:10px;font-size:13px;font-weight:700;color:#25D366;cursor:pointer;margin-bottom:14px">
+      📥 Export contact list for WhatsApp Broadcast
+    </button>
+    <div id="bc-export-tip" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px;margin-bottom:12px;font-size:12px;color:#166534;line-height:1.6">
+      <div style="font-weight:800;margin-bottom:6px">How to use in WhatsApp Business:</div>
+      1. Open your phone contacts app and import the downloaded VCF file<br>
+      2. All members will appear as contacts prefixed with "JJ |"<br>
+      3. Open <b>WhatsApp Business</b> → tap ⋮ menu → <b>New broadcast</b><br>
+      4. Search "JJ |" to quickly select all member contacts<br>
+      5. Add them all → type your message → send once → everyone gets it privately
+      <div style="margin-top:8px;font-weight:700">Only opted-in members with valid phone numbers are included.</div>
     </div>
 
     <!-- Remaining recipients -->
