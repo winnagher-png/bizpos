@@ -1797,41 +1797,35 @@ function renderPinScreen() {
   if (!grid) return;
   grid.innerHTML = '';
 
-  // Get staff - multiple fallbacks
+  // HARDCODED staff — always available, Firebase can never wipe these
+  var HARDCODED = [
+    {id:"7wxwd4jy",name:"Charne", role:"manager",   pin:"9921",payType:"daily", rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"szrmgrw0",name:"Tania",  role:"manager",   pin:"1987",payType:"weekly",rate:500,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"9b70xobf",name:"Mike",   role:"supervisor",pin:"1234",payType:"weekly",rate:500,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"tvox4dgz",name:"Jordan", role:"cashier",   pin:"6420",payType:"hourly",rate:27, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"zujngnhz",name:"Trainee",role:"cashier",   pin:"1234",payType:"hourly",rate:27, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+  ];
+
+  // Get staff from DB, merge with hardcoded (hardcoded is the base, DB values override/supplement)
   var staff = [];
   try { var d = DB.get('staff'); if (Array.isArray(d)) staff = d.filter(function(s){return s&&s.name&&s.pin;}); } catch(e){}
   if (!staff.length) {
     try { var r=localStorage.getItem('staff'); if(r){var p=JSON.parse(r);if(Array.isArray(p))staff=p.filter(function(s){return s&&s.name&&s.pin;});} } catch(e){}
   }
-  if (!staff.length) {
-    grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">'
-      + '⏳ Loading staff...<br><span style="font-size:11px">Type PIN 9921 for Manager access</span></div>';
-    // If staff still empty after 2 seconds, force re-seed
-    setTimeout(function() {
-      var s2 = DB.get('staff') || [];
-      if (!s2.filter(function(s){return s&&s.name&&s.pin;}).length) {
-        // Force seed — clear Firebase block and re-seed
-        window._blockPullUntil = 0;
-        localStorage.removeItem('staff');
-        (function forceReseed() {
-          var seeded = [
-            {id:"7wxwd4jy",name:"Charne",role:"manager",pin:"9921",payType:"daily",rate:350,clockedIn:false,shifts:[]},
-            {id:"szrmgrw0",name:"Tania",role:"manager",pin:"1987",payType:"weekly",rate:500,clockedIn:false,shifts:[]},
-            {id:"9b70xobf",name:"Mike",role:"supervisor",pin:"1234",payType:"weekly",rate:500,clockedIn:false,shifts:[]},
-            {id:"tvox4dgz",name:"Jordan",role:"cashier",pin:"6420",payType:"hourly",rate:27,clockedIn:false,shifts:[]},
-            {id:"zujngnhz",name:"Trainee",role:"cashier",pin:"1234",payType:"hourly",rate:27,clockedIn:false,shifts:[]}
-          ];
-          DB.set('staff', seeded);
-          window._blockPullUntil = Date.now() + 120000;
-          clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null;
-          jjPush(false);
-          setTimeout(function(){ jjPush(true); }, 3000);
-          renderPinScreen();
-        })();
-      }
-    }, 2000);
-    return;
-  }
+  // Always ensure all hardcoded staff exist (merge: preserve shifts/clockedIn from DB)
+  HARDCODED.forEach(function(hc) {
+    var existing = staff.find(function(s){ return s.id===hc.id||s.name===hc.name; });
+    if (!existing) { staff.push(hc); }
+    else {
+      // Make sure pin is correct in case DB has stale data
+      existing.pin = hc.pin;
+    }
+  });
+  // Sort to hardcoded order
+  var order = HARDCODED.map(function(h){return h.id;});
+  staff.sort(function(a,b){ var ai=order.indexOf(a.id),bi=order.indexOf(b.id); return (ai<0?99:ai)-(bi<0?99:bi); });
+  // Write back so app has correct staff
+  try { DB.set('staff', staff); } catch(e){}
 
   var COLORS = ['#1f7a6e','#2563eb','#16a34a','#d97706','#b65c5e','#7c3aed','#db2777','#0891b2'];
   var ROLES = {manager:'Manager',supervisor:'Supervisor',cashier:'Cashier',sales:'Sales'};
