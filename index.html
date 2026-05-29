@@ -3795,6 +3795,8 @@ function setMemberOptInUI(isOn) {
   label.textContent      = isOn ? 'ON' : 'OFF';
   label.style.color      = isOn ? 'var(--accent)' : 'var(--text3)';
 }
+
+function parseSAID() {
   var idVal  = (document.getElementById('m-id')||{}).value.trim().replace(/\D/g,'');
   var res    = document.getElementById('m-id-result');
   var bdEl   = document.getElementById('m-birthday');
