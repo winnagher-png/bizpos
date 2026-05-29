@@ -1742,22 +1742,30 @@ function emergencyRestoreStaff() {
 // ── PIN SCREEN: reads live from Staff HR tab data ──
 
 function loginSuccess(staffMember) {
-  currentUser = staffMember;
-  document.getElementById('pin-screen').classList.add('hidden');
-  updateHeaderUser();
-  pinBuffer = '';
-  updatePinDots();
-  document.getElementById('pin-error').textContent = '';
-  selectedStaffForPin = null;
-  applyPermissions();
-  // Re-render pin screen ready for next login
-  setTimeout(function(){ renderPinScreen(); }, 300);
-  // Check clock-in reminder after login
-  setTimeout(checkClockInReminder, 800);
-  // Check birthdays after login
-  setTimeout(checkBirthdays, 2000);
-  // Start reminder scheduler if not already running
-  if (!window._reminderStarted) { window._reminderStarted = true; startReminderScheduler(); }
+  try {
+    currentUser = staffMember;
+    var ps = document.getElementById('pin-screen');
+    if (ps) ps.classList.add('hidden');
+    try { updateHeaderUser(); } catch(e){}
+    pinBuffer = '';
+    try { updatePinDots(); } catch(e){}
+    var pe = document.getElementById('pin-error');
+    if (pe) pe.textContent = '';
+    selectedStaffForPin = null;
+    try { applyPermissions(); } catch(e){ console.warn('applyPermissions error:', e); }
+    setTimeout(function(){ try { renderPinScreen(); } catch(e){} }, 300);
+    setTimeout(function(){ try { checkClockInReminder(); } catch(e){} }, 800);
+    setTimeout(function(){ try { checkBirthdays(); } catch(e){} }, 2000);
+    if (!window._reminderStarted) {
+      window._reminderStarted = true;
+      try { startReminderScheduler(); } catch(e){}
+    }
+  } catch(e) {
+    console.error('loginSuccess error:', e);
+    // Last resort — just hide pin screen
+    var ps2 = document.getElementById('pin-screen');
+    if (ps2) ps2.classList.add('hidden');
+  }
 }
 
 function restoreStaffProfiles() {
@@ -1878,23 +1886,10 @@ function selectUserForPin(s) {
   selectedStaffForPin = s;
   pinBuffer = '';
   updatePinDots();
-
-  var COLORS = ['#6c63ff','#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
-  var h = 0;
-  for (var i = 0; i < s.name.length; i++) h = (h * 31 + s.name.charCodeAt(i)) & 0xffffffff;
-  var color = COLORS[Math.abs(h) % COLORS.length];
-  var inits = s.name.split(' ').filter(Boolean).map(function(w){return w[0];}).join('').slice(0,2).toUpperCase();
-
-  var avatar = document.getElementById('pin-who-avatar');
-  if (avatar) { avatar.style.background = color; avatar.textContent = inits; }
-  var nameEl = document.getElementById('pin-who-name');
-  if (nameEl) nameEl.textContent = s.name;
+  var lbl = document.getElementById('pin-label');
+  if (lbl) lbl.textContent = 'Hi ' + s.name + ' — enter your PIN';
   document.getElementById('pin-error').textContent = '';
-
-  document.getElementById('pin-step-select').style.display = 'none';
-  document.getElementById('pin-step-enter').style.display  = 'flex';
-  document.getElementById('pin-step-enter').style.flexDirection = 'column';
-  document.getElementById('pin-step-enter').style.alignItems = 'center';
+  renderPinScreen();
 }
 
 function backToUserSelect() {
