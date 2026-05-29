@@ -537,7 +537,7 @@ table.report-table .neg{color:var(--red)}
 <div id="pin-screen">
   <div style="font-size:22px;font-weight:800;color:var(--accent);letter-spacing:-.5px">Jack &amp; Jill's</div>
   <div style="font-size:12px;color:var(--text3);letter-spacing:1px;margin-bottom:16px">ADVENTURE CLUB</div>
-  <div id="pin-label" style="font-size:15px;font-weight:600;color:var(--text2);margin-bottom:14px">Select your name</div>
+  <div id="pin-label" style="font-size:15px;font-weight:600;color:var(--text2);margin-bottom:14px">Select your name or just type your PIN</div>
   <div id="staff-grid-pin" style="width:100%;max-width:360px;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px"></div>
   <div style="display:flex;gap:14px;height:16px;align-items:center;margin-bottom:8px">
     <div id="d0" style="width:14px;height:14px;border-radius:50%;background:#dde0d8;transition:.15s"></div>
@@ -1929,27 +1929,38 @@ function pinKey(k) {
       // Build staff list — always include hardcoded manager fallback
       var staff = [];
       try { staff = JSON.parse(localStorage.getItem('staff')) || []; } catch(e) { staff = []; }
-      // Always add manager fallback
-      var hasMgr = staff.some(function(s){ return s && s.pin === '9921'; });
-      if (!hasMgr) {
-        staff.unshift({id:'mgr-001',name:'Manager',role:'manager',pin:'9921',clockedIn:false,shifts:[],onLeave:false});
-      }
-      // If staff selected, verify against them
+      staff = staff.filter(function(s){ return s && s.name && s.pin; });
+
+      // Always ensure the hardcoded staff are available as fallback
+      var hardcoded = [
+        {id:"7wxwd4jy",name:"Charne", role:"manager",   pin:"9921"},
+        {id:"szrmgrw0",name:"Tania",  role:"manager",   pin:"1987"},
+        {id:"9b70xobf",name:"Mike",   role:"supervisor",pin:"1234"},
+        {id:"tvox4dgz",name:"Jordan", role:"cashier",   pin:"6420"},
+        {id:"zujngnhz",name:"Trainee",role:"cashier",   pin:"1234"}
+      ];
+      hardcoded.forEach(function(hc) {
+        if (!staff.some(function(s){ return String(s.pin)===String(hc.pin) && s.name===hc.name; })) {
+          staff.push(hc);
+        }
+      });
+
+      // If a specific staff member was selected, verify PIN against them only
       if (selectedStaffForPin) {
         if (entered === String(selectedStaffForPin.pin)) {
           loginSuccess(selectedStaffForPin);
         } else {
-          showPinError('Wrong PIN, try again');
+          showPinError('Wrong PIN — try again');
           updatePinDots();
         }
         return;
       }
-      // No selection — match against any staff PIN
+      // No profile selected — match PIN against any staff member
       var matched = staff.find(function(s){ return s && String(s.pin) === entered; });
       if (matched) {
         loginSuccess(matched);
       } else {
-        showPinError('PIN not recognised — tap your name first');
+        showPinError('PIN not recognised');
         updatePinDots();
       }
     }, 150);
