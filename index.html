@@ -560,6 +560,9 @@ table.report-table .neg{color:var(--red)}
     <button style="height:64px;background:#fff;border:1.5px solid var(--border);border-radius:12px;font-size:24px;font-weight:500;color:var(--text);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.06)" onclick="pinKey('0')">0</button>
     <button style="height:64px;background:#fff;border:1.5px solid var(--border);border-radius:12px;font-size:18px;color:var(--text3);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.06)" onclick="pinDel()">⌫</button>
   </div>
+  <button onclick="restoreStaffProfiles()" style="margin-top:16px;padding:8px 20px;background:transparent;border:1px solid var(--border);border-radius:20px;font-size:11px;color:var(--text3);cursor:pointer">
+    Profiles not showing? Tap to restore
+  </button>
 </div>
 
 
@@ -1757,6 +1760,30 @@ function loginSuccess(staffMember) {
   if (!window._reminderStarted) { window._reminderStarted = true; startReminderScheduler(); }
 }
 
+function restoreStaffProfiles() {
+  var seeded = [
+    {id:"7wxwd4jy",name:"Charne",  role:"manager",   pin:"9921",payType:"daily",  rate:350,startDate:"2026-02-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"szrmgrw0",name:"Tania",   role:"manager",   pin:"1987",payType:"weekly", rate:500,startDate:"2026-12-09",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"9b70xobf",name:"Mike",    role:"supervisor",pin:"1234",payType:"weekly", rate:500,startDate:"2026-01-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"tvox4dgz",name:"Jordan",  role:"cashier",   pin:"6420",payType:"hourly", rate:27, startDate:"2026-02-15",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"zujngnhz",name:"Trainee", role:"cashier",   pin:"1234",payType:"hourly", rate:27, startDate:"2026-01-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+  ];
+  // Preserve shifts and clock state from any existing staff
+  var existing = DB.get('staff') || [];
+  seeded = seeded.map(function(ns) {
+    var old = existing.find(function(os){ return os.name===ns.name||os.id===ns.id; });
+    if (old) { ns.shifts=old.shifts||[]; ns.clockedIn=old.clockedIn||false; ns.clockedInAt=old.clockedInAt||null; }
+    return ns;
+  });
+  DB.set('staff', seeded);
+  window._blockPullUntil = Date.now() + 120000;
+  clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 3000);
+  renderPinScreen();
+  showToast && showToast('Staff profiles restored ✓', 'success');
+}
+
 function renderPinScreen() {
   var grid = document.getElementById('staff-grid-pin');
   if (!grid) return;
@@ -1770,8 +1797,32 @@ function renderPinScreen() {
   }
   if (!staff.length) {
     grid.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">'
-      + '⏳ Loading staff...<br><span style="font-size:11px">Type PIN 9921 for Manager</span></div>';
-    return; // Don't add fake Manager — real staff will load from Firebase
+      + '⏳ Loading staff...<br><span style="font-size:11px">Type PIN 9921 for Manager access</span></div>';
+    // If staff still empty after 2 seconds, force re-seed
+    setTimeout(function() {
+      var s2 = DB.get('staff') || [];
+      if (!s2.filter(function(s){return s&&s.name&&s.pin;}).length) {
+        // Force seed — clear Firebase block and re-seed
+        window._blockPullUntil = 0;
+        localStorage.removeItem('staff');
+        (function forceReseed() {
+          var seeded = [
+            {id:"7wxwd4jy",name:"Charne",role:"manager",pin:"9921",payType:"daily",rate:350,clockedIn:false,shifts:[]},
+            {id:"szrmgrw0",name:"Tania",role:"manager",pin:"1987",payType:"weekly",rate:500,clockedIn:false,shifts:[]},
+            {id:"9b70xobf",name:"Mike",role:"supervisor",pin:"1234",payType:"weekly",rate:500,clockedIn:false,shifts:[]},
+            {id:"tvox4dgz",name:"Jordan",role:"cashier",pin:"6420",payType:"hourly",rate:27,clockedIn:false,shifts:[]},
+            {id:"zujngnhz",name:"Trainee",role:"cashier",pin:"1234",payType:"hourly",rate:27,clockedIn:false,shifts:[]}
+          ];
+          DB.set('staff', seeded);
+          window._blockPullUntil = Date.now() + 120000;
+          clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null;
+          jjPush(false);
+          setTimeout(function(){ jjPush(true); }, 3000);
+          renderPinScreen();
+        })();
+      }
+    }, 2000);
+    return;
   }
 
   var COLORS = ['#1f7a6e','#2563eb','#16a34a','#d97706','#b65c5e','#7c3aed','#db2777','#0891b2'];
@@ -12423,9 +12474,12 @@ function clearBCFile() {
   });
 
   DB.set('staff', seeded);
-  // Push to Firebase
-  clearTimeout(JJ.timer);
-  JJ.timer = setTimeout(function(){ jjPush(true); }, 1000);
+  // Push to Firebase immediately — double push to make sure it lands
+  window._blockPullUntil = Date.now() + 120000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 3000);
+  renderPinScreen && renderPinScreen();
   console.log('BizPOS: Staff seeded', seeded.length, 'members');
 })();
 
