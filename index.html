@@ -2997,21 +2997,20 @@ function commitStocktake() {
     }
   });
   DB.set('products', products);
-  // Block auto-pull for 3 minutes to prevent Firebase overwriting the stocktake counts
-  window._blockPullUntil = Date.now() + 180000;
-  // Push immediately — cancel any pending debounce timer first
+  // Block auto-pull for 45 seconds — enough for push to land, short enough laptop can pull soon
+  window._blockPullUntil = Date.now() + 45000;
+  // Push immediately
   if (typeof jjPush === 'function') {
     clearTimeout(JJ.timer);
     JJ.pushing = false;
     JJ.timer = null;
-    // Push now, and on success extend block to ensure it lands before pull can fire
     jjPush(false);
-    // Belt-and-braces: push again after 5 seconds in case first attempt failed
+    // Belt-and-braces: push again after 5s in case first attempt failed
     setTimeout(function() {
       if (typeof jjPush === 'function') jjPush(true);
     }, 5000);
-    // Release pull block after 3 minutes
-    setTimeout(function() { window._blockPullUntil = 0; }, 180000);
+    // Release pull block after 45 seconds
+    setTimeout(function() { window._blockPullUntil = 0; }, 45000);
   }
   showToast('Stocktake saved! Pushing to cloud...', 'success', 3000);
 
@@ -8288,16 +8287,20 @@ function jjWrite(remote) {
         remArr.forEach(function(ri) {
           var existIdx = mergedIds.findIndex(function(li){ return li.id === ri.id; });
           if (existIdx === -1) {
-            mergedIds.push(ri); // new item from remote
+            mergedIds.push(ri); // new item from remote — always add
           } else {
-            // Keep whichever was updated more recently
-            var remDate = ri.updatedAt || ri.date || ri.createdAt || 0;
-            var locDate = mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
+            // stocktakeReports use committedAt as canonical date
+            var remDate = ri.committedAt || ri.updatedAt || ri.date || ri.createdAt || 0;
+            var locDate = mergedIds[existIdx].committedAt || mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
             if (new Date(remDate) > new Date(locDate)) {
-              mergedIds[existIdx] = ri; // remote is newer
+              mergedIds[existIdx] = ri;
             }
           }
         });
+        // Keep stocktakeReports sorted newest first
+        if (k === 'stocktakeReports') {
+          mergedIds.sort(function(a,b){ return new Date(b.committedAt||b.date||0)-new Date(a.committedAt||a.date||0); });
+        }
         localStorage.setItem(k, JSON.stringify(mergedIds));
         return;
       }
