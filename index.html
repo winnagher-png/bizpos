@@ -8242,31 +8242,44 @@ function jjWrite(remote) {
       }
 
       if (k === 'products') {
-        // Block during active stocktake
+        // Block during active stocktake — don't overwrite counts in progress
         if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
 
         var remProds = remote[k] || [];
         var locProds = local || [];
 
         if (!locProds.length && remProds.length) {
-          // Local is empty — safe to use remote
           localStorage.setItem('products', JSON.stringify(remProds));
           return;
         }
 
-        // Smart merge per-product: local qty wins (protected by pull block during stocktake)
+        // Remote timestamp vs local last-push timestamp
+        // If remote is newer than our last push, remote qty wins (another device updated it)
+        // If local is newer (we just pushed), local qty wins
+        var remoteAt = remote._at ? new Date(remote._at).getTime() : 0;
+        var localLastPush = window._lastSuccessfulPushAt || 0;
+        var remoteIsNewer = remoteAt > localLastPush;
+
         var result = remProds.map(function(rp) {
           var lp = locProds.find(function(x){ return x.id === rp.id; });
-          if (!lp) return rp; // new product from remote
-          // Use remote as base (has latest price/name/category)
+          if (!lp) return rp; // new product, take from remote
+
+          // Use remote as base (latest name/price/category)
           var merged = JSON.parse(JSON.stringify(rp));
-          // Local qty always wins — it reflects stocktake or manual edits done on this device
-          merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
-          merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+
+          if (remoteIsNewer) {
+            // Remote device pushed more recently — trust remote qty completely
+            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : 0;
+            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
+          } else {
+            // We pushed more recently — keep our local qty
+            merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
+            merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+          }
           return merged;
         });
 
-        // Keep local products not in remote (newly added)
+        // Keep local products not in remote (newly added on this device)
         locProds.forEach(function(lp) {
           if (!result.find(function(rp){ return rp.id === lp.id; })) {
             result.push(lp);
@@ -8352,6 +8365,7 @@ function jjPush(silent) {
     JJ.lastPushAt = Date.now();
     JJ.connected  = r && r.ok;
     if (r && r.ok) {
+      window._lastSuccessfulPushAt = Date.now(); // track when WE last pushed successfully
       updateSyncIndicator('ok', 'Saved ' + new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}));
       setTimeout(function(){ updateSyncIndicator('ok','Sync on'); }, 3000);
       // Refresh UI with merged data
