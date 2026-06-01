@@ -12028,12 +12028,15 @@ function openReceivePO(id) {
     + '<div style="font-size:13px;color:var(--text3);margin-bottom:16px">' + (po.poNumber||'PO') + ' · ' + (po.supplierName||'') + '</div>'
     + (isConsignment ? '<div style="background:var(--blue-bg);border:1px solid var(--blue);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:var(--blue);font-weight:700">🤝 Consignment stock — track sales separately</div>' : '')
     + itemRows
-    + '<div class="form-group" style="margin-top:14px"><label class="form-label">Receive into</label>'
-    + '<div style="display:flex;gap:6px">'
-    + '<button id="recv-shop-btn" style="flex:1;padding:10px;border-radius:8px;font-size:12px;font-weight:700;border:2px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer">🏪 Shop floor</button>'
-    + '<button id="recv-wh-btn" style="flex:1;padding:10px;border-radius:8px;font-size:12px;font-weight:700;border:2px solid var(--border);background:transparent;color:var(--text);cursor:pointer">🏭 Warehouse</button>'
-    + '</div></div>'
-    + '<input type="hidden" id="recv-loc" value="shop">'
+    + '<div style="background:var(--accent-bg);border:2px solid var(--accent);border-radius:12px;padding:14px;margin-top:14px">'
+    + '<div style="font-size:12px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">📍 Where is this delivery going?</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    + '<button id="recv-shop-btn" onclick="setRecvLoc(\'shop\')" style="padding:14px 10px;border-radius:10px;font-size:20px;font-weight:800;border:2px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer">🏪<br><span style="font-size:12px">Shop floor</span></button>'
+    + '<button id="recv-wh-btn" onclick="setRecvLoc(\'warehouse\')" style="padding:14px 10px;border-radius:10px;font-size:20px;font-weight:800;border:2px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer">🏭<br><span style="font-size:12px">Warehouse</span></button>'
+    + '</div>'
+    + '<div id="recv-loc-warning" style="font-size:11px;color:var(--red);font-weight:700;margin-top:8px">⚠ Tap to select where stock is being received</div>'
+    + '</div>'
+    + '<input type="hidden" id="recv-loc" value="">'
     + '<div class="form-group"><label class="form-label">Notes (optional)</label><input id="recv-notes" type="text" placeholder="e.g. 2 boxes damaged"></div>'
     + '<div style="display:flex;gap:8px;margin-top:8px">'
     + '<button id="recv-cancel-btn" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
@@ -12062,15 +12065,30 @@ function setRecvLoc(loc) {
   document.getElementById('recv-loc').value = loc;
   var shopBtn = document.getElementById('recv-shop-btn');
   var whBtn   = document.getElementById('recv-wh-btn');
-  if (shopBtn) { shopBtn.style.background = loc==='shop'?'var(--accent)':'transparent'; shopBtn.style.color = loc==='shop'?'#fff':'var(--text)'; shopBtn.style.borderColor = loc==='shop'?'var(--accent)':'var(--border)'; }
-  if (whBtn)   { whBtn.style.background   = loc==='warehouse'?'var(--accent)':'transparent'; whBtn.style.color = loc==='warehouse'?'#fff':'var(--text)'; whBtn.style.borderColor = loc==='warehouse'?'var(--accent)':'var(--border)'; }
+  var warn    = document.getElementById('recv-loc-warning');
+  if (shopBtn) {
+    shopBtn.style.background   = loc==='shop' ? 'var(--accent)' : 'var(--bg3)';
+    shopBtn.style.color        = loc==='shop' ? '#fff' : 'var(--text)';
+    shopBtn.style.borderColor  = loc==='shop' ? 'var(--accent)' : 'var(--border)';
+  }
+  if (whBtn) {
+    whBtn.style.background     = loc==='warehouse' ? 'var(--accent)' : 'var(--bg3)';
+    whBtn.style.color          = loc==='warehouse' ? '#fff' : 'var(--text)';
+    whBtn.style.borderColor    = loc==='warehouse' ? 'var(--accent)' : 'var(--border)';
+  }
+  if (warn) warn.style.display = 'none';
 }
 
 function confirmPOReceipt(id, po, modal) {
+  var loc = document.getElementById('recv-loc').value;
+  if (!loc) {
+    var warn = document.getElementById('recv-loc-warning');
+    if (warn) { warn.style.display = 'block'; warn.textContent = '⚠ Select shop floor or warehouse before confirming'; }
+    showToast('Please select where stock is being received', 'error');
+    return;
+  }
   // Pull fresh stock first so we're adding to current quantities
   window._blockPullUntil = 0;
-
-  var loc    = document.getElementById('recv-loc').value || 'shop';
   var notes  = document.getElementById('recv-notes').value.trim();
   var isConsignment = po.payStatus === 'consignment' || po.stockStatus === 'consignment';
 
