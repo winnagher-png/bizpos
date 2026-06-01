@@ -5004,52 +5004,44 @@ function _doVoidSale(id, reason) {
 // ============================================================
 
 function renderCashierStaffView() {
-  // Cashiers see: clock in/out for themselves + any clocked-in co-worker
   var el = document.getElementById('staff-list');
   var allStaff = DB.get('staff') || [];
-
-  // Myself
   var me = allStaff.find(function(s){ return s.id === currentUser.id; });
-  // Co-workers currently clocked in (or any cashier-level staff on shift)
   var coworkers = allStaff.filter(function(s){
     return s.id !== currentUser.id && (s.clockedIn || s.role === 'cashier' || s.role === 'sales');
   });
-
-  // Stats
   document.getElementById('staff-count').textContent = allStaff.length;
   document.getElementById('staff-clocked').textContent = allStaff.filter(function(s){ return s.clockedIn; }).length;
-
-  var html = '<div style="background:var(--accent-bg);border:1px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px">'
-    + '<div style="font-size:12px;font-weight:800;color:var(--accent);margin-bottom:10px">MY SHIFT</div>';
-
+  var h = '';
+  h += '<div style="background:var(--accent-bg);border:1px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px">';
+  h += '<div style="font-size:12px;font-weight:800;color:var(--accent);margin-bottom:10px">MY SHIFT</div>';
   if (me) {
-    html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
-      + '<div class="avatar-circle" style="background:' + avatarColor(me.name) + ';width:44px;height:44px">' + initials(me.name) + '</div>'
-      + '<div style="flex:1"><div class="bold">' + me.name + '</div>'
-      + '<div class="text-xs text-muted">' + (me.clockedIn ? '🟢 Clocked in' : '⚪ Not clocked in') + '</div></div>'
-      + '<button onclick="toggleClock('' + me.id + '');renderStaff()" class="btn ' + (me.clockedIn ? 'btn-danger' : 'btn-success') + '">'
-      + (me.clockedIn ? 'Clock out' : 'Clock in') + '</button>'
-      + '</div>';
+    h += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">';
+    h += '<div class="avatar-circle" style="background:' + avatarColor(me.name) + ';width:44px;height:44px">' + initials(me.name) + '</div>';
+    h += '<div style="flex:1"><div class="bold">' + me.name + '</div>';
+    h += '<div class="text-xs text-muted">' + (me.clockedIn ? String.fromCharCode(55356,57122) + ' Clocked in' : String.fromCharCode(9898) + ' Not clocked in') + '</div></div>';
+    var meClockBtn = me.clockedIn ? 'btn-danger' : 'btn-success';
+    var meClockTxt = me.clockedIn ? 'Clock out' : 'Clock in';
+    h += '<button onclick="toggleClock("' + "'" + me.id + "'" + '");renderStaff()" class="btn ' + meClockBtn + '">' + meClockTxt + '</button>';
+    h += '</div>';
   }
-  html += '</div>';
-
-  // Co-workers section — only show if I am clocked in
+  h += '</div>';
   if (me && me.clockedIn && coworkers.length) {
-    html += '<div style="font-size:12px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:8px">SHIFT CO-WORKERS</div>';
+    h += '<div style="font-size:12px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:8px">SHIFT CO-WORKERS</div>';
     coworkers.forEach(function(s) {
-      html += '<div style="display:flex;align-items:center;gap:10px;background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px">'
-        + '<div class="avatar-circle" style="background:' + avatarColor(s.name) + ';width:38px;height:38px;font-size:13px">' + initials(s.name) + '</div>'
-        + '<div style="flex:1"><div style="font-size:13px;font-weight:700">' + s.name + '</div>'
-        + '<div class="text-xs text-muted">' + (s.clockedIn ? '🟢 Clocked in' : '⚪ Not clocked in') + '</div></div>'
-        + '<button onclick="toggleClock('' + s.id + '');renderStaff()" class="btn btn-sm ' + (s.clockedIn ? 'btn-danger' : 'btn-success') + '">'
-        + (s.clockedIn ? 'Clock out' : 'Clock in') + '</button>'
-        + '</div>';
+      var cBtn = s.clockedIn ? 'btn-danger' : 'btn-success';
+      var cTxt = s.clockedIn ? 'Clock out' : 'Clock in';
+      h += '<div style="display:flex;align-items:center;gap:10px;background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px">';
+      h += '<div class="avatar-circle" style="background:' + avatarColor(s.name) + ';width:38px;height:38px;font-size:13px">' + initials(s.name) + '</div>';
+      h += '<div style="flex:1"><div style="font-size:13px;font-weight:700">' + s.name + '</div>';
+      h += '<div class="text-xs text-muted">' + (s.clockedIn ? String.fromCharCode(55356,57122) + ' Clocked in' : String.fromCharCode(9898) + ' Not clocked in') + '</div></div>';
+      h += '<button onclick="toggleClock("' + "'" + s.id + "'" + '");renderStaff()" class="btn btn-sm ' + cBtn + '">' + cTxt + '</button>';
+      h += '</div>';
     });
   } else if (me && !me.clockedIn) {
-    html += '<div style="background:var(--bg3);border-radius:10px;padding:12px;text-align:center;font-size:12px;color:var(--text3)">Clock yourself in first to manage co-workers on shift</div>';
+    h += '<div style="background:var(--bg3);border-radius:10px;padding:12px;text-align:center;font-size:12px;color:var(--text3)">Clock yourself in first to manage co-workers on shift</div>';
   }
-
-  el.innerHTML = html;
+  el.innerHTML = h;
 }
 
 function renderStaff() {
