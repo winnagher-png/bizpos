@@ -3696,6 +3696,7 @@ function openPODetail(id) {
   document.getElementById('po-delete-btn').onclick = function(){
     if (confirm('Delete this PO permanently?')) {
       var all = DB.get('purchaseOrders').filter(function(p){ return p.id !== id; });
+      var ts=[]; try{ts=JSON.parse(localStorage.getItem('_deletedPOs')||'[]');}catch(e){} if(!ts.includes(id))ts.push(id); if(ts.length>500)ts=ts.slice(-500); localStorage.setItem('_deletedPOs',JSON.stringify(ts));
       DB.set('purchaseOrders', all);
       // Block pull and push immediately so delete survives the next sync
       window._blockPullUntil = Date.now() + 60000;
@@ -8380,6 +8381,7 @@ function jjCollect() {
   ['emailSettings','bizSettings','stocktakeSession'].forEach(function(k){
     try { var raw = localStorage.getItem(k); if (raw) d[k] = JSON.parse(raw); } catch(e) {}
   });
+  try { d._deletedPOs = JSON.parse(localStorage.getItem('_deletedPOs')||'[]'); } catch(e2) { d._deletedPOs = []; }
   return d;
 }
 
@@ -8540,21 +8542,51 @@ function jjWrite(remote) {
       if (mergeByIdKeys.indexOf(k) > -1 && Array.isArray(remote[k])) {
         var remArr = remote[k] || [];
         var locArr = local || [];
-        var mergedIds = locArr.slice();
+
+        // Load tombstones — deleted IDs that must never come back
+        var tombstones = [];
+        try { tombstones = JSON.parse(localStorage.getItem('_deletedPOs') || '[]'); } catch(e) {}
+
+        // Merge tombstones from remote if present
+        if (remote._deletedPOs && Array.isArray(remote._deletedPOs)) {
+          remote._deletedPOs.forEach(function(id) {
+            if (!tombstones.includes(id)) tombstones.push(id);
+          });
+          localStorage.setItem('_deletedPOs', JSON.stringify(tombstones));
+        }
+
+        var mergedIds = locArr.filter(function(li) {
+          return k !== 'purchaseOrders' || !tombstones.includes(li.id);
+        });
+
         remArr.forEach(function(ri) {
+          // Skip if this item was deleted on this device
+          if (k === 'purchaseOrders' && tombstones.includes(ri.id)) return;
+
           var existIdx = mergedIds.findIndex(function(li){ return li.id === ri.id; });
           if (existIdx === -1) {
-            mergedIds.push(ri); // new item from remote — always add
+            mergedIds.push(ri); // new item from remote
           } else {
-            // stocktakeReports use committedAt as canonical date
             var remDate = ri.committedAt || ri.updatedAt || ri.date || ri.createdAt || 0;
             var locDate = mergedIds[existIdx].committedAt || mergedIds[existIdx].updatedAt || mergedIds[existIdx].date || mergedIds[existIdx].createdAt || 0;
             if (new Date(remDate) > new Date(locDate)) {
-              mergedIds[existIdx] = ri;
+              mergedIds[existIdx] = ri; // remote is newer — use it
+            }
+            // Special rule for POs: higher-progress status always wins regardless of date
+            // (received > paid > confirmed > pending > cancelled)
+            if (k === 'purchaseOrders') {
+              var statusRank = {cancelled:0, pending:1, confirmed:2, received:3, partial:3, paid:4};
+              var remRank = statusRank[ri.status] || 0;
+              var locRank = statusRank[mergedIds[existIdx].status] || 0;
+              if (remRank > locRank) mergedIds[existIdx].status = ri.status;
+              if (ri.stockStatus === 'received') mergedIds[existIdx].stockStatus = 'received';
+              if (ri.paidAt) mergedIds[existIdx].paidAt = ri.paidAt;
+              if (ri.receivedAt) mergedIds[existIdx].receivedAt = ri.receivedAt;
             }
           }
         });
-        // Keep stocktakeReports sorted newest first
+
+        // Sort stocktakeReports newest first
         if (k === 'stocktakeReports') {
           mergedIds.sort(function(a,b){ return new Date(b.committedAt||b.date||0)-new Date(a.committedAt||a.date||0); });
         }
@@ -11042,6 +11074,7 @@ function setPOStockStatus(id, status) {
   var po  = pos.find(function(p){ return p.id === id; });
   if (!po) return;
   po.stockStatus = status;
+  po.updatedAt = new Date().toISOString();
   DB.set('purchaseOrders', pos);
   renderPO();
   openPODetail(id);
@@ -11053,6 +11086,7 @@ function updatePO(id, status) {
   var po  = pos.find(function(p){ return p.id === id; });
   if (!po) return;
   po.status = status;
+  po.updatedAt = new Date().toISOString();
   if (status === 'confirmed') {
     // Status change only — stock is added via the Receive Stock (GRV) flow, NOT here
     showToast('Order confirmed ✓ — use 📦 Receive stock to add items to inventory', 'success', 4000);
