@@ -3608,7 +3608,10 @@ function openPODetail(id) {
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
   h += '<button id="po-edit-btn" style="padding:10px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:10px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer">✏️ Edit PO</button>';
   if (po.status === 'pending') {
-    h += '<button id="po-confirm-btn" style="padding:10px;background:var(--green);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Confirm & receive</button>';
+    h += '<button id="po-confirm-btn" style="padding:10px;background:var(--blue);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">✓ Confirm order</button>';
+    h += '</div>';
+    h += '<div style="margin-bottom:8px;background:var(--amber-bg);border:1px solid var(--amber);border-radius:10px;padding:8px 12px;font-size:11px;color:#92400e">';
+    h += '⚠ <strong>To add stock to inventory, use the green 📦 Receive stock button below.</strong> Confirming the order does not add stock.';
     h += '</div>';
     h += '<div style="margin-bottom:8px">';
     h += '<button id="po-cancel-btn" style="width:100%;padding:10px;background:var(--red-bg);border:1px solid var(--red);border-radius:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer">Cancel order</button>';
@@ -10835,21 +10838,15 @@ function updatePO(id, status) {
   if (!po) return;
   po.status = status;
   if (status === 'confirmed') {
-    // Receive stock into products
-    var products = DB.get('products') || [];
-    var loc = po.stockLocation || 'warehouse';
-    (po.items || []).forEach(function(item) {
-      var p = products.find(function(x){ return x.id === item.productId || x.name === item.productName; });
-      if (p) {
-        if (loc === 'shop') p.qty = (p.qty||0) + item.qty;
-        else p.qtyWh = (p.qtyWh||0) + item.qty;
-      }
-    });
-    DB.set('products', products);
-    po.stockStatus = 'received';
-    showToast('Order confirmed — stock received into ' + loc, 'success');
+    // Status change only — stock is added via the Receive Stock (GRV) flow, NOT here
+    showToast('Order confirmed ✓ — use 📦 Receive stock to add items to inventory', 'success', 4000);
   }
   DB.set('purchaseOrders', pos);
+  // Push immediately
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   renderPO();
   renderInventory();
   openPODetail(id);
