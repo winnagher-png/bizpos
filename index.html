@@ -5081,28 +5081,16 @@ function renderStaff() {
 }
 
 function toggleClock(id) {
-  const staff = DB.get('staff');
-  const s = staff.find(x=>x.id===id);
+  var staff = DB.get('staff');
+  var s = staff.find(function(x){ return x.id===id; });
   if (!s) return;
   if (!s.shifts) s.shifts = [];
 
   if (s.clockedIn) {
-    // ── CLOCK OUT ──
-    var clockOutTime = new Date().toISOString();
-    var last = s.shifts[s.shifts.length-1];
-    if (last && !last.out) last.out = clockOutTime;
-    s.clockedIn   = false;
-    s.clockedInAt = null;
-    DB.set('staff', staff);
-    renderStaff();
-
-    // Show wage + commission summary
-    if (last && last.out) {
-      showClockOutSummary(s, last.in, last.out);
-    }
-
+    // Show shift entry popup — staff confirm hours + wages before clocking out
+    showClockOutEntry(s, staff);
   } else {
-    // ── CLOCK IN ──
+    // Clock in — record start, mark on shift
     s.shifts.push({ in: new Date().toISOString(), out: null });
     s.clockedIn   = true;
     s.clockedInAt = new Date().toISOString();
@@ -5112,88 +5100,189 @@ function toggleClock(id) {
   }
 }
 
-function showClockOutSummary(s, shiftIn, shiftOut) {
-  var hours      = (new Date(shiftOut) - new Date(shiftIn)) / 3600000;
-  var shiftWages = calcShiftWages(s, shiftIn, shiftOut);
-  var commission = calcCommission(s.id);
-  var todayWages = calcWages(s, 'today');
-  var payType    = s.payType || 'hourly';
-  var rateLabel  = {hourly:'R'+s.rate+'/hr', daily:'R'+s.rate+'/day', weekly:'R'+s.rate+'/week', monthly:'R'+s.rate+'/month'}[payType]||'R'+s.rate;
+function closeClockOutModal() { var el = document.querySelector('.modal-overlay[style*="z-index:2000"]'); if(el) el.remove(); }
 
-  // Get today's sales for this staff member
-  var todaySalesArr = DB.get('sales').filter(function(sale){
-    return !sale.voided && sale.staffId === s.id && localDateStr(sale.date) === localDateStr();
+function showClockOutEntry(s, staff) {
+  // Pre-fill times: clock-in time → now
+  var clockInTime = s.clockedInAt ? new Date(s.clockedInAt) : new Date();
+  var now = new Date();
+  var toTime = function(d){ return d.toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false}); };
+
+  var payType = s.payType || 'hourly';
+  var rate = s.rate || 0;
+  var rateLabel = {hourly:'R'+rate+'/hr',daily:'R'+rate+'/day',weekly:'R'+rate+'/week',monthly:'R'+rate+'/month'}[payType]||'R'+rate;
+
+  // Commission: today's sales
+  var todaySales = (DB.get('sales')||[]).filter(function(sale){
+    return !sale.voided && sale.staffId===s.id && localDateStr(sale.date)===localDateStr();
   });
-  var todaySalesTotal = todaySalesArr.reduce(function(a,sale){ return a+sale.total; }, 0);
-
-  var commTarget = s.commission && s.commission.target ? s.commission.target : 4000;
-  var commRate   = s.commission && s.commission.rate   ? s.commission.rate   : 10;
-  var totalPay   = shiftWages + commission;
+  var todaySalesTotal = todaySales.reduce(function(a,sale){ return a+sale.total; },0);
+  var commTarget = s.commission&&s.commission.target ? s.commission.target : 4000;
+  var commRate   = s.commission&&s.commission.rate   ? s.commission.rate   : 10;
+  var commEnabled = s.commission&&s.commission.enabled;
+  var commEarned = commEnabled ? Math.round(Math.max(0, todaySalesTotal-commTarget) * commRate/100) : 0;
 
   var modal = document.createElement('div');
   modal.className = 'modal-overlay';
   modal.style.cssText = 'display:flex;z-index:2000';
 
-  var commHtml = '';
-  if (s.commission && s.commission.enabled) {
-    var over = Math.max(0, todaySalesTotal - commTarget);
-    commHtml = '<div style="background:var(--green-bg);border:1.5px solid var(--green);border-radius:12px;padding:14px;margin:10px 0">'
-      + '<div style="font-size:12px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Commission</div>'
-      + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Today&#39;s sales</span><span style="font-weight:700">'+fmt(todaySalesTotal)+'</span></div>'
-      + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Target</span><span>'+fmt(commTarget)+'</span></div>'
-      + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Over target</span><span style="color:var(--green)">'+fmt(over)+'</span></div>'
-      + '<div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid var(--border)"><span style="font-size:13px;font-weight:700">Commission ('+commRate+'%)</span><span style="font-size:16px;font-weight:800;color:var(--green)">'+fmt(commission)+'</span></div>'
-      + '</div>';
-  }
-
-  modal.innerHTML = '<div style="background:#fff;border-radius:20px;padding:24px;max-width:340px;width:90%;margin:auto;box-shadow:0 8px 40px rgba(0,0,0,.2)">'
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:20px;padding:22px;max-width:360px;width:92%;margin:auto">'
     + '<div style="text-align:center;margin-bottom:16px">'
-    + '<div style="font-size:40px;margin-bottom:6px">👋</div>'
-    + '<div style="font-size:18px;font-weight:800;color:var(--text)">Good shift, '+s.name.split(' ')[0]+'!</div>'
+    + '<div style="font-size:36px;margin-bottom:4px">👋</div>'
+    + '<div style="font-size:17px;font-weight:800">Clock out — ' + s.name.split(' ')[0] + '</div>'
+    + '<div style="font-size:12px;color:var(--text3);margin-top:2px">Confirm your shift times and wages</div>'
     + '</div>'
 
-    + '<div style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:10px">'
-    + '<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Shift summary</div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Clock in</span><span style="font-weight:600">'+new Date(shiftIn).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})+'</span></div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Clock out</span><span style="font-weight:600">'+new Date(shiftOut).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})+'</span></div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Hours worked</span><span style="font-weight:600">'+(payType==='hourly'?roundToHalf(hours)+'h (from '+hours.toFixed(1)+'h)':hours.toFixed(1)+'h')+'</span></div>'
-    + (payType==='daily'?'<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Shift type</span><span style="font-weight:700;color:var(--accent)">'+(hours>=5?'Full day':'Half day')+'</span></div>':'')
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Pay rate</span><span>'+rateLabel+'</span></div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;color:var(--text2)">Sales today</span><span style="color:var(--blue)">'+fmt(todaySalesTotal)+' ('+todaySalesArr.length+' txns)</span></div>'
+    + '<div style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:12px">'
+    + '<div style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:10px">Shift times</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    + '<div><label style="font-size:11px;color:var(--text3);font-weight:600">Started</label>'
+    + '<input type="time" id="cout-start" value="' + toTime(clockInTime) + '" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-weight:700;background:var(--bg);color:var(--text)"></div>'
+    + '<div><label style="font-size:11px;color:var(--text3);font-weight:600">Finished</label>'
+    + '<input type="time" id="cout-end" value="' + toTime(now) + '" oninput="calcClockOutWage()" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-weight:700;background:var(--bg);color:var(--text)"></div>'
     + '</div>'
-
-    + commHtml
-
-    + '<div style="background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:16px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center">'
-    + '<div><div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.4px">This shift pay</div>'
-    + '<div style="font-size:11px;color:var(--text3)">Wages + commission</div></div>'
-    + '<div style="font-size:28px;font-weight:800;color:var(--accent)">'+fmt(totalPay)+'</div>'
+    + '<div style="margin-top:8px;display:flex;justify-content:space-between;font-size:12px;color:var(--text3)">'
+    + '<span>Pay rate: <strong>' + rateLabel + '</strong></span>'
+    + '<span id="cout-hours-lbl" style="color:var(--accent);font-weight:700"></span>'
     + '</div></div>'
 
-    + '<button id="clockout-close-btn" style="width:100%;padding:14px;background:var(--accent);border:none;border-radius:12px;color:#fff;font-size:15px;font-weight:700;cursor:pointer">Done</button>'
-    + '</div>';
+    + '<div style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:12px">'
+    + '<div style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:10px">Wages for this shift</div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+    + '<span style="font-size:13px;color:var(--text2)">Shift wage</span>'
+    + '<input type="number" id="cout-wage" step="0.01" min="0" style="width:100px;padding:6px 8px;border:1.5px solid var(--accent);border-radius:8px;font-size:14px;font-weight:700;text-align:right;background:var(--bg);color:var(--text)" placeholder="0.00">'
+    + '</div>'
+    + (commEnabled ? '<div style="display:flex;justify-content:space-between;align-items:center">'
+      + '<div><span style="font-size:13px;color:var(--text2)">Commission</span>'
+      + '<div style="font-size:10px;color:var(--text3)">Sales: ' + fmt(todaySalesTotal) + ' · ' + commRate + '% over R' + commTarget + '</div></div>'
+      + '<input type="number" id="cout-comm" step="0.01" min="0" value="' + commEarned + '" style="width:100px;padding:6px 8px;border:1.5px solid var(--green);border-radius:8px;font-size:14px;font-weight:700;text-align:right;background:var(--bg);color:var(--text)">'
+      + '</div>' : '<input type="hidden" id="cout-comm" value="0">')
+    + '</div>'
+
+    + '<div style="background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:12px;padding:12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">'
+    + '<div style="font-size:13px;font-weight:700;color:var(--accent)">Total to pay</div>'
+    + '<div id="cout-total" style="font-size:24px;font-weight:800;color:var(--accent)">—</div>'
+    + '</div>'
+
+    + '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">This will be logged as a till cash expense against today&#39;s cashup.</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    + '<button onclick="closeClockOutModal()" style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '<button id="cout-commit-btn" onclick="commitClockOut()" style="padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">✓ Commit &amp; clock out</button>'
+    + '</div></div>';
 
   document.body.appendChild(modal);
-  var closeBtn = document.getElementById('clockout-close-btn');
-  if (closeBtn) closeBtn.onclick = function(){ modal.remove(); };
 
-  // Log daily wage record
-  var wageRecords = JSON.parse(localStorage.getItem('wageRecords')||'[]');
-  var billedHours = payType === 'hourly' ? roundToHalf(hours) : hours;
-  wageRecords.push({
-    id: uid(), date: localDateStr(), staffId: s.id, staffName: s.name,
-    shiftIn: shiftIn, shiftOut: shiftOut,
-    hours: billedHours, rawHours: hours, payType: payType,
-    wages: shiftWages, commission: commission, totalPay: totalPay,
-    salesTotal: todaySalesTotal, salesCount: todaySalesArr.length
-  });
-  localStorage.setItem('wageRecords', JSON.stringify(wageRecords));
-  // Push to Firebase via wageRecords key
-  clearTimeout(JJ.timer);
-  JJ.timer = setTimeout(function(){ jjPush(true); }, 800);
+  // Trigger initial wage calc
+  setTimeout(calcClockOutWage, 50); // after DOM renders
 }
 
+function calcClockOutWage() {
+  var staffId = (document.getElementById('cout-staffid')||{}).value||'';
+  var payType = (document.getElementById('cout-paytype')||{}).value||'hourly';
+  var rate    = parseFloat((document.getElementById('cout-rate')||{}).value||0);
+  var startVal = (document.getElementById('cout-start')||{}).value || '';
+  var endVal   = (document.getElementById('cout-end')||{}).value || '';
+  if (!startVal || !endVal) return;
+
+  var [sh, sm] = startVal.split(':').map(Number);
+  var [eh, em] = endVal.split(':').map(Number);
+  var hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+  if (hours < 0) hours += 24; // overnight shift
+
+  var wage = 0;
+  if (payType === 'hourly') {
+    var billed = Math.round(hours * 2) / 2; // round to nearest 0.5h
+    wage = billed * rate;
+    var lbl = document.getElementById('cout-hours-lbl');
+    if (lbl) lbl.textContent = billed + 'h (' + hours.toFixed(2) + 'h actual)';
+  } else if (payType === 'daily') {
+    wage = hours >= 5 ? rate : rate / 2;
+    var lbl2 = document.getElementById('cout-hours-lbl');
+    if (lbl2) lbl2.textContent = hours.toFixed(1) + 'h · ' + (hours>=5?'Full day':'Half day');
+  } else {
+    wage = rate;
+    var lbl3 = document.getElementById('cout-hours-lbl');
+    if (lbl3) lbl3.textContent = hours.toFixed(1) + 'h worked';
+  }
+
+  var wageEl = document.getElementById('cout-wage');
+  if (wageEl) wageEl.value = wage.toFixed(2);
+
+  var commEl = document.getElementById('cout-comm');
+  var comm = commEl ? parseFloat(commEl.value||0) : 0;
+  var totalEl = document.getElementById('cout-total');
+  if (totalEl) totalEl.textContent = fmt(wage + comm);
+}
+
+function commitClockOut() {
+  var staffId = (document.getElementById('cout-staffid')||{}).value||'';
+  var startVal = (document.getElementById('cout-start')||{}).value || '';
+  var endVal   = (document.getElementById('cout-end')||{}).value || '';
+  var wageVal  = parseFloat((document.getElementById('cout-wage')||{}).value||0);
+  var commVal  = parseFloat((document.getElementById('cout-comm')||{}).value||0);
+  var total    = wageVal + commVal;
+
+  if (!startVal || !endVal) { showToast('Please enter start and end time', 'error'); return; }
+  if (total <= 0) { showToast('Please enter wages to commit', 'error'); return; }
+
+  var staff = DB.get('staff');
+  var s = staff.find(function(x){ return x.id===staffId; });
+  if (!s) return;
+
+  // Build ISO times for today
+  var today = localDateStr();
+  var shiftInISO  = today + 'T' + startVal + ':00';
+  var shiftOutISO = today + 'T' + endVal   + ':00';
+
+  // Update shifts
+  if (!s.shifts) s.shifts = [];
+  var last = s.shifts[s.shifts.length-1];
+  if (last && !last.out) {
+    last.in  = shiftInISO;
+    last.out = shiftOutISO;
+    last.wage = wageVal;
+    last.commission = commVal;
+    last.totalPay = total;
+  } else {
+    s.shifts.push({ in: shiftInISO, out: shiftOutISO, wage: wageVal, commission: commVal, totalPay: total });
+  }
+  s.clockedIn   = false;
+  s.clockedInAt = null;
+  DB.set('staff', staff);
+
+  // Log as till cash expense
+  var exps = DB.get('expenses') || [];
+  var desc = s.name + ' wages' + (commVal > 0 ? ' + commission' : '') + ' — ' + startVal + ' to ' + endVal;
+  exps.push({
+    id: uid(),
+    date: today,
+    desc: desc,
+    amount: total,
+    category: 'wages',
+    payMethod: 'cash',
+    status: 'paid',
+    notes: 'Shift: ' + startVal + '–' + endVal + ' | Wage: ' + fmt(wageVal) + (commVal>0?' | Commission: '+fmt(commVal):''),
+    staffId: staffId,
+    staffName: s.name,
+    shiftDate: today
+  });
+  DB.set('expenses', exps);
+
+  // Remove modal
+  var overlay = document.querySelector('.modal-overlay[style*="z-index:2000"]');
+  if (overlay) overlay.remove();
+
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
+
+  renderStaff();
+  showToast(s.name + ' clocked out · ' + fmt(total) + ' logged ✓', 'success', 4000);
+}
+
+
+function calcWages
 function calcWages(s, period) {
   if (!s || !s.rate || !s.shifts) return 0;
   var payType = s.payType || 'hourly';
@@ -5423,30 +5512,14 @@ function openStaffProfile(id) {
       <div class="stat-tile"><div class="stat-label">Hours</div><div class="stat-value">${totalHrs.toFixed(1)}</div></div>
     </div>
 
-    ${s.rate?`<div class="wage-panel">
-      <div class="section-title" style="color:var(--amber);margin-bottom:8px">💰 Wages (${s.payType==='daily'?'R'+s.rate+'/day':s.payType==='weekly'?'R'+s.rate+'/week':s.payType==='monthly'?'R'+s.rate+'/month':'R'+s.rate+'/hr'})</div>
-      <div class="stats-row-3">
-        <div><div class="stat-label">Today</div><div class="bold">${fmt(calcWages(s,'today'))}</div></div>
-        <div><div class="stat-label">This week</div><div class="bold">${fmt(weekWages)}</div></div>
-        <div><div class="stat-label">This month</div><div class="bold">${fmt(monthWages)}</div></div>
-      </div>
-      ${s.commission&&s.commission.enabled?`<div style="margin-top:8px;padding:8px;background:var(--green-bg);border-radius:8px;font-size:12px">
-        <span style="color:var(--green);font-weight:700">Commission: </span>
-        Target R${s.commission.target||4000} · Rate ${s.commission.rate||10}% · Today: ${fmt(calcCommission(s.id))}
-      </div>`:''}
+    ${s.rate?`<div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:8px">
+      <div class="text-xs text-muted" style="margin-bottom:4px">PAY RATE</div>
+      <div class="bold amber">${s.payType==='daily'?'R'+s.rate+'/day':s.payType==='weekly'?'R'+s.rate+'/week':s.payType==='monthly'?'R'+s.rate+'/month':'R'+s.rate+'/hr'}</div>
+      ${s.commission&&s.commission.enabled?`<div style="margin-top:6px;font-size:12px;color:var(--green)">Commission: ${s.commission.rate||10}% over R${s.commission.target||4000}</div>`:''}
     </div>`:''}
 
-    <div class="section-title">Shift log</div>
-    <div style="max-height:180px;overflow-y:auto">
-      ${(s.shifts||[]).length ? [...(s.shifts||[])].reverse().slice(0,10).map((sh,shIdx)=>`
-        <div class="shift-row" style="align-items:center">
-          <div style="flex:1"><div class="text-xs text-muted">${fmtDate(sh.in)}</div><div class="text-sm">${new Date(sh.in).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} → ${sh.out?new Date(sh.out).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}):'Active'}</div></div>
-          <div style="text-align:right;margin-right:8px">
-            <div class="text-sm">${sh.out?((new Date(sh.out)-new Date(sh.in))/3600000).toFixed(1)+'h':'—'}</div>
-            ${s.rate&&sh.out?`<div class="text-xs amber">${fmt(calcShiftWages(s,sh.in,sh.out))}</div>`:''}
-          </div>
-          <button onclick="deleteShift('${s.id}',${(s.shifts||[]).length-1-shIdx})" style="padding:3px 7px;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;font-size:10px;font-weight:700;color:var(--red);cursor:pointer">✕</button>
-        </div>`).join('') : '<div class="text-sm text-muted">No shifts logged</div>'}
+    <div class="section-title">Recent shifts</div>
+    <div style="max-height:160px;overflow-y:auto" id="shift-log-inner">
     </div>
 
     <div class="flex-between gap-8" style="margin-top:16px">
@@ -5455,9 +5528,27 @@ function openStaffProfile(id) {
         ${s.clockedIn?'Clock out':'Clock in'}
       </button>
     </div>
-    <button class="btn btn-secondary btn-sm" style="margin-top:8px;width:100%" onclick="openWageRecords('${s.id}')">💰 View & edit wage records</button>
+
     <button class="btn btn-danger btn-sm" style="margin-top:8px;width:100%" onclick="deleteStaff('${s.id}')">Remove staff member</button>`;
   openModal('modal-staff-profile');
+  // Populate shift log (done outside template literal to avoid backtick complexity)
+  var shiftEl = document.getElementById('shift-log-inner');
+  if (shiftEl) {
+    var completedShifts = (s.shifts||[]).filter(function(sh){ return sh.out; }).reverse().slice(0,8);
+    if (!completedShifts.length) {
+      shiftEl.innerHTML = '<div class="text-sm text-muted" style="padding:8px 0">No completed shifts yet</div>';
+    } else {
+      shiftEl.innerHTML = completedShifts.map(function(sh){
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">'
+          + '<div><div class="text-xs text-muted">' + fmtDate(sh.in) + '</div>'
+          + '<div class="text-sm">' + sh.in.slice(11,16) + ' → ' + sh.out.slice(11,16) + '</div></div>'
+          + '<div style="text-align:right">'
+          + (sh.totalPay ? '<div class="text-sm amber">' + fmt(sh.totalPay) + '</div>' : '')
+          + (sh.commission>0 ? '<div class="text-xs text-muted">incl. comm ' + fmt(sh.commission) + '</div>' : '')
+          + '</div></div>';
+      }).join('');
+    }
+  }
   } catch(err) {
     alert('Staff profile error: ' + err.message);
     console.error('openStaffProfile error:', err);
