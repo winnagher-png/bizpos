@@ -2710,6 +2710,25 @@ function saveWriteoff() {
   const wo = DB.get('writeoffs');
   wo.unshift({ id: uid(), productId: pid, productName: p.name, qty, reason, notes, value: qty*p.cost, date: new Date().toISOString(), staffId: currentUser?.id, staffName: currentUser?.name });
   DB.set('writeoffs', wo);
+
+  // Auto-log as indirect business expense — stock loss (no cash payment, book entry only)
+  var lossValue = qty * (p.cost || 0);
+  if (lossValue > 0) {
+    var exps = DB.get('expenses') || [];
+    exps.push({
+      id: uid(),
+      date: new Date().toISOString().slice(0,10),
+      desc: 'Stock loss (write-off): ' + p.name + ' x' + qty + ' — ' + reason,
+      amount: lossValue,
+      category: 'Stock loss',
+      payMethod: 'write_off',
+      status: 'paid',
+      notes: (notes ? notes + ' | ' : '') + 'Indirect expense: cost of goods written off. No cash paid.',
+      writeoffId: wo[0].id
+    });
+    DB.set('expenses', exps);
+  }
+
   // Push to Firebase immediately
   window._blockPullUntil = Date.now() + 60000;
   clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
@@ -5424,6 +5443,7 @@ function catInfo(cat) {
   if (cat.toLowerCase().includes('rent') || cat.toLowerCase().includes('util') || cat.toLowerCase().includes('electr')) return PCD_CATS['Rent & Utilities'];
   if (cat.toLowerCase().includes('stock') || cat.toLowerCase().includes('purchase') || cat.toLowerCase().includes('po')) return PCD_CATS['Stock purchase'];
   if (cat.toLowerCase().includes('till') || cat.toLowerCase().includes('float')) return PCD_CATS['Till expense'];
+  if (cat.toLowerCase().includes('stock loss') || cat.toLowerCase().includes('write')) return PCD_CATS['Stock purchase'];
   if (cat.toLowerCase().includes('equip') || cat.toLowerCase().includes('maint') || cat.toLowerCase().includes('trink')) return PCD_CATS['Equipment'];
   return PCD_CATS[cat] || PCD_CATS['Other'];
 }
@@ -12119,30 +12139,33 @@ function confirmPOReceipt(id, po, modal) {
     });
     DB.set('grvRecords', grvs);
 
-    // Auto-create expense record for the stock purchase if payment method is set
-    // Only create if PO has a payment method and total value > 0
-    var poPayMethod = po.payment || '';
-    var expPayMethod = '';
-    if (poPayMethod.toLowerCase().includes('cash')) expPayMethod = 'Cash Sales';
-    else if (poPayMethod.toLowerCase().includes('eft')) expPayMethod = 'eft';
-    else if (poPayMethod.toLowerCase().includes('card')) expPayMethod = 'card';
-
-    if (expPayMethod && totalValue > 0 && !isConsignment) {
+    // Auto-log stock purchase expense on every GRV (all payment methods — card, EFT, cash, account)
+    if (totalValue > 0 && !isConsignment) {
       var exps = DB.get('expenses') || [];
-      var itemNames = receivedItems.map(function(i){ return i.productName + ' x' + i.qty; }).join(', ');
-      exps.push({
-        id: uid(),
-        date: new Date().toISOString().slice(0,10),
-        desc: 'Stock purchase — ' + (po.supplierName||'') + ' (' + (po.poNumber||grvNum) + ')',
-        amount: totalValue,
-        category: 'Stock purchase',
-        payMethod: expPayMethod,
-        status: 'paid',
-        notes: 'Auto-created from PO receipt. Items: ' + itemNames.slice(0,200),
-        linkedPOId: id,
-        linkedGRV: grvNum
-      });
-      DB.set('expenses', exps);
+      // Deduplicate: don't add if already logged for this PO
+      var alreadyLogged = exps.some(function(e){ return e.linkedPOId === id && e.category === 'Stock purchase'; });
+      if (!alreadyLogged) {
+        var poPayMethod = po.payment || po.payStatus || '';
+        var expPayMethod = 'eft'; // default — most stock purchases are EFT/card
+        if (poPayMethod.toLowerCase().includes('cash')) expPayMethod = 'cash';
+        else if (poPayMethod.toLowerCase().includes('petty')) expPayMethod = 'petty_cash';
+        else if (poPayMethod.toLowerCase().includes('card')) expPayMethod = 'card';
+        else if (poPayMethod.toLowerCase().includes('account')) expPayMethod = 'account';
+        var itemNames = receivedItems.map(function(i){ return i.productName + ' x' + i.qty; }).join(', ');
+        exps.push({
+          id: uid(),
+          date: new Date().toISOString().slice(0,10),
+          desc: 'Stock purchase — ' + (po.supplierName||'') + ' (' + (po.poNumber||grvNum) + ')',
+          amount: totalValue,
+          category: 'Stock purchase',
+          payMethod: expPayMethod,
+          status: poPayMethod ? 'paid' : 'pending',
+          notes: 'Auto-logged on stock receipt. Items: ' + itemNames.slice(0,200),
+          linkedPOId: id,
+          linkedGRV: grvNum
+        });
+        DB.set('expenses', exps);
+      }
     }
     var pos = DB.get('purchaseOrders') || [];
     var poIdx = pos.findIndex(function(p){ return p.id === id; });
@@ -12231,19 +12254,32 @@ function markPOPaid(id) {
     // Log to expenses (except consignment — pay as sold)
     if (payMethod !== 'consignment') {
       var expenses = DB.get('expenses') || [];
-      expenses.push({
-        id: uid(),
-        date: new Date().toISOString().slice(0,10),
-        desc: 'Stock purchase: ' + (po.supplierName||'') + ' (' + (po.poNumber||'PO') + ')',
-        amount: amount,
-        category: 'Stock purchase',
-        payMethod: payMethod,
-        status: 'paid',
-        notes: notes || po.poNumber,
-        poId: id
-      });
+      // Check if a stock purchase expense already exists for this PO (auto-created on GRV)
+      var existingIdx = expenses.findIndex(function(e){ return (e.linkedPOId === id || e.poId === id) && e.category === 'Stock purchase'; });
+      if (existingIdx > -1) {
+        // Update existing expense with confirmed payment method and amount
+        expenses[existingIdx].payMethod = payMethod;
+        expenses[existingIdx].amount    = amount;
+        expenses[existingIdx].status    = 'paid';
+        expenses[existingIdx].notes     = notes || po.poNumber || expenses[existingIdx].notes;
+        expenses[existingIdx].paidAt    = new Date().toISOString();
+      } else {
+        // No existing expense — create new one
+        expenses.push({
+          id: uid(),
+          date: new Date().toISOString().slice(0,10),
+          desc: 'Stock purchase: ' + (po.supplierName||'') + ' (' + (po.poNumber||'PO') + ')',
+          amount: amount,
+          category: 'Stock purchase',
+          payMethod: payMethod,
+          status: 'paid',
+          notes: notes || po.poNumber,
+          linkedPOId: id,
+          poId: id
+        });
+      }
       DB.set('expenses', expenses);
-      showToast('PO paid — logged to expenses', 'success');
+      showToast('PO paid — expense record updated ✓', 'success');
     } else {
       showToast('Consignment — will track as stock sells', 'success');
     }
