@@ -1563,9 +1563,13 @@ table.report-table .neg{color:var(--red)}
       <div class="modal-title">Stock take</div>
       <button class="close-btn" onclick="closeModal('modal-stocktake')">✕</button>
     </div>
-    <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;gap:3px;margin-bottom:10px">
-      <button id="st-loc-shop" onclick="setSTLocation('shop')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:var(--accent);color:#fff">&#x1F3EA; Shop floor</button>
-      <button id="st-loc-warehouse" onclick="setSTLocation('warehouse')" style="flex:1;padding:8px;border-radius:8px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:transparent;color:var(--text3)">&#x1F3ED; Warehouse</button>
+    <div style="background:var(--accent-bg);border:2px solid var(--accent);border-radius:12px;padding:12px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">&#x1F4CD; Counting location — select before starting</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="st-loc-shop" onclick="setSTLocation('shop')" style="padding:12px 8px;border-radius:10px;font-size:13px;font-weight:800;border:2px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;text-align:center">&#x1F3EA;<br><span style="font-size:11px">Shop floor</span></button>
+        <button id="st-loc-warehouse" onclick="setSTLocation('warehouse')" style="padding:12px 8px;border-radius:10px;font-size:13px;font-weight:800;border:2px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer;text-align:center">&#x1F3ED;<br><span style="font-size:11px">Warehouse</span></button>
+      </div>
+      <div id="st-loc-confirm" style="margin-top:8px;font-size:12px;font-weight:700;color:var(--text3);text-align:center">No location selected</div>
     </div>
     <!-- Summary stats -->
     <div id="stocktake-summary"></div>
@@ -2765,13 +2769,20 @@ function setSTLocation(loc) {
   stLocation = loc;
   var shopBtn = document.getElementById('st-loc-shop');
   var whBtn   = document.getElementById('st-loc-warehouse');
+  var lbl     = document.getElementById('st-loc-confirm');
+  if (lbl) {
+    lbl.textContent = loc === 'warehouse' ? '✓ Counting WAREHOUSE quantities (qtyWh)' : '✓ Counting SHOP FLOOR quantities (qty)';
+    lbl.style.color = loc === 'warehouse' ? 'var(--green)' : 'var(--accent)';
+  }
   if (shopBtn) {
-    shopBtn.style.background = loc === 'shop' ? 'var(--accent)' : 'transparent';
-    shopBtn.style.color      = loc === 'shop' ? '#fff' : 'var(--text3)';
+    shopBtn.style.background  = loc === 'shop' ? 'var(--accent)' : 'var(--bg3)';
+    shopBtn.style.color       = loc === 'shop' ? '#fff' : 'var(--text)';
+    shopBtn.style.borderColor = loc === 'shop' ? 'var(--accent)' : 'var(--border)';
   }
   if (whBtn) {
-    whBtn.style.background = loc === 'warehouse' ? 'var(--accent)' : 'transparent';
-    whBtn.style.color      = loc === 'warehouse' ? '#fff' : 'var(--text3)';
+    whBtn.style.background  = loc === 'warehouse' ? 'var(--accent)' : 'var(--bg3)';
+    whBtn.style.color       = loc === 'warehouse' ? '#fff' : 'var(--text)';
+    whBtn.style.borderColor = loc === 'warehouse' ? 'var(--accent)' : 'var(--border)';
   }
   // Clear counts when switching location — different locations are separate counts
   if (Object.keys(stocktakeCounts).length > 0) {
@@ -2801,6 +2812,7 @@ function startStocktake() {
     if (confirm('Resume previous stock take session from ' + fmtDateTime(saved.date) + '?')) {
       stocktakeCounts = saved.counts;
       stSessionDate = saved.date;
+      if (saved.location) { stLocation = saved.location; setSTLocation(saved.location); }
     } else {
       stocktakeCounts = {};
       stSessionDate = new Date().toISOString();
@@ -2814,6 +2826,18 @@ function startStocktake() {
   stCatFilter = 'all';
   stShowFilter = 'all';
   document.getElementById('st-search').value = '';
+  // Auto-set location if opening from warehouse tab, otherwise reset so staff must choose
+  var activeTab = document.querySelector('.tab-content.active');
+  var isWarehouseTab = activeTab && activeTab.id === 'tab-warehouse';
+  var savedLoc = DB.getObj('stocktakeSession', null);
+  if (savedLoc && savedLoc.location) {
+    // resuming — location already restored above
+  } else if (isWarehouseTab) {
+    stLocation = 'warehouse';
+  } else {
+    stLocation = 'shop'; // default shop but clearly shown
+  }
+  setSTLocation(stLocation);
   renderStocktakeCatFilters();
   renderStocktakeSummary();
   renderStocktakeList();
@@ -2821,7 +2845,7 @@ function startStocktake() {
 }
 
 function saveSTSession() {
-  DB.setObj('stocktakeSession', { counts: stocktakeCounts, date: stSessionDate || new Date().toISOString() });
+  DB.setObj('stocktakeSession', { counts: stocktakeCounts, date: stSessionDate || new Date().toISOString(), location: stLocation });
   document.getElementById('stocktake-autosave-label').textContent = 'Saved ' + new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'});
 }
 
@@ -3063,7 +3087,7 @@ function openVarianceReport() {
     if (stocktakeCounts[p.id] !== undefined) {
       const sysQty = stLocation === 'warehouse' ? (p.qtyWh||0) : (p.qty||0);
       const diff = stocktakeCounts[p.id] - sysQty;
-      variances.push({ name: p.name, sku: p.sku||'', category: p.category, expected: p.qty, counted: stocktakeCounts[p.id], diff, costImpact: diff*(p.cost||0) });
+      variances.push({ name: p.name, sku: p.sku||'', category: p.category, expected: sysQty, counted: stocktakeCounts[p.id], diff, costImpact: diff*(p.cost||0) });
     }
   });
   renderVarianceReportContent(variances, stSessionDate || new Date().toISOString(), false);
