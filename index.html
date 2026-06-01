@@ -6702,6 +6702,33 @@ function emailCashupReport() {
   window.open('mailto:'+to+'?subject='+subject+'&body='+body);
 }
 
+function cashupDayAlerts(cuDate) {
+  if (!cuDate) return '';
+  var allSales = DB.get('sales') || [];
+  var dayVoids = allSales.filter(function(s){ return s.voided && s.voidedOnDate === cuDate; });
+  var allWO = DB.get('writeoffs') || [];
+  var dayWO = allWO.filter(function(w){ return w.writtenOffOnDate === cuDate; });
+  var out = '';
+  if (dayVoids.length) {
+    out += '<div style="margin-top:8px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:8px 10px">'
+      + '<div style="font-size:10px;font-weight:800;color:var(--red);text-transform:uppercase;margin-bottom:4px">🚫 Voided sales (' + dayVoids.length + ')</div>'
+      + dayVoids.map(function(s){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
+        + (s.voidedBy||'—') + ' · ' + fmt(s.total||0) + ' · <em>' + (s.voidReason||'no reason') + '</em>'
+        + '</div>'; }).join('')
+      + '</div>';
+  }
+  if (dayWO.length) {
+    out += '<div style="margin-top:6px;background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 10px">'
+      + '<div style="font-size:10px;font-weight:800;color:#92400e;text-transform:uppercase;margin-bottom:4px">📦 Write-offs (' + dayWO.length + ')</div>'
+      + dayWO.map(function(w){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
+        + (w.staffName||'—') + ' · ' + (w.productName||'') + ' x' + (w.qty||0) + ' (' + (w.reason||'') + ')'
+        + (w.notes ? ' · <em>' + w.notes + '</em>' : '')
+        + '</div>'; }).join('')
+      + '</div>';
+  }
+  return out;
+}
+
 function renderCashupHistory() {
   const cashups = DB.get('cashups')||[];
   const el = document.getElementById('cashup-history');
@@ -6728,32 +6755,7 @@ function renderCashupHistory() {
       </div>
       <div class="text-xs text-muted" style="margin-top:6px">${c.staff||c.staffName||'—'} · ${c.txnCount||0} sales · Total: ${fmt(c.totalSales||0)}</div>
       ${c.note?`<div class="text-xs text-muted" style="margin-top:4px">${c.note}</div>`:''}
-      ${(function(){
-        var cuDate = c.date ? c.date.slice(0,10) : '';
-        var allSales = DB.get('sales') || [];
-        var dayVoids = allSales.filter(function(s){ return s.voided && s.voidedOnDate === cuDate; });
-        var allWO = DB.get('writeoffs') || [];
-        var dayWO = allWO.filter(function(w){ return w.writtenOffOnDate === cuDate; });
-        var html2 = '';
-        if (dayVoids.length) {
-          html2 += '<div style="margin-top:8px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:8px 10px">'
-            + '<div style="font-size:10px;font-weight:800;color:var(--red);text-transform:uppercase;margin-bottom:4px">🚫 Voided sales (' + dayVoids.length + ')</div>'
-            + dayVoids.map(function(s){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
-              + (s.voidedBy||'—') + ' · ' + fmt(s.total) + ' · <em>' + (s.voidReason||'no reason') + '</em>'
-              + '</div>'; }).join('')
-            + '</div>';
-        }
-        if (dayWO.length) {
-          html2 += '<div style="margin-top:6px;background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 10px">'
-            + '<div style="font-size:10px;font-weight:800;color:#92400e;text-transform:uppercase;margin-bottom:4px">📦 Write-offs (' + dayWO.length + ')</div>'
-            + dayWO.map(function(w){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
-              + (w.staffName||'—') + ' · ' + w.productName + ' x' + w.qty + ' (' + w.reason + ')'
-              + (w.notes ? ' · <em>' + w.notes + '</em>' : '')
-              + '</div>'; }).join('')
-            + '</div>';
-        }
-        return html2;
-      })()}
+      ${cashupDayAlerts(c.date ? c.date.slice(0,10) : '')}
       <div style="margin-top:8px;display:flex;gap:6px">
         <button onclick="openEditCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:8px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer">✏️ Edit</button>
         <button onclick="reverseCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">🔄 Reverse</button>
