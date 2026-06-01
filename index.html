@@ -1630,9 +1630,33 @@ table.report-table .neg{color:var(--red)}
 // ============================================================
 const DB = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)) || [] } catch { return [] } },
-  set(key, val) { localStorage.setItem(key, JSON.stringify(val)) },
+  set(key, val) {
+    localStorage.setItem(key, JSON.stringify(val));
+    // Auto-push to Firebase after any data change — debounced 1.5s so rapid sets batch together
+    if (typeof jjPush === 'function' && typeof JJ !== 'undefined') {
+      clearTimeout(JJ._autoTimer);
+      JJ._autoTimer = setTimeout(function() {
+        if (!JJ.pushing) {
+          clearTimeout(JJ.timer); JJ.timer = null;
+          jjPush(true);
+        }
+      }, 1500);
+    }
+  },
   getObj(key, def={}) { try { return JSON.parse(localStorage.getItem(key)) || def } catch { return def } },
-  setObj(key, val) { localStorage.setItem(key, JSON.stringify(val)) }
+  setObj(key, val) {
+    localStorage.setItem(key, JSON.stringify(val));
+    // Also push on setObj for important config keys
+    if (typeof jjPush === 'function' && typeof JJ !== 'undefined') {
+      clearTimeout(JJ._autoTimer);
+      JJ._autoTimer = setTimeout(function() {
+        if (!JJ.pushing) {
+          clearTimeout(JJ.timer); JJ.timer = null;
+          jjPush(true);
+        }
+      }, 1500);
+    }
+  }
 };
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
@@ -5119,6 +5143,7 @@ function toggleClock(id) {
     s.shifts.push({ in: new Date().toISOString(), out: null });
     s.clockedIn   = true;
     s.clockedInAt = new Date().toISOString();
+    s.updatedAt   = new Date().toISOString();
     DB.set('staff', staff);
     renderStaff();
     showToast(s.name + ' clocked in ✓', 'success');
@@ -5273,6 +5298,7 @@ function commitClockOut() {
   }
   s.clockedIn   = false;
   s.clockedInAt = null;
+  s.updatedAt   = new Date().toISOString();
   DB.set('staff', staff);
 
   // Log as till cash expense
@@ -8407,17 +8433,60 @@ function jjWrite(remote) {
         var merged = remoteStaff.map(function(rs) {
           var ls = localStaff.find(function(x){ return x.id === rs.id; });
           if (ls) {
-            // Keep local name/pin/rate if they were recently edited
-            // Use local data as it's more likely to be correct (just saved)
-            rs.name      = ls.name      || rs.name;
-            rs.pin       = ls.pin       || rs.pin;
-            rs.role      = ls.role      || rs.role;
-            rs.payType   = ls.payType   || rs.payType;
-            rs.rate      = ls.rate      !== undefined ? ls.rate : rs.rate;
-            rs.commission= ls.commission|| rs.commission;
-            rs.clockedIn   = ls.clockedIn   || false;
-            rs.clockedInAt = ls.clockedInAt || null;
-            rs.shifts      = ls.shifts      || rs.shifts || [];
+            // Profile fields: use whichever was updated more recently
+            var remUpdated = new Date(rs.updatedAt || rs.clockedInAt || 0).getTime();
+            var locUpdated = new Date(ls.updatedAt || ls.clockedInAt || 0).getTime();
+            var useLocal   = locUpdated >= remUpdated;
+
+            // Static profile fields — local wins if it has values
+            rs.name       = ls.name       || rs.name;
+            rs.pin        = ls.pin        || rs.pin;
+            rs.role       = ls.role       || rs.role;
+            rs.payType    = ls.payType    || rs.payType;
+            rs.rate       = ls.rate       !== undefined ? ls.rate : rs.rate;
+            rs.commission = ls.commission || rs.commission;
+
+            // Clock state — use whichever device acted most recently
+            var remClockAt = rs.clockedInAt ? new Date(rs.clockedInAt).getTime() : 0;
+            var locClockAt = ls.clockedInAt ? new Date(ls.clockedInAt).getTime() : 0;
+            // Also check shifts — most recent out time counts as a clock-out event
+            var lastLocShiftOut = 0;
+            if (ls.shifts && ls.shifts.length) {
+              var lastLs = ls.shifts[ls.shifts.length-1];
+              if (lastLs && lastLs.out) lastLocShiftOut = new Date(lastLs.out).getTime();
+            }
+            var lastRemShiftOut = 0;
+            if (rs.shifts && rs.shifts.length) {
+              var lastRs = rs.shifts[rs.shifts.length-1];
+              if (lastRs && lastRs.out) lastRemShiftOut = new Date(lastRs.out).getTime();
+            }
+
+            if (locClockAt > remClockAt && locClockAt > lastRemShiftOut) {
+              // Local clocked in more recently
+              rs.clockedIn   = ls.clockedIn;
+              rs.clockedInAt = ls.clockedInAt;
+            } else if (lastRemShiftOut > lastLocShiftOut && lastRemShiftOut > locClockAt) {
+              // Remote clocked out more recently
+              rs.clockedIn   = false;
+              rs.clockedInAt = null;
+            } else if (remClockAt > locClockAt) {
+              // Remote clocked in more recently
+              rs.clockedIn   = rs.clockedIn;
+              rs.clockedInAt = rs.clockedInAt;
+            } else {
+              rs.clockedIn   = ls.clockedIn;
+              rs.clockedInAt = ls.clockedInAt;
+            }
+
+            // Merge shifts — combine both arrays, deduplicate by 'in' time
+            var allShifts = (ls.shifts || []).concat(rs.shifts || []);
+            var seenShifts = {};
+            rs.shifts = allShifts.filter(function(sh) {
+              var key = sh.in;
+              if (seenShifts[key]) return false;
+              seenShifts[key] = true;
+              return true;
+            }).sort(function(a,b){ return new Date(a.in)-new Date(b.in); });
           }
           return rs;
         });
