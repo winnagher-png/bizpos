@@ -2712,7 +2712,7 @@ function saveWriteoff() {
   p.qty -= qty;
   DB.set('products', products);
   const wo = DB.get('writeoffs');
-  wo.unshift({ id: uid(), productId: pid, productName: p.name, qty, reason, notes, value: qty*p.cost, date: new Date().toISOString(), staffId: currentUser?.id, staffName: currentUser?.name });
+  wo.unshift({ id: uid(), productId: pid, productName: p.name, qty, reason, notes, value: qty*p.cost, date: new Date().toISOString(), staffId: currentUser?.id, staffName: currentUser?.name, writtenOffOnDate: new Date().toISOString().slice(0,10) });
   DB.set('writeoffs', wo);
 
   // Auto-log as indirect business expense — stock loss (no cash payment, book entry only)
@@ -4940,26 +4940,46 @@ function openSaleDetail(id) {
 }
 
 function voidSale(id) {
-  if (!window._voidConfirmed) {
-    window._voidConfirmed = id;
-    showToast('Tap Void again to confirm — stock will be returned', 'warning', 4000);
-    setTimeout(function(){ window._voidConfirmed = null; }, 5000);
-    return;
-  }
-  if (window._voidConfirmed !== id) {
-    window._voidConfirmed = id;
-    showToast('Tap Void again to confirm', 'warning', 4000);
-    setTimeout(function(){ window._voidConfirmed = null; }, 5000);
-    return;
-  }
-  window._voidConfirmed = null;
+  var sales = DB.get('sales');
+  var s = sales.find(function(x){ return x.id===id; });
+  if (!s || s.voided) return;
 
+  // Show reason prompt — required for all void requests
+  if (!window._voidPrompt || window._voidPrompt !== id) {
+    window._voidPrompt = id;
+    var modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = '<div style="background:var(--bg2);border-radius:16px;padding:20px;width:100%;max-width:360px">'
+      + '<div style="font-size:16px;font-weight:800;margin-bottom:4px">🚫 Void sale</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">This will return all stock to inventory. Reason is required.</div>'
+      + '<input id="void-reason-inp" type="text" placeholder="Reason for void *" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--red);border-radius:10px;font-size:13px;background:var(--bg);color:var(--text);margin-bottom:12px">'
+      + '<div style="display:flex;gap:8px">'
+      + '<button id="void-cancel-btn" style="flex:1;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+      + '<button id="void-confirm-btn" style="flex:1;padding:12px;background:var(--red);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">Void sale</button>'
+      + '</div></div>';
+    document.body.appendChild(modal);
+    document.getElementById('void-reason-inp').focus();
+    document.getElementById('void-cancel-btn').onclick = function(){ modal.remove(); window._voidPrompt = null; };
+    document.getElementById('void-confirm-btn').onclick = function() {
+      var reason = (document.getElementById('void-reason-inp').value || '').trim();
+      if (!reason) { showToast('Please enter a reason', 'error'); return; }
+      modal.remove();
+      window._voidPrompt = null;
+      _doVoidSale(id, reason);
+    };
+    return;
+  }
+}
+
+function _doVoidSale(id, reason) {
   var sales = DB.get('sales');
   var s = sales.find(function(x){ return x.id===id; });
   if (!s || s.voided) return;
   s.voided = true;
   s.voidedAt = new Date().toISOString();
-  s.voidedBy = currentUser ? currentUser.name : 'manager';
+  s.voidedBy = currentUser ? currentUser.name : '—';
+  s.voidReason = reason;
+  s.voidedOnDate = new Date().toISOString().slice(0,10); // for cashup grouping
 
   // Return stock
   var products = DB.get('products');
@@ -4969,15 +4989,69 @@ function voidSale(id) {
   });
   DB.set('sales', sales);
   DB.set('products', products);
+  window._blockPullUntil = Date.now() + 60000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
+  setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-sale-detail');
   renderSales();
   renderInventory();
-  showToast('Sale voided — stock returned', 'success');
+  showToast('Sale voided by ' + (currentUser ? currentUser.name : '—') + ' — stock returned', 'success');
 }
 
 // ============================================================
 // STAFF & HR
 // ============================================================
+
+function renderCashierStaffView() {
+  // Cashiers see: clock in/out for themselves + any clocked-in co-worker
+  var el = document.getElementById('staff-list');
+  var allStaff = DB.get('staff') || [];
+
+  // Myself
+  var me = allStaff.find(function(s){ return s.id === currentUser.id; });
+  // Co-workers currently clocked in (or any cashier-level staff on shift)
+  var coworkers = allStaff.filter(function(s){
+    return s.id !== currentUser.id && (s.clockedIn || s.role === 'cashier' || s.role === 'sales');
+  });
+
+  // Stats
+  document.getElementById('staff-count').textContent = allStaff.length;
+  document.getElementById('staff-clocked').textContent = allStaff.filter(function(s){ return s.clockedIn; }).length;
+
+  var html = '<div style="background:var(--accent-bg);border:1px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:14px">'
+    + '<div style="font-size:12px;font-weight:800;color:var(--accent);margin-bottom:10px">MY SHIFT</div>';
+
+  if (me) {
+    html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
+      + '<div class="avatar-circle" style="background:' + avatarColor(me.name) + ';width:44px;height:44px">' + initials(me.name) + '</div>'
+      + '<div style="flex:1"><div class="bold">' + me.name + '</div>'
+      + '<div class="text-xs text-muted">' + (me.clockedIn ? '🟢 Clocked in' : '⚪ Not clocked in') + '</div></div>'
+      + '<button onclick="toggleClock('' + me.id + '');renderStaff()" class="btn ' + (me.clockedIn ? 'btn-danger' : 'btn-success') + '">'
+      + (me.clockedIn ? 'Clock out' : 'Clock in') + '</button>'
+      + '</div>';
+  }
+  html += '</div>';
+
+  // Co-workers section — only show if I am clocked in
+  if (me && me.clockedIn && coworkers.length) {
+    html += '<div style="font-size:12px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:8px">SHIFT CO-WORKERS</div>';
+    coworkers.forEach(function(s) {
+      html += '<div style="display:flex;align-items:center;gap:10px;background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:6px">'
+        + '<div class="avatar-circle" style="background:' + avatarColor(s.name) + ';width:38px;height:38px;font-size:13px">' + initials(s.name) + '</div>'
+        + '<div style="flex:1"><div style="font-size:13px;font-weight:700">' + s.name + '</div>'
+        + '<div class="text-xs text-muted">' + (s.clockedIn ? '🟢 Clocked in' : '⚪ Not clocked in') + '</div></div>'
+        + '<button onclick="toggleClock('' + s.id + '');renderStaff()" class="btn btn-sm ' + (s.clockedIn ? 'btn-danger' : 'btn-success') + '">'
+        + (s.clockedIn ? 'Clock out' : 'Clock in') + '</button>'
+        + '</div>';
+    });
+  } else if (me && !me.clockedIn) {
+    html += '<div style="background:var(--bg3);border-radius:10px;padding:12px;text-align:center;font-size:12px;color:var(--text3)">Clock yourself in first to manage co-workers on shift</div>';
+  }
+
+  el.innerHTML = html;
+}
+
 function renderStaff() {
   // Cashiers only see their own profile + clock in/out
   if (!isManager() && currentUser) {
@@ -6654,6 +6728,32 @@ function renderCashupHistory() {
       </div>
       <div class="text-xs text-muted" style="margin-top:6px">${c.staff||c.staffName||'—'} · ${c.txnCount||0} sales · Total: ${fmt(c.totalSales||0)}</div>
       ${c.note?`<div class="text-xs text-muted" style="margin-top:4px">${c.note}</div>`:''}
+      ${(function(){
+        var cuDate = c.date ? c.date.slice(0,10) : '';
+        var allSales = DB.get('sales') || [];
+        var dayVoids = allSales.filter(function(s){ return s.voided && s.voidedOnDate === cuDate; });
+        var allWO = DB.get('writeoffs') || [];
+        var dayWO = allWO.filter(function(w){ return w.writtenOffOnDate === cuDate; });
+        var html2 = '';
+        if (dayVoids.length) {
+          html2 += '<div style="margin-top:8px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;padding:8px 10px">'
+            + '<div style="font-size:10px;font-weight:800;color:var(--red);text-transform:uppercase;margin-bottom:4px">🚫 Voided sales (' + dayVoids.length + ')</div>'
+            + dayVoids.map(function(s){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
+              + (s.voidedBy||'—') + ' · ' + fmt(s.total) + ' · <em>' + (s.voidReason||'no reason') + '</em>'
+              + '</div>'; }).join('')
+            + '</div>';
+        }
+        if (dayWO.length) {
+          html2 += '<div style="margin-top:6px;background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:8px 10px">'
+            + '<div style="font-size:10px;font-weight:800;color:#92400e;text-transform:uppercase;margin-bottom:4px">📦 Write-offs (' + dayWO.length + ')</div>'
+            + dayWO.map(function(w){ return '<div style="font-size:11px;color:var(--text2);padding:2px 0">'
+              + (w.staffName||'—') + ' · ' + w.productName + ' x' + w.qty + ' (' + w.reason + ')'
+              + (w.notes ? ' · <em>' + w.notes + '</em>' : '')
+              + '</div>'; }).join('')
+            + '</div>';
+        }
+        return html2;
+      })()}
       <div style="margin-top:8px;display:flex;gap:6px">
         <button onclick="openEditCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--accent-bg);border:1px solid var(--accent);border-radius:8px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer">✏️ Edit</button>
         <button onclick="reverseCashup('${c.id}')" style="flex:1;padding:6px 12px;background:var(--red-bg);border:1px solid var(--red);border-radius:8px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer">🔄 Reverse</button>
@@ -9664,7 +9764,7 @@ function applyPermissions() {
     'menu-cashup':     true,            // all staff can cash up
     'menu-expenses':   isMgr || isSup,
     'menu-staff':      true,
-    'menu-writeoffs':  isMgr || isSup,
+    'menu-writeoffs':  true,            // all staff can write off stock
     'menu-stocktake':  true,            // all staff can stocktake
     'menu-members':    true,
     'menu-suppliers':  isMgr,
@@ -9679,11 +9779,7 @@ function applyPermissions() {
     if (el) el.style.display = menuRules[id] ? '' : 'none';
   });
 
-  // ── Within sales tab ──
-  // Hide void button from cashiers
-  document.querySelectorAll('.void-sale-btn').forEach(function(el) {
-    el.style.display = (isMgr || isSup) ? '' : 'none';
-  });
+  // All roles can void sales (shows in cashup with reason + who did it)
 
   // ── Stock quantities hidden from cashiers ──
   // (handled by canSeeStockCounts())
