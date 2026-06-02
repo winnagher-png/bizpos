@@ -11228,11 +11228,15 @@ function updatePO(id, status) {
   var po  = pos.find(function(p){ return p.id === id; });
   if (!po) return;
 
+  // HARD GUARD: locked POs cannot be changed at all
+  if (po._locked) {
+    showToast('This PO is locked (already received) — no changes allowed', 'error', 4000);
+    return;
+  }
   // HARD GUARD: never allow downgrading or re-processing a completed PO
   var statusRank = {pending:1, confirmed:2, partial:3, received:4, paid:5, cancelled:0};
   var currentRank = statusRank[po.status] || 0;
-  var newRank = statusRank[status] || 0;
-  if (currentRank >= 2 && status === 'confirmed' && currentRank > 1) {
+  if (currentRank >= 2 && status === 'confirmed') {
     showToast('This order is already ' + po.status + ' — cannot re-confirm', 'error', 4000);
     return;
   }
@@ -12487,8 +12491,8 @@ function setRecvLoc(loc) {
 }
 
 function confirmPOReceipt(id, po, modal) {
-  // Block if already fully received — prevent double-receiving
-  if (po.stockStatus === 'received') {
+  // Block if locked or already fully received — prevent double-receiving
+  if (po._locked || po.stockStatus === 'received') {
     showToast('Stock for this PO was already received — cannot receive again', 'error', 5000);
     return;
   }
@@ -14093,5 +14097,33 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   } catch(err) { console.error('May patch error:', err); }
 })();
 </sc` + `ript>
+
+<!-- BIZPOS-PO-LOCK -->
+<script>
+(function lockKnownGoodPOs() {
+  try {
+    var knownGood = ["PO0004", "PO160526-jasonc", "PO22/05/26-DynaDist", "PO17/05/26-PeteGree", "PO17/05/26-DaneHilm", "PO18/05/26-GreeGian", "PO20/05/26-KHDank", "PO22/05/26-Ricardo", "PO25/05/26-Alic", "PO25/05/26-JoshPhat", "PO26/05/26-Stuc", "PO27/05/26-DaneHilm", "PO27/05/26-KHDank", "PO28/05/26-JessOutd", "PO28/05/26-KHDank", "PO29/05/26-DynaDist", "PO22/05/26-ZGGDPrer", "PO30/05/26-BrenSGB"];
+    var pos = JSON.parse(localStorage.getItem('purchaseOrders') || '[]');
+    var changed = false;
+    pos.forEach(function(po) {
+      if (knownGood.indexOf(po.poNumber) > -1) {
+        // Lock these POs — they are confirmed+received, cannot be touched
+        if (po.status !== 'paid') {
+          po.status = 'confirmed';
+        }
+        po.stockStatus  = 'received';
+        po._locked      = true;
+        po._lockedAt    = po._lockedAt || new Date().toISOString();
+        po.updatedAt    = po._lockedAt;
+        changed = true;
+      }
+    });
+    if (changed) {
+      localStorage.setItem('purchaseOrders', JSON.stringify(pos));
+      console.log('PO lock applied to ' + knownGood.length + ' known-good POs');
+    }
+  } catch(e) { console.warn('PO lock error:', e); }
+})();
+</script>
 </body>
 </html>
