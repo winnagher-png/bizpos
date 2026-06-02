@@ -3538,7 +3538,7 @@ function showReorderNotification(productNames) {
 }
 
 function updatePOBadge() {
-  const pending = DB.get('purchaseOrders').filter(p=>p.status==='pending').length;
+  const pending = (DB.get('purchaseOrders')||[]).filter(p=>!p._deleted && p.status==='pending').length;
   const badge = document.getElementById('nav-po');
   const existing = badge.querySelector('.nav-badge');
   if (existing) existing.remove();
@@ -3572,7 +3572,7 @@ function renderPO() {
 
 function openPODetail(id) {
   var pos = DB.get('purchaseOrders');
-  var po  = pos.find(function(p){return p.id===id;});
+  var po  = pos.find(function(p){return p.id===id && !p._deleted;});
   if (!po) return;
 
   var payLabels = {paid:'✅ Paid',unpaid:'❌ Unpaid',on_account:'📒 On account',consignment:'🤝 Consignment',credit:'💳 Credit'};
@@ -3719,10 +3719,10 @@ function openPODetail(id) {
   document.getElementById('po-dl-btn').onclick    = function(){ downloadPO(id); };
   document.getElementById('po-delete-btn').onclick = function(){
     if (confirm('Delete this PO permanently?')) {
-      var all = DB.get('purchaseOrders').filter(function(p){ return p.id !== id; });
-      var ts=[]; try{ts=JSON.parse(localStorage.getItem('_deletedPOs')||'[]');}catch(e){} if(!ts.includes(id))ts.push(id); if(ts.length>500)ts=ts.slice(-500); localStorage.setItem('_deletedPOs',JSON.stringify(ts));
-      DB.set('purchaseOrders', all);
-      // Block pull and push immediately so delete survives the next sync
+      var allPOs2 = DB.get('purchaseOrders');
+      var tgt = allPOs2.find(function(p){ return p.id === id; });
+      if (tgt) { tgt._deleted = true; tgt._deletedAt = new Date().toISOString(); tgt.updatedAt = new Date().toISOString(); }
+      DB.set('purchaseOrders', allPOs2);
       window._blockPullUntil = Date.now() + 60000;
       clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
       jjPush(false);
@@ -8073,8 +8073,7 @@ function updateGRVPOLink(supplierId) {
   var container = document.getElementById('grv-po-link-row');
   var poSel     = document.getElementById('grv-po-link');
   if (!container || !poSel) return;
-  var pos = DB.get('purchaseOrders') || [];
-  var openPOs = pos.filter(function(po) {
+    var pos = (DB.get('purchaseOrders') || []).filter(function(p){ return !p._deleted; }); var openPOs = pos.filter(function(po) {
     return po.supplierId === supplierId && po.stockStatus !== 'received' && po.stockStatus !== 'cancelled';
   });
   if (!supplierId || !openPOs.length) {
@@ -8641,16 +8640,31 @@ function jjWrite(remote) {
             if (new Date(remDate) > new Date(locDate)) {
               mergedIds[existIdx] = ri; // remote is newer — use it
             }
-            // Special rule for POs: higher-progress status always wins regardless of date
-            // (received > paid > confirmed > pending > cancelled)
+            // Special rules for POs
             if (k === 'purchaseOrders') {
-              var statusRank = {cancelled:0, pending:1, confirmed:2, received:3, partial:3, paid:4};
-              var remRank = statusRank[ri.status] || 0;
-              var locRank = statusRank[mergedIds[existIdx].status] || 0;
-              if (remRank > locRank) mergedIds[existIdx].status = ri.status;
-              if (ri.stockStatus === 'received') mergedIds[existIdx].stockStatus = 'received';
-              if (ri.paidAt) mergedIds[existIdx].paidAt = ri.paidAt;
-              if (ri.receivedAt) mergedIds[existIdx].receivedAt = ri.receivedAt;
+              var cur = mergedIds[existIdx];
+              // _deleted flag is permanent — if either side deleted it, it stays deleted
+              if (ri._deleted || cur._deleted) {
+                cur._deleted   = true;
+                cur._deletedAt = ri._deletedAt || cur._deletedAt;
+                cur.updatedAt  = ri._deletedAt || cur._deletedAt;
+              } else {
+                // Status only moves forward, never backwards
+                var statusRank = {cancelled:0, pending:1, confirmed:2, partial:3, received:3, paid:4};
+                var remRank = statusRank[ri.status] || 0;
+                var locRank = statusRank[cur.status] || 0;
+                if (remRank > locRank) {
+                  cur.status = ri.status;
+                }
+                // stockStatus: received always wins
+                if (ri.stockStatus === 'received' || ri.stockStatus === 'partial') {
+                  cur.stockStatus = ri.stockStatus;
+                }
+                // payStatus: paid always wins
+                if (ri.payStatus === 'paid') cur.payStatus = 'paid';
+                if (ri.paidAt)              cur.paidAt    = ri.paidAt;
+                if (ri.receivedAt)          cur.receivedAt = ri.receivedAt;
+              }
             }
           }
         });
