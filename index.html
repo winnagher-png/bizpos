@@ -6874,7 +6874,7 @@ function renderCashupHistory() {
   const cashups = DB.get('cashups')||[];
   const el = document.getElementById('cashup-history');
   if (!cashups.length) { el.innerHTML='<div class="empty"><p>No cash-ups yet</p></div>'; return; }
-  el.innerHTML = [...cashups].reverse().slice(0,20).map(c=>`
+  el.innerHTML = [...cashups].sort(function(a,b){ return b.date > a.date ? 1 : -1; }).map(c=>`
     <div class="card" id="cu-card-${c.id}" style="margin-bottom:8px;border-left:3px solid ${(c.variance||0)>=0?'#16a34a':'#b65c5e'}">
       <div class="flex-between">
         <span class="bold text-sm">${fmtDate(c.date)}</span>
