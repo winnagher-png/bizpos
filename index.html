@@ -3299,6 +3299,10 @@ function openRolling() {
   ['roll-flower-selected','roll-preroll-selected'].forEach(function(id){
     var el = document.getElementById(id); if(el) el.style.display = 'none';
   });
+  var mainSec = document.getElementById('roll-main-section');
+  if (mainSec) mainSec.style.display = 'none';
+  var calcPrev = document.getElementById('roll-calc-preview');
+  if (calcPrev) calcPrev.style.display = 'none';
   setRollMode('prerolls');
   openModal('modal-rolling');
 }
@@ -3337,7 +3341,19 @@ function selectRollFlower(id) {
   document.getElementById('roll-flower-search').value = p.name;
   document.getElementById('roll-flower-results').innerHTML = '';
   var sel = document.getElementById('roll-flower-selected');
-  if (sel) { sel.style.display='block'; sel.innerHTML = '<div style="background:var(--accent-bg);border-radius:8px;padding:8px 10px;font-size:12px"><b>'+p.name+'</b> — <span style="color:var(--accent)">'+p.qty+' units in stock</span></div>'; }
+  if (sel) {
+    sel.style.display = 'block';
+    sel.innerHTML = '<div style="background:var(--accent-bg);border-radius:8px;padding:8px 10px;font-size:12px">'
+      + '<b>' + p.name + '</b> — <span style="color:var(--accent);font-weight:700">' + p.qty + ' in stock</span>'
+      + (p.qtyWh ? ' (shop) + <span style="color:var(--accent);font-weight:700">' + p.qtyWh + '</span> in warehouse' : '')
+      + '</div>';
+  }
+  // Show the rest of the form
+  var main = document.getElementById('roll-main-section');
+  if (main) main.style.display = 'block';
+  // Show available stock note
+  var note = document.getElementById('roll-available-note');
+  if (note) note.textContent = p.qty + ' units available in shop' + (p.qtyWh ? ', ' + p.qtyWh + ' in warehouse' : '');
   updateRollCalc();
 }
 
@@ -3362,24 +3378,35 @@ function selectRollPreroll(id) {
   document.getElementById('roll-preroll-search').value = p.name;
   document.getElementById('roll-preroll-results').innerHTML = '';
   var sel = document.getElementById('roll-preroll-selected');
-  if (sel) { sel.style.display='block'; sel.innerHTML = '<div style="background:var(--accent-bg);border-radius:8px;padding:8px 10px;font-size:12px"><b>'+p.name+'</b> — <span style="color:var(--accent)">'+p.qty+' currently in stock</span></div>'; }
+  var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||0;
+  if (sel) {
+    sel.style.display = 'block';
+    sel.innerHTML = '<div style="background:var(--green-bg);border:1px solid var(--green);border-radius:8px;padding:8px 10px;font-size:12px">'
+      + '<b>' + p.name + '</b><br>'
+      + '<span style="color:var(--text3)">Currently: ' + p.qty + ' in stock</span>'
+      + (actual ? ' → <span style="color:var(--green);font-weight:700">Will become: ' + (p.qty + actual) + '</span>' : '')
+      + '</div>';
+  }
 }
 
 function updateRollCalc() {
   var grams  = parseFloat((document.getElementById('roll-grams-used')||{}).value)||0;
   var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||0;
-  var calcEl = document.getElementById('roll-calc-display');
-  if (!calcEl) return;
-  if (!grams) { calcEl.innerHTML = ''; return; }
-  var expected = grams; // 1g = 1 joint default
-  var display  = actual || expected;
-  calcEl.innerHTML = '<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:13px">'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">Grams used</span><span class="bold">'+grams+'g</span></div>'
-    + '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="text-muted">Expected joints (1g each)</span><span>'+expected+'</span></div>'
-    + (actual ? '<div style="display:flex;justify-content:space-between"><span class="text-muted">Actual count</span><span class="bold accent">'+actual+'</span></div>' : '')
-    + '</div>';
+  var preview = document.getElementById('roll-calc-preview');
+  var linesEl = document.getElementById('roll-calc-lines');
+  if (!linesEl) return;
+  if (!grams) { if (preview) preview.style.display='none'; return; }
+  if (preview) preview.style.display = 'block';
+  var expected = Math.round(grams);
+  var waste = (actual && actual < grams) ? (grams - actual).toFixed(1) : null;
+  linesEl.innerHTML =
+    '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px"><span style="color:#92400e">Source units used</span><span style="font-weight:700">' + grams + '</span></div>'
+    + '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px"><span style="color:#92400e">Expected yield (1:1)</span><span>' + expected + ' joints</span></div>'
+    + (actual ? '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px"><span style="color:#92400e">Actual rolled</span><span style="font-weight:700;color:#1f7a6e">' + actual + ' joints</span></div>' : '')
+    + (waste > 0 ? '<div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#92400e">Wastage</span><span style="color:#b65c5e">' + waste + ' units</span></div>' : '');
+  // Update preroll selected preview if product already chosen
+  if (_rollPrerollProduct) selectRollPreroll(_rollPrerollProduct.id);
 }
-
 function commitRolling() {
   if (!_rollFlowerProduct) { showToast('Select a flower product first', 'error'); return; }
   var grams  = parseFloat((document.getElementById('roll-grams-used')||{}).value)||0;
@@ -3388,7 +3415,8 @@ function commitRolling() {
     if (!confirm('Only '+_rollFlowerProduct.qty+'g in stock but you used '+grams+'g — continue anyway?')) return;
   }
 
-  var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||Math.round(grams);
+  var actual = parseInt((document.getElementById('roll-joints-rolled')||{}).value)||0;
+  if (!actual || actual <= 0) { showToast('Enter how many joints were actually rolled', 'error'); return; }
   var products = DB.get('products');
   var flower = products.find(function(p){ return p.id===_rollFlowerProduct.id; });
   if (!flower) { showToast('Flower product not found', 'error'); return; }
