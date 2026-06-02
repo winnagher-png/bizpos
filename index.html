@@ -8417,6 +8417,15 @@ function jjCollect() {
     try { var raw = localStorage.getItem(k); if (raw) d[k] = JSON.parse(raw); } catch(e) {}
   });
   try { d._deletedPOs = JSON.parse(localStorage.getItem('_deletedPOs')||'[]'); } catch(e2) { d._deletedPOs = []; }
+
+  // SAFETY: Never push if all product quantities are zero (indicates cache wipe)
+  if (Array.isArray(d.products) && d.products.length > 0) {
+    var totalStock = d.products.reduce(function(s,p){ return s+(parseInt(p.qty)||0)+(parseInt(p.qtyWh)||0); },0);
+    if (totalStock === 0) {
+      d._safetyAbort = true;
+      console.warn('SAFETY GUARD: All products at zero — push aborted to protect data');
+    }
+  }
   return d;
 }
 
@@ -8593,6 +8602,16 @@ function jjWrite(remote) {
         // Block during active stocktake — don't overwrite counts in progress
         if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
 
+        // SAFETY: Never accept all-zero product data from Firebase
+        if (Array.isArray(remote[k]) && remote[k].length > 0) {
+          var remoteTotal = remote[k].reduce(function(s,p){ return s+(parseInt(p.qty)||0)+(parseInt(p.qtyWh)||0); }, 0);
+          var localTotal  = Array.isArray(local) ? local.reduce(function(s,p){ return s+(parseInt(p.qty)||0)+(parseInt(p.qtyWh)||0); }, 0) : 0;
+          if (remoteTotal === 0 && localTotal > 0) {
+            console.warn('SAFETY: Rejecting all-zero product data from Firebase — keeping local');
+            return;
+          }
+        }
+
         var remProds = remote[k] || [];
         var locProds = local || [];
 
@@ -8747,6 +8766,12 @@ function jjPush(silent) {
     }
     // Now push the merged local data
     var data = jjCollect();
+    // SAFETY: abort if all-zero products detected
+    if (data._safetyAbort) {
+      JJ.pushing = false;
+      console.warn('Push aborted by safety guard — zero stock detected');
+      return null;
+    }
     return fetch(JJ.url, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
