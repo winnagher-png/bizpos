@@ -7740,23 +7740,8 @@ function savePOEditor(status) {
     const i = pos.findIndex(p=>p.id===existingId);
     if (i>-1) pos[i] = {...pos[i], ...poData};
   } else {
-    // New PO — check if a pending/draft PO already exists for this supplier
-    var openPO = findOpenPOForSupplier(supplierId);
-    if (openPO) {
-      // Merge new items into the existing open PO
-      poData.items.forEach(function(ni) {
-        var exists = openPO.items.find(function(ei){ return ei.productId && ei.productId === ni.productId; });
-        if (exists) {
-          // Update qty if product already listed
-          exists.qty = (parseInt(exists.qty)||0) + (parseInt(ni.qty)||1);
-        } else {
-          openPO.items.push(ni);
-        }
-      });
-      openPO.total = openPO.items.reduce(function(a,i){ return a+(parseInt(i.qty)||1)*(parseFloat(i.unitCost)||0); }, 0);
-      if (poData.notes) openPO.notes = (openPO.notes ? openPO.notes + '; ' : '') + poData.notes;
-      showToast('Items added to existing PO: ' + openPO.poNumber, 'success');
-    } else {
+    // New PO — always create as a separate order, never auto-merge
+    {
       pos.push({id:uid(), ...poData});
     }
   }
