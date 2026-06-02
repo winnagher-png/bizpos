@@ -597,6 +597,7 @@ table.report-table .neg{color:var(--red)}
       </button>
       <div style="display:flex;gap:6px">
         <button class="btn btn-amber btn-sm" onclick="startStocktake()">Stock take</button>
+        <button class="btn btn-sm" style="background:#fef9c3;border:1.5px solid #d97706;color:#92400e;font-weight:700" onclick="openRolling()">🚬 Roll joints</button>
         <button class="btn btn-secondary btn-sm" onclick="reloadInventoryData()" title="Reload stock data">↺ Load stock</button>
       </div>
     </div>
@@ -950,10 +951,7 @@ table.report-table .neg{color:var(--red)}
         <svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" style="width:22px;height:22px"><path d="M12 5v14"/><path d="M5 12l7-7 7 7"/></svg>
         <div style="font-size:12px;font-weight:700;color:var(--green)">Receive GRV</div>
       </button>
-      <button onclick="openRolling()" style="background:#fef9c3;border:2px solid #d97706;border-radius:12px;padding:14px 8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px">
-        <span style="font-size:20px">🚬</span>
-        <div style="font-size:12px;font-weight:700;color:#d97706">Roll Joints</div>
-      </button>
+
     </div>
     <div class="search-wrap" id="wh-search-wrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1844,20 +1842,32 @@ function renderPinScreen() {
   if (!staff.length) {
     try { var r=localStorage.getItem('staff'); if(r){var p=JSON.parse(r);if(Array.isArray(p))staff=p.filter(function(s){return s&&s.name&&s.pin;});} } catch(e){}
   }
-  // Always ensure all hardcoded staff exist (merge: preserve shifts/clockedIn from DB)
+  // Ensure hardcoded staff always exist, strictly by ID — remove any name-duplicates
   HARDCODED.forEach(function(hc) {
-    var existing = staff.find(function(s){ return s.id===hc.id||s.name===hc.name; });
-    if (!existing) { staff.push(hc); }
-    else {
-      // Make sure pin is correct in case DB has stale data
-      existing.pin = hc.pin;
+    var byId   = staff.find(function(s){ return s.id === hc.id; });
+    var byName = staff.find(function(s){ return s.name === hc.name && s.id !== hc.id; });
+    if (byName && !byId) {
+      // Wrong ID for this name — correct the ID so we don't get duplicates
+      byName.id  = hc.id;
+      byName.pin = hc.pin;
+    } else if (!byId) {
+      staff.push(hc);
+    } else {
+      byId.pin = hc.pin; // always keep pin correct
     }
+  });
+  // Remove true duplicates — keep first occurrence of each ID
+  var seenIds = {};
+  staff = staff.filter(function(s) {
+    if (seenIds[s.id]) return false;
+    seenIds[s.id] = true;
+    return true;
   });
   // Sort to hardcoded order
   var order = HARDCODED.map(function(h){return h.id;});
   staff.sort(function(a,b){ var ai=order.indexOf(a.id),bi=order.indexOf(b.id); return (ai<0?99:ai)-(bi<0?99:bi); });
-  // Write back so app has correct staff
-  try { DB.set('staff', staff); } catch(e){}
+  // Write back WITHOUT triggering auto-push (avoid render loop)
+  try { localStorage.setItem('staff', JSON.stringify(staff)); } catch(e){}
 
   var COLORS = ['#1f7a6e','#2563eb','#16a34a','#d97706','#b65c5e','#7c3aed','#db2777','#0891b2'];
   var ROLES = {manager:'Manager',supervisor:'Supervisor',cashier:'Cashier',sales:'Sales'};
@@ -3275,6 +3285,23 @@ function filterPO(f, btn) {
 // ═══════════════════════════════════════════════════════════════
 // ROLL JOINTS FUNCTIONS
 // ═══════════════════════════════════════════════════════════════
+function openRolling() {
+  _rollFlowerProduct  = null;
+  _rollPrerollProduct = null;
+  _rollMode = 'prerolls';
+  // Reset form fields
+  ['roll-flower-search','roll-preroll-search','roll-grams-used','roll-joints-rolled'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.value = '';
+  });
+  ['roll-flower-results','roll-preroll-results','roll-calc-display'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.innerHTML = '';
+  });
+  ['roll-flower-selected','roll-preroll-selected'].forEach(function(id){
+    var el = document.getElementById(id); if(el) el.style.display = 'none';
+  });
+  setRollMode('prerolls');
+  openModal('modal-rolling');
+}
 var _rollFlowerProduct  = null;
 var _rollPrerollProduct = null;
 var _rollMode = 'prerolls';
@@ -3294,7 +3321,8 @@ function searchRollFlower() {
   var res = document.getElementById('roll-flower-results');
   if (!res) return;
   var prods = (DB.get('products')||[]).filter(function(p){
-    return (p.category||'').toLowerCase().includes('flower') || (p.name||'').toLowerCase().includes('flower') || (p.name||'').toLowerCase().includes('bulk');
+    // Show all products — any product can be source for rolling
+    return p.name && p.qty > 0;
   });
   if (q) prods = prods.filter(function(p){ return (p.name||'').toLowerCase().includes(q); });
   res.innerHTML = prods.slice(0,8).map(function(p){
@@ -3318,7 +3346,8 @@ function searchRollPreroll() {
   var res = document.getElementById('roll-preroll-results');
   if (!res) return;
   var prods = (DB.get('products')||[]).filter(function(p){
-    return (p.category||'').toLowerCase().includes('preroll') || (p.name||'').toLowerCase().includes('preroll') || (p.name||'').toLowerCase().includes('pre-roll');
+    // Show all products — any product can be destination
+    return p.name;
   });
   if (q) prods = prods.filter(function(p){ return (p.name||'').toLowerCase().includes(q); });
   res.innerHTML = prods.slice(0,8).map(function(p){
@@ -13557,17 +13586,17 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   <div class="modal-sheet" style="max-height:94vh">
     <div class="modal-handle"></div>
     <div class="modal-title-row">
-      <div class="modal-title">🚬 Roll joints from flower</div>
+      <div class="modal-title">🚬 Roll Joints / Convert Stock</div>
       <button class="close-btn" onclick="closeModal('modal-rolling')">✕</button>
     </div>
 
     <div style="background:#fef9c3;border:1.5px solid #d97706;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#713f12">
-      <strong>How it works:</strong> Select a flower product → declare grams used → count actual joints rolled → select which preroll product to add them to. 1g = 1 preroll by default.
+      <strong>How it works:</strong> Select any flower/bulk product → enter how many units used → enter how many prerolls you got out → select which preroll product to add them to. Stock is transferred between products.
     </div>
 
     <!-- Step 1: Source flower -->
     <div class="form-group">
-      <label class="form-label">1. Select flower to use</label>
+      <label class="form-label">1. Select source product (flower / bulk)</label>
       <input id="roll-flower-search" type="text" placeholder="Search flower product…" oninput="searchRollFlower()">
       <div id="roll-flower-results" style="margin-top:6px;max-height:160px;overflow-y:auto"></div>
       <div id="roll-flower-selected" style="display:none;margin-top:8px"></div>
@@ -13594,7 +13623,7 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       <!-- Prerolls mode -->
       <div id="roll-prerolls-section">
         <div class="form-group">
-          <label class="form-label">3. Grams of flower used</label>
+          <label class="form-label">3. Units / grams taken from source</label>
           <input id="roll-grams-used" type="number" step="0.5" min="0.5" placeholder="e.g. 30" oninput="updateRollCalc()">
           <div id="roll-available-note" style="font-size:12px;color:var(--text3);margin-top:4px"></div>
         </div>
