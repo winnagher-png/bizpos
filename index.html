@@ -7601,19 +7601,9 @@ function openPOEditor(existingId) {
     document.getElementById('poe-num').value = generatePONumber(supText);
     // Check for existing open PO for this supplier (only on new PO, not edit)
     if (!document.getElementById('poe-id').value) {
-      var openPO = findOpenPOForSupplier(supId);
-      if (openPO) {
-        var warn = document.getElementById('poe-supplier-warn');
-        if (warn) {
-          warn.style.display = 'block';
-          warn.innerHTML = '⚠️ An open PO already exists for this supplier (<b>' + openPO.poNumber + '</b>). '
-            + 'New items will be <b>added to that PO</b> when you save — or '
-            + '<a href="#" onclick="event.preventDefault();closeModal(\'modal-po-editor\');openPODetail(\'' + openPO.id + '\')" style="color:var(--accent)">open it here</a>.';
-        }
-      } else {
-        var warn = document.getElementById('poe-supplier-warn');
-        if (warn) warn.style.display = 'none';
-      }
+      // Each PO is always its own order — warning removed
+      var warn2 = document.getElementById('poe-supplier-warn');
+      if (warn2) warn2.style.display = 'none';
     }
   };
 
