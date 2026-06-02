@@ -3532,7 +3532,7 @@ function checkReorderPoints() {
     var shopQty = parseInt(p.qty) || 0;
     var whQty   = parseInt(p.qtyWh) || 0;
     var totalQty = shopQty + whQty;
-    if (totalQty <= p.reorderAt) lowStock.push(p.name);
+    if (p.reorderAt > 0 && totalQty <= p.reorderAt) lowStock.push(p.name);
   });
 
   if (lowStock.length) {
