@@ -3128,6 +3128,17 @@ function openVarianceReport() {
   openModal('modal-variance-report');
 }
 
+function printStocktakeReport() {
+  var el = document.getElementById('variance-report-content');
+  if (!el) return;
+  var content = el.innerHTML;
+  // Strip buttons from the print output
+  var clean = content.replace(/<button[^>]*>.*?<\/button>/gs,'');
+  printReport("Jack & Jill's Adventure Club — Stocktake Report",
+    "Printed " + new Date().toLocaleDateString('en-ZA'),
+    '<div style="font-size:12px;line-height:1.6">' + clean + '</div>');
+}
+
 function openVarianceReportById(id) {
   const reports = DB.get('stocktakeReports') || [];
   const r = reports.find(x=>x.id===id);
@@ -3186,6 +3197,7 @@ function renderVarianceReportContent(variances, date, committed, report) {
     ${!variances.length ? '<div class="empty"><p>No counts entered yet</p></div>' : ''}
 
     ${committed ? `<div style="margin-top:16px">
+      <button onclick="printStocktakeReport()" class="btn btn-secondary btn-full" style="margin-bottom:12px">🖨️ Print / Download Report</button>
       <div class="section-title">Past reports</div>
       ${(DB.get('stocktakeReports')||[]).map(r=>`<div class="card" onclick="openVarianceReportById('${r.id}')">
         <div class="flex-between"><div class="text-sm bold">${fmtDate(r.committedAt)}</div>
@@ -10912,8 +10924,9 @@ function renderCashupReport(el) {
     + '</table></div></div>'
 
     // Export
-    + '<div style="margin-top:12px">'
-    + '<button onclick="exportCashupCSV()" class="btn btn-secondary btn-full">&#x1F4E5; Export CSV</button>'
+    + '<div style="margin-top:12px;display:flex;gap:8px">'
+    + '<button onclick="exportCashupCSV()" class="btn btn-secondary" style="flex:1">&#x1F4E5; Export CSV</button>'
+    + '<button onclick="printCashupReport()" class="btn btn-secondary" style="flex:1">&#x1F5A8; Print Report</button>'
     + '</div>';
 }
 
@@ -10940,6 +10953,39 @@ function exportCashupCSV() {
   showToast('Cashup CSV downloaded', 'success');
 }
 
+function printCashupReport() {
+  var cashups = (DB.get('cashups')||[]).slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);});
+  var totalBanked  = cashups.reduce(function(a,c){return a+(c.toBank||0);},0);
+  var totalSales   = cashups.reduce(function(a,c){return a+(c.totalSales||0);},0);
+  var totalExp     = cashups.reduce(function(a,c){return a+(c.tillExpenses||0);},0);
+  var totalVar     = cashups.reduce(function(a,c){return a+(c.variance||0);},0);
+  var rows = cashups.map(function(c){
+    var vc = (c.variance||0)>=0?'#16a34a':'#dc2626';
+    return '<tr><td>'+fmtDate(c.date)+'</td><td>'+(c.staffName||c.staff||'—')+'</td>'
+      +'<td style="text-align:right">R'+(c.totalSales||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right">R'+(c.counted||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right">R'+((c.cardDeclared||c.cardTotal||0)).toFixed(2)+'</td>'
+      +'<td style="text-align:right">R'+(c.tillExpenses||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right;color:'+vc+'">R'+(c.variance||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right;font-weight:700;color:#16a34a">R'+(c.toBank||0).toFixed(2)+'</td>'
+      +'<td style="text-align:right">R'+(c.pettyCashAfter||0).toFixed(2)+'</td></tr>';
+  }).join('');
+  printReport("Jack & Jill's Adventure Club — Cashup Report",
+    "Generated "+new Date().toLocaleDateString('en-ZA'),
+    '<table style="width:100%;border-collapse:collapse;font-size:11px">'
+    +'<tr style="background:#f3f4f6;font-weight:700"><th style="padding:4px;text-align:left">Date</th><th style="padding:4px;text-align:left">Staff</th>'
+    +'<th style="padding:4px;text-align:right">Sales</th><th style="padding:4px;text-align:right">Cash Counted</th>'
+    +'<th style="padding:4px;text-align:right">Card</th><th style="padding:4px;text-align:right">Expenses</th>'
+    +'<th style="padding:4px;text-align:right">Variance</th><th style="padding:4px;text-align:right">Banked</th>'
+    +'<th style="padding:4px;text-align:right">Petty Cash</th></tr>'
+    +rows
+    +'<tr style="font-weight:700;background:#f3f4f6"><td colspan="2">TOTAL</td>'
+    +'<td style="text-align:right">R'+totalSales.toFixed(2)+'</td><td></td><td></td>'
+    +'<td style="text-align:right">R'+totalExp.toFixed(2)+'</td>'
+    +'<td style="text-align:right;color:'+(totalVar>=0?'#16a34a':'#dc2626')+'">R'+totalVar.toFixed(2)+'</td>'
+    +'<td style="text-align:right;color:#16a34a">R'+totalBanked.toFixed(2)+'</td><td></td></tr>'
+    +'</table>');
+}
 
 // ============================================================
 // QUICK ADD SUPPLIER inline
@@ -14123,6 +14169,150 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
       console.log('PO lock applied to ' + knownGood.length + ' known-good POs');
     }
   } catch(e) { console.warn('PO lock error:', e); }
+})();
+</script>
+<script>// Stock restoration patch - June 2 2026
+(function() {
+  const PATCH_KEY = '_stockRestoreJune2';
+  if (localStorage.getItem(PATCH_KEY)) return;
+  
+  // Stock quantities from June 1 physical stocktake + post-stocktake sales deducted
+  // Name -> {qty (shop), qtyWh (warehouse)}
+  const stockByName = {
+    "100mg Dessert Squares": {qty:3,qtyWh:0},
+    "100mg Fudge": {qty:12,qtyWh:0},
+    "15mg Milkshake - Chocolate": {qty:1,qtyWh:0},
+    "1ml Lifted Disposable Vapes": {qty:1,qtyWh:0},
+    "200mg Rosin Gummies": {qty:5,qtyWh:0},
+    "30mg Coffee Boost": {qty:24,qtyWh:0},
+    "30mg Shots - Boner": {qty:3,qtyWh:0},
+    "30mg Soda - Cherry": {qty:2,qtyWh:0},
+    "30mg Soda - Ginger": {qty:3,qtyWh:0},
+    "30mg Soda - Orange": {qty:1,qtyWh:0},
+    "30mg Soda - Watermelon": {qty:1,qtyWh:0},
+    "30mg Soda- Lemon Lime": {qty:1,qtyWh:0},
+    "40mg Rosin Gummies": {qty:14,qtyWh:0},
+    "50mg Lollipops - Strawberry Kiwi": {qty:19,qtyWh:0},
+    "50mg Milkshake - Strawberry": {qty:2,qtyWh:0},
+    "50mg Rosin Cheeky Chocs": {qty:6,qtyWh:0},
+    "80mg Rosin Gummies": {qty:10,qtyWh:0},
+    "Atomic Jelly ID Flower": {qty:8,qtyWh:0},
+    "Bananas in pajamas GD Prerolls": {qty:8,qtyWh:0},
+    "Biscotti GD Prerolls": {qty:15,qtyWh:0},
+    "Bivvy Bags": {qty:2,qtyWh:0},
+    "Bracelets - Leaf design": {qty:2,qtyWh:0},
+    "Butt Bucket Ashtrays": {qty:4,qtyWh:0},
+    "CBD Jellies 250mg Pk": {qty:1,qtyWh:0},
+    "Ceramic Ashtrays": {qty:3,qtyWh:0},
+    "Choc Chip Cookies 30mg Singles": {qty:2,qtyWh:0},
+    "Choc Chip Cookies 90mg Pk": {qty:3,qtyWh:0},
+    "Dab 1g": {qty:3,qtyWh:0},
+    "Diamonds in the dirt ID Flower": {qty:6,qtyWh:0},
+    "Dipz ID Flower": {qty:8,qtyWh:0},
+    "Doob Tube storage holder": {qty:2,qtyWh:0},
+    "FECO Oil 1ml": {qty:2,qtyWh:0},
+    "Face on Fire ID Flower": {qty:7,qtyWh:0},
+    "Face on fire GH Prerolls": {qty:7,qtyWh:0},
+    "Greendoor Infused Prerolls": {qty:3,qtyWh:0},
+    "Grinders - Metal leaf 5cm": {qty:1,qtyWh:0},
+    "Grinders - Patterned 6cm": {qty:1,qtyWh:0},
+    "Gummy Bears 10mg Singles": {qty:15,qtyWh:0},
+    "Gummy Bears 150mg pack": {qty:1,qtyWh:0},
+    "Heart Stoppers 200mg Pk": {qty:7,qtyWh:0},
+    "Heart Stoppers 400mg Pk": {qty:5,qtyWh:0},
+    "Heart Stoppers 40mg Singles": {qty:2,qtyWh:0},
+    "Hybrid Cured Resin Carts 1ml": {qty:2,qtyWh:0},
+    "Hybrid ID Tube 1.4g Prerolls": {qty:3,qtyWh:0},
+    "Indica Cured Resin Carts 1ml": {qty:2,qtyWh:0},
+    "Indica Distillate Carts 1ml": {qty:6,qtyWh:0},
+    "Indica ID Tube 1.4g Prerolls": {qty:1,qtyWh:0},
+    "Keyrings - Mushrooms": {qty:12,qtyWh:0},
+    "Lemon Orange GD Flower": {qty:7,qtyWh:0},
+    "Lighters - Flint": {qty:15,qtyWh:0},
+    "Lighters- Click": {qty:23,qtyWh:0},
+    "Matchboxes": {qty:11,qtyWh:0},
+    "OG Gummies 150mg Pk": {qty:8,qtyWh:0},
+    "OG Gummies 22.5mg Singles": {qty:2,qtyWh:0},
+    "OG Gummies 330mg Pk": {qty:3,qtyWh:0},
+    "Orange Kush Cake ID Flower": {qty:7,qtyWh:0},
+    "Peanut Brittle 100mg Pk": {qty:1,qtyWh:0},
+    "Peanut Brittle 20mg Singles": {qty:3,qtyWh:0},
+    "Pipe Screens 5's": {qty:2,qtyWh:0},
+    "Rainbow Strips 200mg Pk": {qty:1,qtyWh:0},
+    "Rolling Paper - Hornet King size - Flavoured": {qty:7,qtyWh:0},
+    "Rolling Paper - Lady Hornet - 1 1/4": {qty:3,qtyWh:0},
+    "Rolling Trays": {qty:2,qtyWh:0},
+    "Sativa Cured Resin Carts 1ml": {qty:3,qtyWh:0},
+    "Sativa Distillate Carts 1ml": {qty:3,qtyWh:0},
+    "Sativa ID Tube 1.4g Prerolls": {qty:2,qtyWh:0},
+    "Stash Bags - Camp theme": {qty:2,qtyWh:0},
+    "Stash Bags - Flowers Print": {qty:2,qtyWh:0},
+    "Stash Bags - Striped": {qty:2,qtyWh:0},
+    "Straps / Lanyards": {qty:2,qtyWh:0},
+    "Super Cheese GH Pre-rolls": {qty:3,qtyWh:0},
+    "Swazi Gold 1g Prerolls": {qty:27,qtyWh:0},
+    "Swazi Gold 20G Bankies": {qty:2,qtyWh:0},
+    "Swazi Gold DW Prerolls": {qty:62,qtyWh:0},
+    "Vape 510 Thread Battery pen device": {qty:5,qtyWh:0},
+    "Wacky Worms 150mg Pk": {qty:9,qtyWh:0},
+    "Wacky Worms 300mg Pk": {qty:5,qtyWh:0},
+    "Wacky Worms 30mg Singles": {qty:6,qtyWh:0},
+    "runtz gh flower": {qty:5,qtyWh:0},
+    // Products counted at 0 in stocktake but may be in warehouse or just 0
+    "Outdoor Bulk for Packs/Rolling": {qty:38,qtyWh:76}, // BULK=38 shop, ROLLING=76 also shop but diff product
+    "Gazzurple ID Preroll": {qty:0,qtyWh:0}, // sold out after last count
+    "Violet Cake ID Preroll": {qty:0,qtyWh:0},
+    "Rotten apples ID preroll": {qty:9,qtyWh:0}, // from stocktake variance showed 10, sold 1 after
+    "Mango Dawg ID Flower": {qty:0,qtyWh:0}, // sold 3, was 3
+    "White Runtz ID flower": {qty:0,qtyWh:0},
+    "Persian Pie ID Flower": {qty:3,qtyWh:0},
+  };
+
+  // Also warehouse stock from May 22 warehouse stocktake
+  // From mpgl47uoiu7r (warehouse, 2026-05-22):
+  // Rainbow Strips 200mg Pk: 1 wh, OG Gummies 330mg Pk: 4 wh, Wacky Worms 300mg Pk: 3 wh
+  // OG Gummies 150mg Pk: 10 wh, Orange Kush Cake ID Flower: 20 wh (sold many since May 22), Lemon Orange GD Flower: 25 wh
+  // These warehouse items have had sales since May 22 - too complex, set to 0 for warehouse
+  // (shop floor stocktake on June 1 is authoritative for shop, warehouse needs manual count)
+  
+  const products = JSON.parse(localStorage.getItem('products') || '[]');
+  let updated = 0;
+  
+  products.forEach(p => {
+    const match = stockByName[p.name];
+    if (match !== undefined) {
+      // Handle the two "Outdoor Bulk for Packs/Rolling" products by SKU
+      if (p.name === 'Outdoor Bulk for Packs/Rolling') {
+        if (p.sku === 'OD-FLOW-LG-BULK') { p.qty = 38; p.qtyWh = 0; }
+        else if (p.sku === 'OD-FLOW-LG-ROLLING') { p.qty = 76; p.qtyWh = 0; }
+      } else {
+        p.qty = match.qty;
+        p.qtyWh = match.qtyWh;
+      }
+      updated++;
+    } else {
+      // Not in stocktake = 0 (already 0 from the wipe)
+      // Keep as is (already 0)
+    }
+  });
+  
+  localStorage.setItem('products', JSON.stringify(products));
+  localStorage.setItem(PATCH_KEY, 'done');
+  
+  console.log('[Stock Restore] Updated', updated, 'products from June 1 stocktake');
+  
+  // Push to Firebase immediately
+  if (typeof jjPush === 'function') {
+    setTimeout(jjPush, 500);
+  }
+  
+  // Show notification
+  const toast = document.getElementById('toast');
+  if (toast) {
+    toast.textContent = '✅ Stock restored from June 1 stocktake — ' + updated + ' products updated';
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 5000);
+  }
 })();
 </script>
 </body>
