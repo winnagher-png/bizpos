@@ -5262,6 +5262,9 @@ function showClockOutEntry(s, staff) {
     + '</div>'
 
     + '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">This will be logged as a till cash expense against today&#39;s cashup.</div>'
+    + '<input type="hidden" id="cout-staffid" value="' + s.id + '">'
+    + '<input type="hidden" id="cout-paytype" value="' + (s.payType||'hourly') + '">'
+    + '<input type="hidden" id="cout-rate" value="' + (s.rate||0) + '">'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
     + '<button onclick="closeClockOutModal()" style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
     + '<button id="cout-commit-btn" onclick="commitClockOut()" style="padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">✓ Commit &amp; clock out</button>'
