@@ -1767,29 +1767,26 @@ function emergencyRestoreStaff() {
 // ── PIN SCREEN: reads live from Staff HR tab data ──
 
 function loginSuccess(staffMember) {
-  try {
-    currentUser = staffMember;
-    var ps = document.getElementById('pin-screen');
-    if (ps) ps.classList.add('hidden');
-    try { updateHeaderUser(); } catch(e){}
-    pinBuffer = '';
-    try { updatePinDots(); } catch(e){}
-    var pe = document.getElementById('pin-error');
-    if (pe) pe.textContent = '';
-    selectedStaffForPin = null;
-    try { applyPermissions(); } catch(e){ console.warn('applyPermissions error:', e); }
-    setTimeout(function(){ try { renderPinScreen(); } catch(e){} }, 300);
-    setTimeout(function(){ try { checkClockInReminder(); } catch(e){} }, 800);
-    setTimeout(function(){ try { checkBirthdays(); } catch(e){} }, 2000);
-    if (!window._reminderStarted) {
-      window._reminderStarted = true;
-      try { startReminderScheduler(); } catch(e){}
-    }
-  } catch(e) {
-    console.error('loginSuccess error:', e);
-    // Last resort — just hide pin screen
-    var ps2 = document.getElementById('pin-screen');
-    if (ps2) ps2.classList.add('hidden');
+  // Set user and hide pin screen immediately — nothing can stop this
+  currentUser = staffMember;
+  var ps = document.getElementById('pin-screen');
+  if (ps) ps.classList.add('hidden');
+
+  // Clear pin input
+  var inp = document.getElementById('pin-input');
+  if (inp) inp.value = '';
+
+  // Rest is best-effort — errors here don't block login
+  try { updateHeaderUser(); } catch(e){}
+  try { applyPermissions(); } catch(e){}
+  try { renderSales && renderSales(); } catch(e){}
+  try { renderInventory && renderInventory(); } catch(e){}
+
+  setTimeout(function(){ try { checkClockInReminder(); } catch(e){} }, 1000);
+  setTimeout(function(){ try { checkBirthdays(); } catch(e){} }, 2500);
+  if (!window._reminderStarted) {
+    window._reminderStarted = true;
+    try { startReminderScheduler(); } catch(e){}
   }
 }
 
