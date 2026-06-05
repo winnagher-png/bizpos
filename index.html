@@ -14520,5 +14520,78 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   if (t) { t.textContent = '✅ June 2-4 cashups & petty cash corrected — balance R676.00'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_feb2026expenses_v1';
+  if (localStorage.getItem(PATCH)) return;
+
+  var expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+
+  // Remove any existing Feb 2026 expenses with these IDs to avoid dupes
+  var febIds = expenses.filter(function(e){ return (e.id||'').startsWith('feb26_'); }).map(function(e){return e.id;});
+  expenses = expenses.filter(function(e){ return !(e.id||'').startsWith('feb26_'); });
+
+  var feb = [
+    {id:'feb26_001',date:'2026-02-01',desc:'Wages',amount:530,category:'Salaries',payMethod:'cash',status:'paid',notes:'Feb wages'},
+    {id:'feb26_002',date:'2026-02-02',desc:'Consumables',amount:206,category:'Cleaning',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_003',date:'2026-02-02',desc:'Stock PO-0017 — Jessy',amount:400,category:'Stock purchase',payMethod:'cash',status:'paid',notes:'PO-0017'},
+    {id:'feb26_004',date:'2026-02-02',desc:'Stock PO-0018 — Phat Dank',amount:670,category:'Stock purchase',payMethod:'cash',status:'paid',notes:'PO-0018 (stock R620 + non-stock R50)'},
+    {id:'feb26_005',date:'2026-02-02',desc:'Stock PO-0019 — Zero Gravity',amount:850,category:'Stock purchase',payMethod:'cash',status:'paid',notes:'PO-0019 (stock R800 + non-stock R50)'},
+    {id:'feb26_006',date:'2026-02-03',desc:'Wages',amount:270,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_007',date:'2026-02-03',desc:'Wage bonus — Charne',amount:100,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_008',date:'2026-02-03',desc:'Stock PO-0020 — Dynamic Distribution',amount:1860,category:'Stock purchase',payMethod:'eft',status:'paid',notes:'PO-0020'},
+    {id:'feb26_009',date:'2026-02-04',desc:'Wages — Charne & Ash',amount:540,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_010',date:'2026-02-04',desc:'Wages — Charne, Dad, Tania',amount:800,category:'Salaries',payMethod:'cash',status:'paid',notes:'R200+R400+R200'},
+    {id:'feb26_011',date:'2026-02-05',desc:'Wages — Ash',amount:700,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_012',date:'2026-02-06',desc:'Wages — Ash',amount:645,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_013',date:'2026-02-06',desc:'Stock — Temu order PO184-156471 (incl. shipping)',amount:1506,category:'Stock purchase',payMethod:'card',status:'paid',notes:'Stock R1156 + shipping/non-stock R350'},
+    {id:'feb26_014',date:'2026-02-06',desc:'Electricity — Bruno',amount:300,category:'Utilities',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_015',date:'2026-02-06',desc:'Shop samples — BNI Event',amount:400,category:'Marketing',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_016',date:'2026-02-07',desc:'Wages — Charne & Ash',amount:730,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_017',date:'2026-02-08',desc:'Wages — Ash',amount:120,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_018',date:'2026-02-09',desc:'Wages — Charne & Ash',amount:710,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_019',date:'2026-02-10',desc:'Wages — Charne & Ash',amount:690,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_020',date:'2026-02-11',desc:'Wages — Charne & Ash',amount:2250,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_021',date:'2026-02-12',desc:'Wages — Charne & Ash',amount:818,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_022',date:'2026-02-13',desc:'Wages — Charne & Ash',amount:1060,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_023',date:'2026-02-14',desc:'Wages — Charne & Ash',amount:1181,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_024',date:'2026-02-14',desc:'Valentines marketing',amount:400,category:'Marketing',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_025',date:'2026-02-14',desc:'Wages — Tania & Dad',amount:1000,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_026',date:'2026-02-15',desc:'VW Rim and Tyre — Auto King',amount:2100,category:'Vehicle',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_027',date:'2026-02-15',desc:'Labour & Materials — CJ',amount:1500,category:'Maintenance',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_028',date:'2026-02-16',desc:'Wages — Charne & Ash',amount:900,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_029',date:'2026-02-16',desc:'BNI Meet & Greet + Uber',amount:350,category:'Marketing',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_030',date:'2026-02-16',desc:'Stock — Phat Dank IND',amount:1100,category:'Stock purchase',payMethod:'eft',status:'paid',notes:'Stock R900 + non-stock R200'},
+    {id:'feb26_031',date:'2026-02-16',desc:'Stock — Phat Dank R980',amount:1030,category:'Stock purchase',payMethod:'eft',status:'paid',notes:'Stock R980 + non-stock R50'},
+    {id:'feb26_032',date:'2026-02-16',desc:'J&J Labels — Noelex',amount:179,category:'Office & Admin',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_033',date:'2026-02-17',desc:'Labour & Materials — MB Projects (deck & trailer)',amount:3000,category:'Maintenance',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_034',date:'2026-02-18',desc:'Consumables — Midas',amount:261,category:'Cleaning',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_035',date:'2026-02-18',desc:'Stock — Temu PO184-067135',amount:415,category:'Stock purchase',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_036',date:'2026-02-19',desc:'Consumables — Algoa Plastics',amount:300,category:'Cleaning',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_037',date:'2026-02-19',desc:'Fuel — Astron',amount:200,category:'Transport & Travel',payMethod:'card',status:'paid',notes:''},
+    {id:'feb26_038',date:'2026-02-21',desc:'Wages — Tania & Dad',amount:1000,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_039',date:'2026-02-24',desc:'Shop items / Display organisation — Gelmar',amount:456,category:'Equipment',payMethod:'card',status:'paid',notes:'Loan account — Tania to be paid back'},
+    {id:'feb26_040',date:'2026-02-25',desc:'Wages — Dad & Tania',amount:100,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_041',date:'2026-02-25',desc:'Consumables — Laundry',amount:200,category:'Cleaning',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_042',date:'2026-02-25',desc:'PEP — Jars, mat, specials board, ashtrays',amount:237,category:'Equipment',payMethod:'card',status:'paid',notes:'To be paid back'},
+    {id:'feb26_043',date:'2026-02-26',desc:'Electricity — Bruno',amount:900,category:'Utilities',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_044',date:'2026-02-28',desc:'Rent — Des',amount:1000,category:'Rent',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_045',date:'2026-02-28',desc:'Yoco payments',amount:889,category:'Bank Charges',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_046',date:'2026-02-28',desc:'Loan payback',amount:3000,category:'Loan',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_047',date:'2026-02-28',desc:'Fridge saving',amount:1500,category:'Savings',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_048',date:'2026-02-28',desc:'Business registration',amount:904.44,category:'Office & Admin',payMethod:'eft',status:'paid',notes:''},
+    {id:'feb26_049',date:'2026-02-28',desc:'Wages — Tania & Dad',amount:1000,category:'Salaries',payMethod:'cash',status:'paid',notes:''},
+    {id:'feb26_050',date:'2026-02-28',desc:'Yoco fees',amount:1620.20,category:'Bank Charges',payMethod:'eft',status:'paid',notes:''}
+  ];
+
+  feb.forEach(function(e){ expenses.push(e); });
+  localStorage.setItem('expenses', JSON.stringify(expenses));
+
+  localStorage.setItem(PATCH, 'done');
+  if (typeof jjPush === 'function') setTimeout(jjPush, 500);
+  var t = document.getElementById('toast');
+  if (t) { t.textContent = '✅ 50 February 2026 expenses loaded'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
+})();
+</script>
 </body>
 </html>
