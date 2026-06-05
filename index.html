@@ -6868,144 +6868,73 @@ function saveCashup() {
       // Petty cash
       var petty = getPettyCash();
 
-      var body = '============================================\n';
-      body += "JACK & JILL'S ADVENTURE CLUB — DAILY REPORT\n";
+      var body = '';
       body += '============================================\n';
-      body += dateLabel + '
-';
-      body += 'Staff on shift: ' + (todayCashup.staff||staffNames||'—') + '
-
-';
-
-      body += '--- SALES SUMMARY ---
-';
-      body += 'Total sales:    R' + dayTotal.toFixed(2) + '
-';
-      body += 'Cash sales:     R' + dayCash.toFixed(2) + '
-';
-      body += 'Card sales:     R' + dayCard.toFixed(2) + '
-';
-      body += 'EFT sales:      R' + dayEft.toFixed(2) + '
-';
-      body += 'Transactions:   ' + daySales.length + '
-
-';
-
+      body += "JACK & JILL'S ADVENTURE CLUB \u2014 DAILY REPORT\n";
+      body += '============================================\n';
+      body += dateLabel + '\n';
+      body += 'Staff on shift: ' + (todayCashup.staff||staffNames||'\u2014') + '\n\n';
+      body += '--- SALES SUMMARY ---\n';
+      body += 'Total sales:    R' + dayTotal.toFixed(2) + '\n';
+      body += 'Cash sales:     R' + dayCash.toFixed(2) + '\n';
+      body += 'Card sales:     R' + dayCard.toFixed(2) + '\n';
+      body += 'EFT sales:      R' + dayEft.toFixed(2) + '\n';
+      body += 'Transactions:   ' + daySales.length + '\n\n';
       if (topSellers.length) {
-        body += '--- TOP SELLERS ---
-';
-        topSellers.forEach(function(p,i){ body += (i+1)+'. '+p.name+' — '+p.qty+' units / R'+p.rev.toFixed(2)+'
-'; });
-        body += '
-';
+        body += '--- TOP SELLERS ---\n';
+        topSellers.forEach(function(p,i){ body += (i+1)+'. '+p.name+' \u2014 '+p.qty+' units / R'+p.rev.toFixed(2)+'\n'; });
+        body += '\n';
       }
-
-      body += '--- CASH-UP ---
-';
-      body += 'Cash counted:   R' + (todayCashup.counted||0).toFixed(2) + '
-';
-      body += 'Card declared:  R' + (todayCashup.cardDeclared||0).toFixed(2) + '
-';
-      body += 'EFT declared:   R' + (todayCashup.eftDeclared||0).toFixed(2) + '
-';
-      body += 'Till expenses:  R' + (todayCashup.tillExpenses||0).toFixed(2) + '
-';
-      body += 'Variance:       R' + (todayCashup.variance||0).toFixed(2) + '
-';
-      body += 'Banked:         R' + (todayCashup.toBank||toBank).toFixed(2) + '
-
-';
-
+      body += '--- CASH-UP ---\n';
+      body += 'Cash counted:   R' + (todayCashup.counted||0).toFixed(2) + '\n';
+      body += 'Card declared:  R' + (todayCashup.cardDeclared||0).toFixed(2) + '\n';
+      body += 'EFT declared:   R' + (todayCashup.eftDeclared||0).toFixed(2) + '\n';
+      body += 'Till expenses:  R' + (todayCashup.tillExpenses||0).toFixed(2) + '\n';
+      body += 'Variance:       R' + (todayCashup.variance||0).toFixed(2) + '\n';
+      body += 'Banked:         R' + (todayCashup.toBank||toBank).toFixed(2) + '\n\n';
       if ((todayCashup.cashupExpenses||[]).length) {
-        body += '--- TILL EXPENSES ---
-';
-        (todayCashup.cashupExpenses||[]).forEach(function(e){ body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + '
-'; });
-        body += '
-';
+        body += '--- TILL EXPENSES ---\n';
+        (todayCashup.cashupExpenses||[]).forEach(function(e){ body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + '\n'; });
+        body += '\n';
       }
-
-      body += '--- PETTY CASH ---
-';
-      body += 'Balance:        R' + (petty.balance||pcAfter).toFixed(2) + '
-';
+      body += '--- PETTY CASH ---\n';
+      body += 'Balance:        R' + (petty.balance||pcAfter).toFixed(2) + '\n';
       var todayPettyMovements = (petty.history||[]).filter(function(h){ return h.date && h.date.slice(0,10)===today; });
       if (todayPettyMovements.length) {
-        body += 'Movements today:
-';
-        todayPettyMovements.forEach(function(h){
-          var sign = h.delta >= 0 ? '+' : '';
-          body += '  ' + sign + 'R' + h.delta.toFixed(2) + ' — ' + (h.reason||h.type||'') + '
-';
-        });
+        body += 'Movements today:\n';
+        todayPettyMovements.forEach(function(h){ var sign=h.delta>=0?'+':''; body += '  '+sign+'R'+h.delta.toFixed(2)+' \u2014 '+(h.reason||h.type||'')+'\n'; });
       }
-      body += '
-';
-
-      // All card/EFT/debit expenses for today
+      body += '\n';
       var allExpenses = DB.get('expenses')||[];
-      var todayExpenses = allExpenses.filter(function(e){
-        return e.date && e.date.slice(0,10)===today && e.payMethod !== 'Cash Sales' && e.payMethod !== 'cash';
-      });
+      var todayExpenses = allExpenses.filter(function(e){ return e.date && e.date.slice(0,10)===today && e.payMethod !== 'cash'; });
       if (todayExpenses.length) {
-        body += '--- CARD / EFT / DEBIT EXPENSES ---
-';
-        var expTotal = 0;
-        todayExpenses.forEach(function(e){
-          expTotal += (e.amount||0);
-          body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + ' [' + (e.payMethod||'') + ']
-';
-        });
-        body += 'Total: R' + expTotal.toFixed(2) + '
-
-';
+        body += '--- CARD / EFT / DEBIT EXPENSES ---\n';
+        var expTotal=0;
+        todayExpenses.forEach(function(e){ expTotal+=(e.amount||0); body += '  '+(e.desc||e.category||'Expense')+': R'+(e.amount||0).toFixed(2)+' ['+(e.payMethod||'')+']\n'; });
+        body += 'Total: R'+expTotal.toFixed(2)+'\n\n';
       }
-
-      // All cash expenses for today (not till — i.e. petty cash manual)
-      var todayCashExp = allExpenses.filter(function(e){
-        return e.date && e.date.slice(0,10)===today
-          && (e.payMethod==='petty_cash' || e.payMethod==='cash')
-          && e.payMethod !== 'Cash Sales'
-          && !(e.cashupDate); // exclude cashup declared ones already shown above
-      });
+      var todayCashExp = allExpenses.filter(function(e){ return e.date && e.date.slice(0,10)===today && e.payMethod==='petty_cash'; });
       if (todayCashExp.length) {
-        body += '--- PETTY CASH EXPENSES ---
-';
-        var pcExpTotal = 0;
-        todayCashExp.forEach(function(e){
-          pcExpTotal += (e.amount||0);
-          body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + '
-';
-        });
-        body += 'Total: R' + pcExpTotal.toFixed(2) + '
-
-';
+        body += '--- PETTY CASH EXPENSES ---\n';
+        var pcExpTotal=0;
+        todayCashExp.forEach(function(e){ pcExpTotal+=(e.amount||0); body += '  '+(e.desc||e.category||'Expense')+': R'+(e.amount||0).toFixed(2)+'\n'; });
+        body += 'Total: R'+pcExpTotal.toFixed(2)+'\n\n';
       }
-
       if (stReports.length) {
-        body += '--- STOCKTAKE ---
-';
-        stReports.forEach(function(r) {
-          body += 'Location: ' + (r.location||'shop').toUpperCase() + ' | Items: ' + (r.totalCounted||0) + '
-';
-          var gains  = (r.variances||[]).filter(function(v){return v.diff>0;});
-          var losses = (r.variances||[]).filter(function(v){return v.diff<0;});
-          if (gains.length)  gains.forEach(function(v){  body += '  + '+v.diff+' x '+v.name+'
-'; });
-          if (losses.length) losses.forEach(function(v){ body += '  - '+Math.abs(v.diff)+' x '+v.name+'
-'; });
-          if (!gains.length && !losses.length) body += '  No variances
-';
+        body += '--- STOCKTAKE ---\n';
+        stReports.forEach(function(r){
+          body += 'Location: '+(r.location||'shop').toUpperCase()+' | Items: '+(r.totalCounted||0)+'\n';
+          var gains=(r.variances||[]).filter(function(v){return v.diff>0;});
+          var losses=(r.variances||[]).filter(function(v){return v.diff<0;});
+          if (gains.length) gains.forEach(function(v){ body += '  + '+v.diff+' x '+v.name+'\n'; });
+          if (losses.length) losses.forEach(function(v){ body += '  - '+Math.abs(v.diff)+' x '+v.name+'\n'; });
+          if (!gains.length && !losses.length) body += '  No variances\n';
         });
-        body += '
-';
+        body += '\n';
       }
-
       body += '============================================\n';
-      body += 'Sent automatically by BizPos
-';
-
-      var subject = "J&J Daily Report — " + today + " — R" + dayTotal.toFixed(2) + " sales";
+      body += 'Sent automatically by BizPos\n';
+            var subject = "J&J Daily Report — " + today + " — R" + dayTotal.toFixed(2) + " sales";
       window.open('mailto:winnagher@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
     } catch(emailErr) {
       console.warn('Daily email failed:', emailErr);
