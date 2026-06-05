@@ -3103,6 +3103,34 @@ function commitStocktake() {
   renderInventory();
   checkReorderPoints();
 
+  // Email report to owner
+  setTimeout(function() {
+    try {
+      var rpt = reports[0];
+      var gains = (rpt.variances||[]).filter(function(v){return v.diff>0;});
+      var losses = (rpt.variances||[]).filter(function(v){return v.diff<0;});
+      var dateStr = new Date(rpt.committedAt).toLocaleDateString('en-ZA');
+      var body = 'Stocktake Report — Jack & Jill' + "'s Adventure Club\n";
+      body += 'Date: ' + dateStr + '\n';
+      body += 'Location: ' + (rpt.location||'shop').toUpperCase() + '\n';
+      body += 'Done by: ' + (rpt.staffName||'—') + '\n';
+      body += 'Items counted: ' + (rpt.totalCounted||0) + '\n\n';
+      body += '--- VARIANCES ---\n';
+      if (!(rpt.variances||[]).length) {
+        body += 'No variances — all counts matched!\n';
+      } else {
+        body += 'GAINS (' + gains.length + '):\n';
+        gains.forEach(function(v){ body += '  + ' + v.diff + ' x ' + v.name + ' (expected ' + v.expected + ', counted ' + v.counted + ')\n'; });
+        body += 'LOSSES (' + losses.length + '):\n';
+        losses.forEach(function(v){ body += '  - ' + Math.abs(v.diff) + ' x ' + v.name + ' (expected ' + v.expected + ', counted ' + v.counted + ')\n'; });
+        body += '\nTotal gain value: R' + (rpt.gainValue||0).toFixed(2) + '\n';
+        body += 'Total loss value: R' + (rpt.lossValue||0).toFixed(2) + '\n';
+      }
+      var subject = 'Stocktake Report — ' + dateStr + ' (' + (rpt.location||'shop').toUpperCase() + ')';
+      window.open('mailto:winnagher@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+    } catch(e3) { console.warn('Email open failed:', e3); }
+  }, 600);
+
   // Show summary
   setTimeout(function() {
     try { openVarianceReportById(reports[0].id); } catch(e2) {}
