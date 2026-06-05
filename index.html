@@ -5122,7 +5122,7 @@ function toggleClock(id) {
   }
 }
 
-function closeClockOutModal() { var el = document.querySelector('.modal-overlay[style*="z-index:2000"]'); if(el) el.remove(); }
+function closeClockOutModal() { var el = document.getElementById('clock-modal-overlay'); if(el) el.remove(); }
 
 function showClockInEntry(s, staff) {
   var now = new Date();
@@ -5130,7 +5130,9 @@ function showClockInEntry(s, staff) {
 
   var modal = document.createElement('div');
   modal.className = 'modal-overlay';
+  modal.id = 'clock-modal-overlay';
   modal.style.cssText = 'display:flex;z-index:2000';
+  modal.onclick = function(e){ if(e.target===modal) closeClockOutModal(); };
   modal.innerHTML = '<div style="background:var(--bg2);border-radius:20px;padding:22px;max-width:340px;width:92%;margin:auto">'
     + '<div style="text-align:center;margin-bottom:16px">'
     + '<div style="font-size:36px;margin-bottom:4px">⏱️</div>'
