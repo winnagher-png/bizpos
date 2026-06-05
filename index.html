@@ -12741,6 +12741,24 @@ function confirmPOReceipt(id, po, modal) {
       if (recvQty < (item.qty||0)) allReceived = false;
 
       var p = products.find(function(x){ return x.id === item.productId; });
+      // Auto-create product if it doesn't exist yet
+      if (!p && item.productName && recvQty > 0) {
+        p = {
+          id: item.productId || uid(),
+          name: item.productName,
+          price: item.unitCost || 0,
+          cost: item.unitCost || 0,
+          category: item.category || 'Uncategorised',
+          qty: 0, qtyWh: 0,
+          reorderAt: 0,
+          sku: '',
+          barcode: '',
+          active: true,
+          createdAt: new Date().toISOString(),
+          createdFromPO: id
+        };
+        products.push(p);
+      }
       if (p && recvQty > 0) {
         if (loc === 'warehouse') p.qtyWh = (p.qtyWh||0) + recvQty;
         else p.qty = (p.qty||0) + recvQty;
@@ -14873,6 +14891,34 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
 
   // Reload so login screen picks up the staff
   setTimeout(function(){ location.reload(); }, 1500);
+})();
+</script>
+<script>
+(function() {
+  var PATCH = '_oreo_biscoff_product_v1';
+  if (localStorage.getItem(PATCH)) return;
+  var products = JSON.parse(localStorage.getItem('products') || '[]');
+  var exists = products.find(function(p){ return p.name && p.name.toLowerCase().includes('oreo caramel biscoff'); });
+  if (!exists) {
+    products.push({
+      id: 'prod_oreo_biscoff_001',
+      name: 'Oreo Caramel Biscoff Balls 90mg',
+      price: 25,
+      cost: 25,
+      category: 'Edibles',
+      qty: 4,
+      qtyWh: 0,
+      reorderAt: 0,
+      sku: '',
+      barcode: '',
+      active: true,
+      createdAt: new Date().toISOString(),
+      createdFromPO: 'auto'
+    });
+    localStorage.setItem('products', JSON.stringify(products));
+    if (typeof jjPush === 'function') setTimeout(function(){ jjPush(false); }, 500);
+  }
+  localStorage.setItem(PATCH, 'done');
 })();
 </script>
 </body>
