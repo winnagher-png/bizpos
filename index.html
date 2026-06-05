@@ -14923,5 +14923,19 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   localStorage.setItem(PATCH, 'done');
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_stock_fix_ogcheese_v1';
+  if (localStorage.getItem(PATCH)) return;
+  var products = JSON.parse(localStorage.getItem('products') || '[]');
+  var p = products.find(function(x){ return x.name && x.name.toLowerCase().includes('og cheese'); });
+  if (p) {
+    p.qty = 8;
+    localStorage.setItem('products', JSON.stringify(products));
+    if (typeof jjPush === 'function') setTimeout(function(){ jjPush(false); }, 500);
+  }
+  localStorage.setItem(PATCH, 'done');
+})();
+</script>
 </body>
 </html>
