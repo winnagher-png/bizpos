@@ -14593,5 +14593,54 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   if (t) { t.textContent = '✅ 50 February 2026 expenses loaded'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_recurring_expenses_v1';
+  if (localStorage.getItem(PATCH)) return;
+
+  var expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+  expenses = expenses.filter(function(e){ return !(e.id||'').startsWith('rec_'); });
+
+  var rec = [
+    // Atlas surveillance - 1st of each month
+    {id:'rec_atlas_mar',date:'2026-03-01',desc:'Atlas — Monthly surveillance',amount:204,category:'Security',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_atlas_apr',date:'2026-04-01',desc:'Atlas — Monthly surveillance',amount:204,category:'Security',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_atlas_may',date:'2026-05-01',desc:'Atlas — Monthly surveillance',amount:204,category:'Security',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_atlas_jun',date:'2026-06-01',desc:'Atlas — Monthly surveillance',amount:204,category:'Security',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+
+    // Capcut - 1st of each month
+    {id:'rec_capcut_mar',date:'2026-03-01',desc:'Capcut — Video editor subscription',amount:110,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_capcut_apr',date:'2026-04-01',desc:'Capcut — Video editor subscription',amount:110,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_capcut_may',date:'2026-05-01',desc:'Capcut — Video editor subscription',amount:110,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_capcut_jun',date:'2026-06-01',desc:'Capcut — Video editor subscription',amount:110,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+
+    // Canva - 25th of each month
+    {id:'rec_canva_mar',date:'2026-03-25',desc:'Canva — Editing software subscription',amount:150,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_canva_apr',date:'2026-04-25',desc:'Canva — Editing software subscription',amount:150,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_canva_may',date:'2026-05-25',desc:'Canva — Editing software subscription',amount:150,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_canva_jun',date:'2026-06-25',desc:'Canva — Editing software subscription',amount:150,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+
+    // Google One - 25th of each month
+    {id:'rec_google_mar',date:'2026-03-25',desc:'Google One — Storage subscription',amount:200,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_google_apr',date:'2026-04-25',desc:'Google One — Storage subscription',amount:200,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_google_may',date:'2026-05-25',desc:'Google One — Storage subscription',amount:200,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_google_jun',date:'2026-06-25',desc:'Google One — Storage subscription',amount:200,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+
+    // Claude - 25th of each month
+    {id:'rec_claude_mar',date:'2026-03-25',desc:'Claude — AI coding software subscription',amount:280,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_claude_apr',date:'2026-04-25',desc:'Claude — AI coding software subscription',amount:280,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_claude_may',date:'2026-05-25',desc:'Claude — AI coding software subscription',amount:280,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'},
+    {id:'rec_claude_jun',date:'2026-06-25',desc:'Claude — AI coding software subscription',amount:280,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'}
+  ];
+
+  rec.forEach(function(e){ expenses.push(e); });
+  localStorage.setItem('expenses', JSON.stringify(expenses));
+
+  localStorage.setItem(PATCH, 'done');
+  if (typeof jjPush === 'function') setTimeout(jjPush, 500);
+  var t = document.getElementById('toast');
+  if (t) { t.textContent = '✅ Recurring expenses loaded — Mar to Jun 2026'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
+})();
+</script>
 </body>
 </html>
