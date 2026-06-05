@@ -14642,5 +14642,44 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   if (t) { t.textContent = '✅ Recurring expenses loaded — Mar to Jun 2026'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_recurring_future_v1';
+  if (localStorage.getItem(PATCH)) return;
+
+  var expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+  expenses = expenses.filter(function(e){ return !(e.id||'').startsWith('recf_'); });
+
+  var months = [
+    {m:'2026-07',label:'Jul 2026'},
+    {m:'2026-08',label:'Aug 2026'},
+    {m:'2026-09',label:'Sep 2026'},
+    {m:'2026-10',label:'Oct 2026'},
+    {m:'2026-11',label:'Nov 2026'},
+    {m:'2026-12',label:'Dec 2026'}
+  ];
+
+  var rec = [];
+  months.forEach(function(mo) {
+    var m = mo.m;
+    var tag = m.replace('-','');
+    // 1st of month
+    rec.push({id:'recf_atlas_'+tag,date:m+'-01',desc:'Atlas — Monthly surveillance',amount:204,category:'Security',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'});
+    rec.push({id:'recf_capcut_'+tag,date:m+'-01',desc:'Capcut — Video editor subscription',amount:110,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'});
+    // 25th of month
+    rec.push({id:'recf_canva_'+tag,date:m+'-25',desc:'Canva — Editing software subscription',amount:150,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'});
+    rec.push({id:'recf_google_'+tag,date:m+'-25',desc:'Google One — Storage subscription',amount:200,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'});
+    rec.push({id:'recf_claude_'+tag,date:m+'-25',desc:'Claude — AI coding software subscription',amount:280,category:'Software & Subscriptions',payMethod:'debit_order',status:'paid',notes:'Monthly debit order'});
+  });
+
+  rec.forEach(function(e){ expenses.push(e); });
+  localStorage.setItem('expenses', JSON.stringify(expenses));
+
+  localStorage.setItem(PATCH, 'done');
+  if (typeof jjPush === 'function') setTimeout(jjPush, 500);
+  var t = document.getElementById('toast');
+  if (t) { t.textContent = '✅ Recurring expenses pre-loaded Jul–Dec 2026'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
+})();
+</script>
 </body>
 </html>
