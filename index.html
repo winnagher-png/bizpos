@@ -1873,20 +1873,19 @@ function onPinInput(val) {
   var err = document.getElementById('pin-error');
   var nm  = document.getElementById('pin-name');
   var rl  = document.getElementById('pin-role-lbl');
-  if (err) err.textContent='';
+  if (err) err.textContent = '';
+  if (nm) nm.style.display = 'none';
+  if (rl) rl.style.display = 'none';
 
-  if (val.length >= 4) {
-    var matched = findByPin(val);
-    if (matched) {
-      if (nm) { nm.textContent = matched.name + ' ✓'; nm.style.display='block'; }
-      if (rl) { rl.textContent = matched.role.charAt(0).toUpperCase()+matched.role.slice(1); rl.style.display='block'; }
-    } else {
-      if (nm) { nm.style.display='none'; }
-      if (rl) { rl.style.display='none'; }
-    }
-  } else {
-    if (nm) { nm.style.display='none'; }
-    if (rl) { rl.style.display='none'; }
+  if (val.length < 4) return;
+
+  var matched = findByPin(val);
+  if (matched) {
+    if (nm) { nm.textContent = matched.name; nm.style.display = 'block'; }
+    if (rl) { rl.textContent = matched.role.charAt(0).toUpperCase() + matched.role.slice(1); rl.style.display = 'block'; }
+    // Auto-login immediately
+    var full = getLoginStaff().find(function(s){ return s.id === matched.id; }) || matched;
+    loginSuccess(full);
   }
 }
 
