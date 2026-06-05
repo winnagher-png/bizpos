@@ -5122,7 +5122,7 @@ function renderCashierStaffView() {
     h += '</div>';
   }
   h += '</div>';
-  if (me && me.clockedIn && coworkers.length) {
+  if (coworkers.length) {
     h += '<div style="font-size:12px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:8px">SHIFT CO-WORKERS</div>';
     coworkers.forEach(function(s) {
       var cBtn = s.clockedIn ? 'btn-danger' : 'btn-success';
@@ -5134,8 +5134,6 @@ function renderCashierStaffView() {
       h += '<button onclick="toggleClock("' + "'" + s.id + "'" + '");renderStaff()" class="btn btn-sm ' + cBtn + '">' + cTxt + '</button>';
       h += '</div>';
     });
-  } else if (me && !me.clockedIn) {
-    h += '<div style="background:var(--bg3);border-radius:10px;padding:12px;text-align:center;font-size:12px;color:var(--text3)">Clock yourself in first to manage co-workers on shift</div>';
   }
   el.innerHTML = h;
 }
