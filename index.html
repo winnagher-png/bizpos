@@ -7818,6 +7818,7 @@ let poLines = [];
 
 function openPOEditor(existingId) {
   poLines = [];
+  window.poType = 'stock'; // default
   const pos = DB.get('purchaseOrders');
 
   document.getElementById('poe-id').value = '';
@@ -7870,17 +7871,65 @@ function openPOEditor(existingId) {
   if (!poLines.length) addPOLine();
   renderPOLines();
   document.getElementById('modal-po-editor-title').textContent = existingId ? 'Edit Purchase Order' : 'New Purchase Order';
+  // Set PO type from existing or default
+  if (existingId) {
+    const po = pos.find(p=>p.id===existingId);
+    if (po) window.poType = po.poType || 'stock';
+  }
+  // Inject type toggle if not already there
+  var titleEl = document.getElementById('modal-po-editor-title');
+  var toggleWrap = document.getElementById('poe-type-toggle');
+  if (!toggleWrap && titleEl) {
+    var tw = document.createElement('div');
+    tw.id = 'poe-type-toggle';
+    tw.style.cssText = 'display:flex;gap:6px;margin:10px 0 4px';
+    tw.innerHTML = '<button id="poe-type-stock" onclick="setPOType(\'stock\')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid var(--accent);background:var(--accent);color:#fff">📦 Stock PO</button>'
+      + '<button id="poe-type-expense" onclick="setPOType(\'expense\')" style="flex:1;padding:8px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid var(--border);background:var(--bg3);color:var(--text)">🧾 Expense PO</button>';
+    titleEl.parentNode.insertBefore(tw, titleEl.nextSibling);
+  }
+  setPOType(window.poType);
   openModal('modal-po-editor');
 }
 
+function setPOType(type) {
+  window.poType = type;
+  var sb = document.getElementById('poe-type-stock');
+  var eb = document.getElementById('poe-type-expense');
+  if (sb) { sb.style.background = type==='stock'?'var(--accent)':'var(--bg3)'; sb.style.color=type==='stock'?'#fff':'var(--text)'; sb.style.borderColor=type==='stock'?'var(--accent)':'var(--border)'; }
+  if (eb) { eb.style.background = type==='expense'?'var(--accent)':'var(--bg3)'; eb.style.color=type==='expense'?'#fff':'var(--text)'; eb.style.borderColor=type==='expense'?'var(--accent)':'var(--border)'; }
+  if (!poLines.length) poLines.push(type==='expense' ? {desc:'',category:'',amount:0} : {productName:'',qty:1,unitCost:0});
+  else poLines = poLines.map(function(l){ return type==='expense' ? {desc:l.productName||l.desc||'',category:l.category||'',amount:l.unitCost||l.amount||0} : {productName:l.desc||l.productName||'',qty:l.qty||1,unitCost:l.amount||l.unitCost||0}; });
+  renderPOLines();
+}
+
 function addPOLine() {
-  poLines.push({ productName:'', qty:1, unitCost:0 });
+  if (window.poType === 'expense') poLines.push({ desc:'', category:'', amount:0 });
+  else poLines.push({ productName:'', qty:1, unitCost:0 });
   renderPOLines();
 }
 
 function renderPOLines() {
   const el = document.getElementById('poe-lines');
   const products = DB.get('products') || [];
+  var cats = ['Salaries','Stock purchase','Maintenance','Utilities','Rent','Marketing','Equipment','Transport & Travel','Office & Admin','Cleaning','Bank Charges','Security','Software & Subscriptions','Fuel','Other'];
+  if (window.poType === 'expense') {
+    el.innerHTML = poLines.map(function(line,i){ return `
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:6px;align-items:center;margin-bottom:6px">
+        <input type="text" value="${line.desc||''}" placeholder="Description *"
+          oninput="poLines[${i}].desc=this.value;updatePOTotal()"
+          style="padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <select onchange="poLines[${i}].category=this.value" style="padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;background:var(--bg);color:var(--text)">
+          <option value="">Category</option>
+          ${cats.map(c=>`<option value="${c}" ${line.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+        <input type="number" value="${line.amount||''}" step="0.01" placeholder="Amount"
+          oninput="poLines[${i}].amount=parseFloat(this.value)||0;updatePOTotal()"
+          style="padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;text-align:right;background:var(--bg);color:var(--text)">
+        <button onclick="removePOLine(${i})" style="color:var(--red);font-size:16px;background:none;border:none;cursor:pointer">✕</button>
+      </div>`; }).join('');
+    updatePOTotal();
+    return;
+  }
   el.innerHTML = poLines.map((line,i)=>`
     <div class="po-line">
       <div style="position:relative;flex:2">
@@ -7895,7 +7944,6 @@ function renderPOLines() {
       <div class="po-line-total">${fmt((line.qty||1)*(line.unitCost||0))}</div>
       <button onclick="removePOLine(${i})" style="color:var(--red);font-size:16px">✕</button>
     </div>`).join('');
-
   // Quick new-product form at the bottom of lines
   el.innerHTML += `
     <div style="margin-top:10px;padding:10px;background:var(--bg3);border-radius:10px;border:1.5px dashed var(--border)">
@@ -7949,7 +7997,9 @@ function quickAddProductToPO() {
 }
 
 function updatePOTotal() {
-  const total = poLines.reduce((a,l)=>a+(l.qty||1)*(l.unitCost||0),0);
+  const total = window.poType==='expense'
+    ? poLines.reduce((a,l)=>a+(l.amount||0),0)
+    : poLines.reduce((a,l)=>a+(l.qty||1)*(l.unitCost||0),0);
   document.getElementById('poe-total').textContent = fmt(total);
   // Re-render totals in each line without full re-render
 }
@@ -7957,9 +8007,14 @@ function updatePOTotal() {
 function savePOEditor(status) {
   const supplierId = document.getElementById('poe-supplier').value;
   const sup = DB.get('suppliers').find(s=>s.id===supplierId);
-  const validLines = poLines.filter(l=>l.productName.trim());
-  if (!validLines.length) { alert('Add at least one product'); return; }
-  const total = validLines.reduce((a,l)=>a+(l.qty||1)*(l.unitCost||0),0);
+  var isExpPO = window.poType === 'expense';
+  const validLines = isExpPO
+    ? poLines.filter(l=>(l.desc||'').trim())
+    : poLines.filter(l=>(l.productName||'').trim());
+  if (!validLines.length) { alert(isExpPO ? 'Add at least one expense line' : 'Add at least one product'); return; }
+  const total = isExpPO
+    ? validLines.reduce((a,l)=>a+(l.amount||0),0)
+    : validLines.reduce((a,l)=>a+(l.qty||1)*(l.unitCost||0),0);
   const pos = DB.get('purchaseOrders');
   const existingId = document.getElementById('poe-id').value;
   const payStatus    = document.getElementById('poe-pay-status')?.value || 'unpaid';
@@ -7976,6 +8031,7 @@ function savePOEditor(status) {
   })();
 
   const poData = {
+    poType: isExpPO ? 'expense' : 'stock',
     poNumber: _autoPoNum,
     date: document.getElementById('poe-date').value,
     supplierId, supplierName: sup?.name||'No supplier',
