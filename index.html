@@ -14982,5 +14982,33 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   if (t) { t.textContent = '✅ Recurring expenses pre-loaded Jul–Dec 2026'; t.style.display='block'; setTimeout(function(){t.style.display='none';},5000); }
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_staffRestore_v1';
+  if (localStorage.getItem(PATCH)) return;
+  if ((JSON.parse(localStorage.getItem('staff')||'[]')).length > 0) {
+    localStorage.setItem(PATCH, 'done'); return;
+  }
+
+  var staff = [
+    {id:"7wxwd4jy",name:"Charne",  role:"manager",    pin:"9921",payType:"daily",  rate:350, startDate:"2026-02-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"mgr-tania",name:"Tania",  role:"manager",    pin:"1987",payType:"daily",  rate:350, startDate:"2026-02-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"sup-mike", name:"Mike",   role:"supervisor", pin:"1234",payType:"daily",  rate:300, startDate:"2026-02-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"tvox4dgz",name:"Jordan",  role:"cashier",    pin:"6420",payType:"hourly", rate:27,  startDate:"2026-02-15",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+    {id:"trainee1",name:"Trainee", role:"cashier",    pin:"1234",payType:"hourly", rate:25,  startDate:"2026-01-01",clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+  ];
+
+  localStorage.setItem('staff', JSON.stringify(staff));
+  localStorage.setItem(PATCH, 'done');
+
+  if (typeof jjPush === 'function') setTimeout(function(){ jjPush(false); }, 500);
+
+  var t = document.getElementById('toast');
+  if (t) { t.textContent = '✅ Staff profiles restored'; t.style.display='block'; setTimeout(function(){t.style.display='none';},4000); }
+
+  // Reload so login screen picks up the staff
+  setTimeout(function(){ location.reload(); }, 1500);
+})();
+</script>
 </body>
 </html>
