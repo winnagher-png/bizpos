@@ -14318,5 +14318,94 @@ jjInitWithSeed(); // pull Firebase first — then render pin screen with real st
   }
 })();
 </script>
+<script>
+(function() {
+  var PATCH = '_junecashups_v1';
+  if (localStorage.getItem(PATCH)) return;
+
+  var cashups = JSON.parse(localStorage.getItem('cashups') || '[]');
+  var petty   = JSON.parse(localStorage.getItem('pettyCash') || '{"balance":0,"history":[]}');
+
+  // Remove any existing June 2/3/4 cashups to avoid dupes
+  cashups = cashups.filter(function(c) {
+    var d = (c.date||'').substring(0,10);
+    return d !== '2026-06-02' && d !== '2026-06-03' && d !== '2026-06-04';
+  });
+
+  var june2 = {
+    id: 'cu020626', date: '2026-06-02T12:00:00.000Z',
+    staffName: 'Jordan & Charne', staff: 'Jordan & Charne',
+    totalSales: 850, cashSales: 850, cardDeclared: 0, cardSales: 0,
+    tillExpenses: 226, cashExpenses: 226,
+    counted: 625, toBank: 625, variance: 0,
+    pettyCashBefore: 1039.5, pettyCashAfter: 1314.5,
+    cashupExpenses: [{amount:226,category:'Till expense',desc:'Till expenses',id:'cuexp020626a'}],
+    notes: 'Imported from spreadsheet', txnCount: 0
+  };
+
+  var june3 = {
+    id: 'cu030626', date: '2026-06-03T12:00:00.000Z',
+    staffName: 'Chris & Charne', staff: 'Chris & Charne',
+    totalSales: 290, cashSales: 290, cardDeclared: 0, cardSales: 0,
+    tillExpenses: 216, cashExpenses: 216,
+    counted: 74, toBank: 74, variance: 0,
+    pettyCashBefore: 1314.5, pettyCashAfter: 1388.5,
+    cashupExpenses: [{amount:216,category:'Till expense',desc:'Till expenses',id:'cuexp030626a'}],
+    notes: 'Imported from spreadsheet', txnCount: 0
+  };
+
+  var june4 = {
+    id: 'cu040626', date: '2026-06-04T12:00:00.000Z',
+    staffName: 'Jordan', staff: 'Jordan',
+    totalSales: 695, cashSales: 695, cardDeclared: 0, cardSales: 0,
+    tillExpenses: 318, cashExpenses: 318,
+    counted: 370, toBank: 370, variance: 0,
+    pettyCashBefore: 1388.5, pettyCashAfter: 1758.5,
+    cashupExpenses: [{amount:318,category:'Till expense',desc:'Till expenses',id:'cuexp040626a'}],
+    notes: 'Imported from spreadsheet', txnCount: 0
+  };
+
+  cashups.push(june2, june3, june4);
+  localStorage.setItem('cashups', JSON.stringify(cashups));
+
+  // Petty cash: after June 1 was R1039.50
+  // June 2: +R625 banked, -R350 Charne wages = R1314.50
+  // June 3: +R74 banked, -R350 Charne wages = R1038.50  
+  // June 4: +R370 banked, -R182 MB Projects, -R200 rent = R1026.50
+
+  var newHistory = [
+    {date:'2026-06-02T12:00:00.000Z',delta:625,newBalance:1664.5,oldBalance:1039.5,reason:'Cashup banked — 2026/06/02',type:'cashup',category:''},
+    {date:'2026-06-02T18:00:00.000Z',delta:-350,newBalance:1314.5,oldBalance:1664.5,reason:'Charne Tues wage',type:'expense',category:'Salaries'},
+    {date:'2026-06-03T12:00:00.000Z',delta:74,newBalance:1388.5,oldBalance:1314.5,reason:'Cashup banked — 2026/06/03',type:'cashup',category:''},
+    {date:'2026-06-03T18:00:00.000Z',delta:-350,newBalance:1038.5,oldBalance:1388.5,reason:'Charne Wed wage',type:'expense',category:'Salaries'},
+    {date:'2026-06-04T12:00:00.000Z',delta:370,newBalance:1408.5,oldBalance:1038.5,reason:'Cashup banked — 2026/06/04',type:'cashup',category:''},
+    {date:'2026-06-04T18:00:00.000Z',delta:-182,newBalance:1226.5,oldBalance:1408.5,reason:'MB Projects lightstrip & silicone',type:'expense',category:'Maintenance'},
+    {date:'2026-06-04T18:01:00.000Z',delta:-200,newBalance:1026.5,oldBalance:1226.5,reason:'Rent set aside',type:'expense',category:'Rent'}
+  ];
+
+  petty.history = (petty.history||[]).concat(newHistory);
+  petty.balance = 1026.5;
+  localStorage.setItem('pettyCash', JSON.stringify(petty));
+
+  // Also add petty cash expenses
+  var expenses = JSON.parse(localStorage.getItem('expenses') || '[]');
+  expenses.push(
+    {id:'exp020626a',date:'2026-06-02',desc:'Charne Tues wage',amount:350,category:'Salaries',payMethod:'petty_cash',status:'paid',notes:'Paid from petty cash'},
+    {id:'exp030626a',date:'2026-06-03',desc:'Charne Wed wage',amount:350,category:'Salaries',payMethod:'petty_cash',status:'paid',notes:'Paid from petty cash'},
+    {id:'exp040626a',date:'2026-06-04',desc:'MB Projects lightstrip & silicone',amount:182,category:'Maintenance',payMethod:'petty_cash',status:'paid',notes:'Paid from petty cash'},
+    {id:'exp040626b',date:'2026-06-04',desc:'Rent set aside cash',amount:200,category:'Rent',payMethod:'petty_cash',status:'paid',notes:'Paid from petty cash'}
+  );
+  localStorage.setItem('expenses', JSON.stringify(expenses));
+
+  localStorage.setItem(PATCH, 'done');
+  if (typeof jjPush === 'function') setTimeout(jjPush, 500);
+  if (document.getElementById('toast')) {
+    var t = document.getElementById('toast');
+    t.textContent = '✅ June 2, 3 & 4 cashups loaded';
+    t.style.display = 'block';
+    setTimeout(function(){t.style.display='none';}, 4000);
+  }
+})();
+</script>
 </body>
 </html>
