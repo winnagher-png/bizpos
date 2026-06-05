@@ -536,21 +536,27 @@ table.report-table .neg{color:var(--red)}
 <!-- PIN Screen -->
 <div id="pin-screen">
   <div style="font-size:28px;font-weight:800;color:var(--accent);letter-spacing:-.5px">Jack &amp; Jill's</div>
-  <div style="font-size:13px;color:var(--text3);letter-spacing:2px;margin-bottom:32px">ADVENTURE CLUB</div>
-  <div id="pin-welcome" style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:6px;min-height:28px;text-align:center"></div>
-  <div style="font-size:13px;color:var(--text3);margin-bottom:24px">Enter your PIN to log in</div>
+  <div style="font-size:13px;color:var(--text3);letter-spacing:2px;margin-bottom:40px">ADVENTURE CLUB</div>
+
+  <div id="pin-name-display" style="min-height:52px;text-align:center;margin-bottom:8px">
+    <div id="pin-name" style="font-size:24px;font-weight:800;color:var(--accent);display:none"></div>
+    <div id="pin-role-lbl" style="font-size:12px;color:var(--text3);margin-top:2px;display:none"></div>
+  </div>
+
   <input id="pin-input"
     type="password"
     inputmode="numeric"
     maxlength="6"
-    placeholder="••••"
+    placeholder="Enter PIN"
     autocomplete="off"
     oninput="onPinInput(this.value)"
-    onkeydown="if(event.key==='Enter') submitPin()"
-    style="width:180px;padding:16px;font-size:32px;font-weight:800;letter-spacing:8px;text-align:center;border:2px solid var(--border);border-radius:14px;background:var(--bg2);color:var(--text);outline:none;box-shadow:0 2px 8px rgba(0,0,0,.08)">
-  <div id="pin-error" style="color:var(--red);font-size:13px;min-height:18px;text-align:center;margin-top:10px"></div>
-  <button onclick="submitPin()" style="margin-top:16px;width:180px;padding:14px;background:var(--accent);border:none;border-radius:12px;font-size:16px;font-weight:700;color:#fff;cursor:pointer">
-    Log In
+    onkeydown="if(event.key==='Enter')submitPin()"
+    style="width:200px;padding:18px;font-size:28px;font-weight:800;letter-spacing:10px;text-align:center;border:2.5px solid var(--border);border-radius:16px;background:var(--bg2);color:var(--text);outline:none;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:12px">
+
+  <div id="pin-error" style="color:var(--red);font-size:13px;min-height:18px;text-align:center;margin-bottom:10px"></div>
+
+  <button onclick="submitPin()" style="width:200px;padding:15px;background:var(--accent);border:none;border-radius:12px;font-size:16px;font-weight:700;color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)">
+    Log In →
   </button>
 </div>
 
@@ -1811,85 +1817,117 @@ function restoreStaffProfiles() {
   showToast && showToast('Staff profiles restored ✓', 'success');
 }
 
+// ─────────────────────────────────────────────────────────────
+// LOGIN SYSTEM — bulletproof, hardcoded, works always
+// Cache clear, Firebase down, offline — doesn't matter
+// ─────────────────────────────────────────────────────────────
+
+// MASTER PIN LIST — hardcoded into the app, cannot be wiped
+// To add/change staff PINs, update this list and redeploy
+var STAFF_PINS = [
+  {id:"7wxwd4jy", name:"Charne",  role:"manager",    pin:"9921", payType:"daily",  rate:350, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+  {id:"mgr-tania",name:"Tania",   role:"manager",    pin:"1987", payType:"daily",  rate:350, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+  {id:"sup-mike", name:"Mike",    role:"supervisor", pin:"5678", payType:"daily",  rate:300, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+  {id:"tvox4dgz", name:"Jordan",  role:"cashier",    pin:"6420", payType:"hourly", rate:27,  clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+  {id:"trainee1", name:"Trainee", role:"cashier",    pin:"0000", payType:"hourly", rate:25,  clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+];
+// Note: Mike changed from 1234 to 5678, Trainee from 1234 to 0000 (no duplicate PINs)
+
+function getLoginStaff() {
+  // Start with hardcoded list
+  var base = STAFF_PINS.map(function(s){ return JSON.parse(JSON.stringify(s)); });
+  // Enrich with Firebase/localStorage data (shifts, clock state etc) — but NEVER replace pins or ids
+  var stored = [];
+  try { var d=DB.get('staff'); if(Array.isArray(d)&&d.length) stored=d; } catch(e){}
+  if (!stored.length) { try { var r=localStorage.getItem('staff'); if(r){var p=JSON.parse(r);if(Array.isArray(p)&&p.length)stored=p;} } catch(e){} }
+  base.forEach(function(bs) {
+    var found = stored.find(function(s){ return s.id===bs.id; });
+    if (found) {
+      bs.shifts     = found.shifts     || [];
+      bs.clockedIn  = found.clockedIn  || false;
+      bs.clockedInAt= found.clockedInAt|| null;
+      bs.onLeave    = found.onLeave    || false;
+    }
+  });
+  // Always write back complete staff list
+  try { localStorage.setItem('staff', JSON.stringify(base)); } catch(e){}
+  return base;
+}
+
+function findByPin(pin) {
+  return STAFF_PINS.find(function(s){ return String(s.pin)===String(pin); });
+}
+
 function renderPinScreen() {
-  // New simple login — just focus the PIN input
   var inp = document.getElementById('pin-input');
-  if (inp) { inp.value = ''; inp.focus(); }
-  document.getElementById('pin-error').textContent = '';
-  document.getElementById('pin-welcome').textContent = '';
+  if (inp) { inp.value=''; setTimeout(function(){ inp.focus(); },100); }
+  var err = document.getElementById('pin-error');
+  if (err) err.textContent='';
+  var nm = document.getElementById('pin-name');
+  var rl = document.getElementById('pin-role-lbl');
+  if (nm) { nm.textContent=''; nm.style.display='none'; }
+  if (rl) { rl.textContent=''; rl.style.display='none'; }
 }
 
 function onPinInput(val) {
   var err = document.getElementById('pin-error');
-  var welcome = document.getElementById('pin-welcome');
-  err.textContent = '';
-  // Auto-login as soon as we find a match (4+ digits)
+  var nm  = document.getElementById('pin-name');
+  var rl  = document.getElementById('pin-role-lbl');
+  if (err) err.textContent='';
+
   if (val.length >= 4) {
-    var staff = getStaffList();
-    var matched = staff.find(function(s){ return String(s.pin) === String(val); });
+    var matched = findByPin(val);
     if (matched) {
-      welcome.textContent = 'Hi ' + matched.name + '! 👋';
-      setTimeout(function(){ loginSuccess(matched); }, 300);
-    } else if (val.length >= 6) {
-      err.textContent = 'PIN not recognised';
-      document.getElementById('pin-input').value = '';
+      if (nm) { nm.textContent = matched.name; nm.style.display='block'; }
+      if (rl) { rl.textContent = matched.role.charAt(0).toUpperCase()+matched.role.slice(1); rl.style.display='block'; }
+      // Auto-login after short delay so they see the name
+      setTimeout(function(){
+        var inp = document.getElementById('pin-input');
+        if (inp && inp.value===val) submitPin();
+      }, 600);
+    } else {
+      if (nm) { nm.style.display='none'; }
+      if (rl) { rl.style.display='none'; }
+      if (val.length >= 6) {
+        if (err) err.textContent='PIN not recognised';
+        var inp2=document.getElementById('pin-input');
+        if(inp2){inp2.value=''; inp2.focus();}
+      }
     }
+  } else {
+    if (nm) { nm.style.display='none'; }
+    if (rl) { rl.style.display='none'; }
   }
 }
 
 function submitPin() {
-  var val = (document.getElementById('pin-input').value || '').trim();
-  var err = document.getElementById('pin-error');
-  if (!val) { err.textContent = 'Please enter your PIN'; return; }
-  var staff = getStaffList();
-  var matched = staff.find(function(s){ return String(s.pin) === String(val); });
+  var val=(document.getElementById('pin-input').value||'').trim();
+  var err=document.getElementById('pin-error');
+  if (!val) { if(err) err.textContent='Enter your PIN'; return; }
+  var matched = findByPin(val);
   if (matched) {
-    document.getElementById('pin-welcome').textContent = 'Hi ' + matched.name + '! 👋';
-    setTimeout(function(){ loginSuccess(matched); }, 300);
+    var full = getLoginStaff().find(function(s){return s.id===matched.id;}) || matched;
+    loginSuccess(full);
   } else {
-    err.textContent = 'PIN not recognised — try again';
-    document.getElementById('pin-input').value = '';
-    document.getElementById('pin-input').focus();
+    if(err) err.textContent='PIN not recognised — try again';
+    var inp=document.getElementById('pin-input');
+    if(inp){inp.value=''; inp.focus();}
+    var nm=document.getElementById('pin-name');
+    var rl=document.getElementById('pin-role-lbl');
+    if(nm) nm.style.display='none';
+    if(rl) rl.style.display='none';
   }
 }
 
-function getStaffList() {
-  var HARDCODED = [
-    {id:"7wxwd4jy",name:"Charne", role:"manager",   pin:"9921",payType:"daily", rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
-    {id:"mgr-tania",name:"Tania", role:"manager",   pin:"1987",payType:"daily", rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
-    {id:"sup-mike", name:"Mike",  role:"supervisor",pin:"1234",payType:"daily", rate:300,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
-    {id:"tvox4dgz",name:"Jordan", role:"cashier",   pin:"6420",payType:"hourly",rate:27, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
-    {id:"trainee1",name:"Trainee",role:"cashier",   pin:"1234",payType:"hourly",rate:25, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
-  ];
-  var staff = [];
-  try { var d = DB.get('staff'); if (Array.isArray(d) && d.length) staff = d; } catch(e){}
-  if (!staff.length) {
-    try { var r=localStorage.getItem('staff'); if(r){var p=JSON.parse(r);if(Array.isArray(p)&&p.length)staff=p;} } catch(e){}
-  }
-  // Merge hardcoded — always available
-  HARDCODED.forEach(function(hc) {
-    if (!staff.find(function(s){ return s.id===hc.id; })) staff.push(hc);
-    else {
-      var s = staff.find(function(s){ return s.id===hc.id; });
-      s.pin = hc.pin; // keep pin correct
-    }
-  });
-  // Save back
-  try { localStorage.setItem('staff', JSON.stringify(staff)); } catch(e){}
-  return staff;
-}
-
-function pinKey(k) {} // legacy no-op
-function pinDel() {}  // legacy no-op
+function pinKey(k) {}
+function pinDel() {}
 function updatePinDots() {}
-function showPinError(msg) { var e=document.getElementById('pin-error'); if(e){e.textContent=msg; setTimeout(function(){e.textContent='';},2000);} }
+function showPinError(msg){var e=document.getElementById('pin-error');if(e){e.textContent=msg;setTimeout(function(){e.textContent='';},2500);}}
 
 function lockApp() {
-  currentUser = null;
-  document.getElementById('pin-error').textContent = '';
+  currentUser=null;
   document.getElementById('pin-screen').classList.remove('hidden');
-  var inp = document.getElementById('pin-input');
-  if (inp) { inp.value = ''; setTimeout(function(){ inp.focus(); }, 100); }
+  renderPinScreen();
 }
 function updateHeaderUser() {
   if (!currentUser) return;
