@@ -7026,8 +7026,59 @@ function saveCashup() {
       body += '--- PETTY CASH ---
 ';
       body += 'Balance:        R' + (petty.balance||pcAfter).toFixed(2) + '
+';
+      var todayPettyMovements = (petty.history||[]).filter(function(h){ return h.date && h.date.slice(0,10)===today; });
+      if (todayPettyMovements.length) {
+        body += 'Movements today:
+';
+        todayPettyMovements.forEach(function(h){
+          var sign = h.delta >= 0 ? '+' : '';
+          body += '  ' + sign + 'R' + h.delta.toFixed(2) + ' — ' + (h.reason||h.type||'') + '
+';
+        });
+      }
+      body += '
+';
+
+      // All card/EFT/debit expenses for today
+      var allExpenses = DB.get('expenses')||[];
+      var todayExpenses = allExpenses.filter(function(e){
+        return e.date && e.date.slice(0,10)===today && e.payMethod !== 'Cash Sales' && e.payMethod !== 'cash';
+      });
+      if (todayExpenses.length) {
+        body += '--- CARD / EFT / DEBIT EXPENSES ---
+';
+        var expTotal = 0;
+        todayExpenses.forEach(function(e){
+          expTotal += (e.amount||0);
+          body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + ' [' + (e.payMethod||'') + ']
+';
+        });
+        body += 'Total: R' + expTotal.toFixed(2) + '
 
 ';
+      }
+
+      // All cash expenses for today (not till — i.e. petty cash manual)
+      var todayCashExp = allExpenses.filter(function(e){
+        return e.date && e.date.slice(0,10)===today
+          && (e.payMethod==='petty_cash' || e.payMethod==='cash')
+          && e.payMethod !== 'Cash Sales'
+          && !(e.cashupDate); // exclude cashup declared ones already shown above
+      });
+      if (todayCashExp.length) {
+        body += '--- PETTY CASH EXPENSES ---
+';
+        var pcExpTotal = 0;
+        todayCashExp.forEach(function(e){
+          pcExpTotal += (e.amount||0);
+          body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + '
+';
+        });
+        body += 'Total: R' + pcExpTotal.toFixed(2) + '
+
+';
+      }
 
       if (stReports.length) {
         body += '--- STOCKTAKE ---
