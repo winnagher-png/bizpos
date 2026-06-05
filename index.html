@@ -5184,18 +5184,56 @@ function toggleClock(id) {
     // Show shift entry popup — staff confirm hours + wages before clocking out
     showClockOutEntry(s, staff);
   } else {
-    // Clock in — record start, mark on shift
-    s.shifts.push({ in: new Date().toISOString(), out: null });
-    s.clockedIn   = true;
-    s.clockedInAt = new Date().toISOString();
-    s.updatedAt   = new Date().toISOString();
-    DB.set('staff', staff);
-    renderStaff();
-    showToast(s.name + ' clocked in ✓', 'success');
+    // Show clock-in time popup
+    showClockInEntry(s, staff);
   }
 }
 
 function closeClockOutModal() { var el = document.querySelector('.modal-overlay[style*="z-index:2000"]'); if(el) el.remove(); }
+
+function showClockInEntry(s, staff) {
+  var now = new Date();
+  var toTime = function(d){ return d.toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false}); };
+
+  var modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.style.cssText = 'display:flex;z-index:2000';
+  modal.innerHTML = '<div style="background:var(--bg2);border-radius:20px;padding:22px;max-width:340px;width:92%;margin:auto">'
+    + '<div style="text-align:center;margin-bottom:16px">'
+    + '<div style="font-size:36px;margin-bottom:4px">⏱️</div>'
+    + '<div style="font-size:17px;font-weight:800">Clock in — ' + s.name.split(' ')[0] + '</div>'
+    + '<div style="font-size:12px;color:var(--text3);margin-top:2px">What time did ' + s.name.split(' ')[0] + ' start?</div>'
+    + '</div>'
+    + '<div style="background:var(--bg3);border-radius:12px;padding:14px;margin-bottom:14px">'
+    + '<label style="font-size:11px;color:var(--text3);font-weight:600;display:block;margin-bottom:6px">Start time</label>'
+    + '<input type="time" id="cin-time" value="' + toTime(now) + '" style="width:100%;box-sizing:border-box;padding:10px;border:1.5px solid var(--accent);border-radius:8px;font-size:18px;font-weight:700;background:var(--bg);color:var(--text);text-align:center">'
+    + '</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    + '<button onclick="closeClockOutModal()" style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;font-size:13px;font-weight:700;cursor:pointer">Cancel</button>'
+    + '<button onclick="commitClockIn('' + s.id + '')" style="padding:12px;background:var(--accent);border:none;border-radius:10px;font-size:13px;font-weight:700;color:#fff;cursor:pointer">✓ Clock in</button>'
+    + '</div></div>';
+
+  document.body.appendChild(modal);
+}
+
+function commitClockIn(id) {
+  var timeVal = (document.getElementById('cin-time')||{}).value || '';
+  if (!timeVal) { showToast('Please enter a start time', 'error'); return; }
+  var staff = DB.get('staff');
+  var s = staff.find(function(x){ return x.id===id; });
+  if (!s) return;
+  if (!s.shifts) s.shifts = [];
+  var today = localDateStr();
+  var clockInISO = today + 'T' + timeVal + ':00';
+  s.shifts.push({ in: clockInISO, out: null });
+  s.clockedIn   = true;
+  s.clockedInAt = clockInISO;
+  s.updatedAt   = new Date().toISOString();
+  DB.set('staff', staff);
+  closeClockOutModal();
+  renderStaff();
+  showToast(s.name + ' clocked in at ' + timeVal + ' ✓', 'success');
+}
 
 function showClockOutEntry(s, staff) {
   // Pre-fill times: clock-in time → now
