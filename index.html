@@ -1878,21 +1878,11 @@ function onPinInput(val) {
   if (val.length >= 4) {
     var matched = findByPin(val);
     if (matched) {
-      if (nm) { nm.textContent = matched.name; nm.style.display='block'; }
+      if (nm) { nm.textContent = matched.name + ' ✓'; nm.style.display='block'; }
       if (rl) { rl.textContent = matched.role.charAt(0).toUpperCase()+matched.role.slice(1); rl.style.display='block'; }
-      // Auto-login after short delay so they see the name
-      setTimeout(function(){
-        var inp = document.getElementById('pin-input');
-        if (inp && inp.value===val) submitPin();
-      }, 600);
     } else {
       if (nm) { nm.style.display='none'; }
       if (rl) { rl.style.display='none'; }
-      if (val.length >= 6) {
-        if (err) err.textContent='PIN not recognised';
-        var inp2=document.getElementById('pin-input');
-        if(inp2){inp2.value=''; inp2.focus();}
-      }
     }
   } else {
     if (nm) { nm.style.display='none'; }
