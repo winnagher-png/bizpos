@@ -8759,7 +8759,23 @@ function jjWrite(remote) {
       if (k === 'staff') {
         var remoteStaff = remote[k] || [];
         var localStaff  = local || [];
-        if (!remoteStaff.length) return;
+        // If remote has no staff, never wipe local
+        if (!remoteStaff.length) {
+          // If local is ALSO empty, restore from hardcoded defaults
+          if (!localStaff.length) {
+            var defaultStaff = [
+              {id:"7wxwd4jy",name:"Charne",  role:"manager",    pin:"9921",payType:"daily",  rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+              {id:"mgr-tania",name:"Tania",  role:"manager",    pin:"1987",payType:"daily",  rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+              {id:"sup-mike", name:"Mike",   role:"supervisor", pin:"1234",payType:"daily",  rate:300,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+              {id:"tvox4dgz",name:"Jordan",  role:"cashier",    pin:"6420",payType:"hourly", rate:27, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+              {id:"trainee1",name:"Trainee", role:"cashier",    pin:"1234",payType:"hourly", rate:25, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+            ];
+            localStorage.setItem('staff', JSON.stringify(defaultStaff));
+            clearTimeout(JJ.timer); JJ.pushing=false; JJ.timer=null;
+            jjPush(false);
+          }
+          return;
+        }
 
         // If we just saved staff (pull blocked), keep local completely
         if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
@@ -9189,6 +9205,23 @@ function jjHookDB() {
 function jjInitWithSeed() {
   jjHookDB();
   updateSyncIndicator('syncing', 'Connecting...');
+
+  // GUARD: if staff is empty before pull even starts, restore defaults immediately
+  // so the login screen never shows blank while Firebase loads
+  (function() {
+    var s = JSON.parse(localStorage.getItem('staff') || '[]');
+    if (!s.length) {
+      var def = [
+        {id:"7wxwd4jy",name:"Charne",  role:"manager",    pin:"9921",payType:"daily",  rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+        {id:"mgr-tania",name:"Tania",  role:"manager",    pin:"1987",payType:"daily",  rate:350,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+        {id:"sup-mike", name:"Mike",   role:"supervisor", pin:"1234",payType:"daily",  rate:300,clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+        {id:"tvox4dgz",name:"Jordan",  role:"cashier",    pin:"6420",payType:"hourly", rate:27, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
+        {id:"trainee1",name:"Trainee", role:"cashier",    pin:"1234",payType:"hourly", rate:25, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}}
+      ];
+      localStorage.setItem('staff', JSON.stringify(def));
+      try { renderPinScreen(); } catch(e) {}
+    }
+  })();
 
   jjPull(true, function(hadData) {
     if (hadData) {
