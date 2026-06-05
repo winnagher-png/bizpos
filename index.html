@@ -4829,8 +4829,10 @@ function completeSale() {
     if (p) p.qty = (parseInt(p.qty)||0) - (parseInt(item.qty)||1); // allow negative
   });
   DB.set('products', products);
-  // Block pull for 60 seconds so Firebase doesn't overwrite the deducted stock
-  window._blockPullUntil = Date.now() + 60000;
+  // Block pull for 3 minutes and immediately push to Firebase
+  window._blockPullUntil = Date.now() + 180000;
+  clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
   const deliveryFee    = _isDelivery ? (parseFloat(document.getElementById('sale-delivery-fee')?.value)||0) : 0;
   const deliveryAddress= _isDelivery ? (document.getElementById('sale-delivery-address')?.value||'') : '';
 
