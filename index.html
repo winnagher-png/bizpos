@@ -6929,6 +6929,136 @@ function saveCashup() {
   if (typeof renderExpenses==='function') renderExpenses();
 
   showToast('Cash-up complete! Banked: '+fmt(toBank)+' · Petty cash: '+fmt(pcAfter),'success',5000);
+
+  // ── 6. Email daily report to owner ────────────────────────────────────────
+  setTimeout(function() {
+    try {
+      var allSales = DB.get('sales');
+      var daySales = allSales.filter(function(s){ return !s.voided && localDateStr(s.date) === today; });
+      var dayTotal = daySales.reduce(function(a,s){ return a+s.total; }, 0);
+      var dayCash  = daySales.filter(function(s){ return s.paymentMethod==='cash'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var dayCard  = daySales.filter(function(s){ return s.paymentMethod==='card'||s.paymentMethod==='yoco'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var dayEft   = daySales.filter(function(s){ return s.paymentMethod==='eft'; }).reduce(function(a,s){ return a+s.total; }, 0);
+      var dateLabel = new Date(today).toLocaleDateString('en-ZA', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+
+      // Top sellers
+      var productTotals = {};
+      daySales.forEach(function(s) {
+        (s.items||[]).forEach(function(it) {
+          if (!productTotals[it.name]) productTotals[it.name] = {qty:0, rev:0};
+          productTotals[it.name].qty += (it.qty||1);
+          productTotals[it.name].rev += (it.price||0)*(it.qty||1);
+        });
+      });
+      var topSellers = Object.keys(productTotals).map(function(k){ return {name:k, qty:productTotals[k].qty, rev:productTotals[k].rev}; })
+        .sort(function(a,b){ return b.rev-a.rev; }).slice(0,5);
+
+      // Cashup from today
+      var allCashups = DB.get('cashups')||[];
+      var todayCashup = allCashups.find(function(c){ return c.date && c.date.slice(0,10)===today; }) || {};
+
+      // Variance reports today
+      var stReports = (DB.get('stocktakeReports')||[]).filter(function(r){ return r.committedAt && r.committedAt.slice(0,10)===today; });
+
+      // Petty cash
+      var petty = getPettyCash();
+
+      var body = '============================================
+';
+      body += "JACK & JILL'S ADVENTURE CLUB — DAILY REPORT
+";
+      body += '============================================
+';
+      body += dateLabel + '
+';
+      body += 'Staff on shift: ' + (todayCashup.staff||staffNames||'—') + '
+
+';
+
+      body += '--- SALES SUMMARY ---
+';
+      body += 'Total sales:    R' + dayTotal.toFixed(2) + '
+';
+      body += 'Cash sales:     R' + dayCash.toFixed(2) + '
+';
+      body += 'Card sales:     R' + dayCard.toFixed(2) + '
+';
+      body += 'EFT sales:      R' + dayEft.toFixed(2) + '
+';
+      body += 'Transactions:   ' + daySales.length + '
+
+';
+
+      if (topSellers.length) {
+        body += '--- TOP SELLERS ---
+';
+        topSellers.forEach(function(p,i){ body += (i+1)+'. '+p.name+' — '+p.qty+' units / R'+p.rev.toFixed(2)+'
+'; });
+        body += '
+';
+      }
+
+      body += '--- CASH-UP ---
+';
+      body += 'Cash counted:   R' + (todayCashup.counted||0).toFixed(2) + '
+';
+      body += 'Card declared:  R' + (todayCashup.cardDeclared||0).toFixed(2) + '
+';
+      body += 'EFT declared:   R' + (todayCashup.eftDeclared||0).toFixed(2) + '
+';
+      body += 'Till expenses:  R' + (todayCashup.tillExpenses||0).toFixed(2) + '
+';
+      body += 'Variance:       R' + (todayCashup.variance||0).toFixed(2) + '
+';
+      body += 'Banked:         R' + (todayCashup.toBank||toBank).toFixed(2) + '
+
+';
+
+      if ((todayCashup.cashupExpenses||[]).length) {
+        body += '--- TILL EXPENSES ---
+';
+        (todayCashup.cashupExpenses||[]).forEach(function(e){ body += '  ' + (e.desc||e.category||'Expense') + ': R' + (e.amount||0).toFixed(2) + '
+'; });
+        body += '
+';
+      }
+
+      body += '--- PETTY CASH ---
+';
+      body += 'Balance:        R' + (petty.balance||pcAfter).toFixed(2) + '
+
+';
+
+      if (stReports.length) {
+        body += '--- STOCKTAKE ---
+';
+        stReports.forEach(function(r) {
+          body += 'Location: ' + (r.location||'shop').toUpperCase() + ' | Items: ' + (r.totalCounted||0) + '
+';
+          var gains  = (r.variances||[]).filter(function(v){return v.diff>0;});
+          var losses = (r.variances||[]).filter(function(v){return v.diff<0;});
+          if (gains.length)  gains.forEach(function(v){  body += '  + '+v.diff+' x '+v.name+'
+'; });
+          if (losses.length) losses.forEach(function(v){ body += '  - '+Math.abs(v.diff)+' x '+v.name+'
+'; });
+          if (!gains.length && !losses.length) body += '  No variances
+';
+        });
+        body += '
+';
+      }
+
+      body += '============================================
+';
+      body += 'Sent automatically by BizPos
+';
+
+      var subject = "J&J Daily Report — " + today + " — R" + dayTotal.toFixed(2) + " sales";
+      window.open('mailto:winnagher@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+    } catch(emailErr) {
+      console.warn('Daily email failed:', emailErr);
+    }
+  }, 1500);
 }
 
 function emailCashupReport() {
