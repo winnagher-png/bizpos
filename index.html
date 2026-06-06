@@ -2340,6 +2340,8 @@ function adjustQty(id, delta, loc='shop') {
     p.qty = Math.max(0, (p.qty||0) + delta);
   }
   DB.set('products', products);
+  window._blockPullUntil = Date.now() + 180000;
+  jjPush(false);
   renderInventory();
   checkReorderPoints();
 }
@@ -2363,8 +2365,6 @@ function openAddProduct() {
 }
 
 function openEditProduct(id) {
-  // Pull fresh data first to ensure we have latest stock counts
-  window._blockPullUntil = 0;
   var doOpen = function() {
     const p = DB.get('products').find(x=>x.id===id);
     if (!p) return;
@@ -2662,6 +2662,8 @@ function saveWriteoff() {
   const notes = document.getElementById('wo-notes').value.trim();
   p.qty -= qty;
   DB.set('products', products);
+  window._blockPullUntil = Date.now() + 180000;
+  jjPush(false);
   const wo = DB.get('writeoffs');
   wo.unshift({ id: uid(), productId: pid, productName: p.name, qty, reason, notes, value: qty*p.cost, date: new Date().toISOString(), staffId: currentUser?.id, staffName: currentUser?.name, writtenOffOnDate: new Date().toISOString().slice(0,10) });
   DB.set('writeoffs', wo);
@@ -2991,8 +2993,8 @@ function commitStocktake() {
     }
   });
   DB.set('products', products);
-  // Block auto-pull for 45 seconds — enough for push to land, short enough laptop can pull soon
-  window._blockPullUntil = Date.now() + 45000;
+  // Block auto-pull for 5 minutes — give push time to land on all devices
+  window._blockPullUntil = Date.now() + 300000;
   // Push immediately
   if (typeof jjPush === 'function') {
     clearTimeout(JJ.timer);
@@ -3003,8 +3005,8 @@ function commitStocktake() {
     setTimeout(function() {
       if (typeof jjPush === 'function') jjPush(true);
     }, 5000);
-    // Release pull block after 45 seconds
-    setTimeout(function() { window._blockPullUntil = 0; }, 45000);
+    // Release pull block after 5 minutes to allow sync
+    setTimeout(function() { window._blockPullUntil = 0; }, 300000);
   }
   showToast('Stocktake saved! Pushing to cloud...', 'success', 3000);
 
@@ -5028,8 +5030,9 @@ function _doVoidSale(id, reason) {
   });
   DB.set('sales', sales);
   DB.set('products', products);
-  window._blockPullUntil = Date.now() + 60000;
+  window._blockPullUntil = Date.now() + 180000;
   clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+  jjPush(false);
   jjPush(false);
   setTimeout(function(){ jjPush(true); }, 4000);
   closeModal('modal-sale-detail');
@@ -8198,6 +8201,8 @@ function submitTransfer() {
   if (isS2W) { p.qty = shopBefore - qty; p.qtyWh = whBefore + qty; }
   else { p.qtyWh = whBefore - qty; p.qty = shopBefore + qty; }
   DB.set('products', products);
+  window._blockPullUntil = Date.now() + 180000;
+  jjPush(false);
 
   // Log transfer
   const transfers = DB.get('stockTransfers') || [];
@@ -8395,9 +8400,7 @@ function submitGRV() {
   // Close modal first so user isn't waiting
   closeModal('modal-grv');
 
-  // Clear pull block and pull fresh stock before adding quantities
-  window._blockPullUntil = 0;
-
+  // Pull fresh stock first, then apply GRV quantities
   function applyGRV() {
     const products = DB.get('products') || [];
     let totalValue = 0;
@@ -8418,9 +8421,11 @@ function submitGRV() {
       totalValue += (line.qty||0) * (line.unitCost||0);
     });
 
-    // Save products and immediately block pull for 3 minutes
+    // Save products and immediately push to Firebase
     DB.set('products', products);
-    window._blockPullUntil = Date.now() + 180000;
+    window._blockPullUntil = Date.now() + 300000;
+    clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+    jjPush(false);
 
     // Link to PO if selected
     var linkedPONum = '';
@@ -8532,6 +8537,9 @@ function processNewGRVProducts(newItems, loc, supplierId, idx) {
       if (loc === 'warehouse') p.qtyWh = (p.qtyWh||0) + item.qty;
       else p.qty = (p.qty||0) + item.qty;
       DB.set('products', products);
+      window._blockPullUntil = Date.now() + 300000;
+      clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+      jjPush(false);
     }
     // Process next new product
     processNewGRVProducts(newItems, loc, supplierId, idx + 1);
@@ -8799,28 +8807,29 @@ function jjWrite(remote) {
         if (!remProds.length) return;
 
         // Compare timestamps — always prefer the most recently changed qty
-        var remoteAt      = remote._at ? new Date(remote._at).getTime() : 0;
-        var localLastPush = window._lastSuccessfulPushAt || 0;
+        var remoteAt        = remote._at ? new Date(remote._at).getTime() : 0;
+        var localLastPush   = window._lastSuccessfulPushAt || 0;
         var localLastChange = window._lastLocalProductChange || 0;
-
-        // Local wins if: we changed something more recently than Firebase was last updated
-        var localQtyWins = localLastChange > remoteAt || localLastPush > remoteAt;
+        var localIsNewer    = localLastChange > remoteAt || localLastPush > remoteAt;
 
         var result = remProds.map(function(rp) {
           var lp = locProds.find(function(x){ return x.id === rp.id; });
           if (!lp) return rp; // new product from another device
 
-          // Always use remote for non-qty fields (name, price, category etc)
-          var merged = JSON.parse(JSON.stringify(rp));
+          var merged = JSON.parse(JSON.stringify(rp)); // start with remote (has latest name/price/category)
+          var localQty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : 0;
+          var remoteQty  = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : 0;
+          var localQtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : 0;
+          var remoteQtyWh= parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
 
-          if (localQtyWins) {
-            // Local qty is more up to date — protect it
-            merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
-            merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+          if (localIsNewer) {
+            // We made a change more recently — protect local qty completely
+            merged.qty   = localQty;
+            merged.qtyWh = localQtyWh;
           } else {
-            // Remote is more up to date (another device made a change)
-            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : 0;
-            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
+            // Remote is newer (another device, e.g. a sale or GRV on another device)
+            merged.qty   = remoteQty;
+            merged.qtyWh = remoteQtyWh;
           }
           return merged;
         });
@@ -11732,6 +11741,8 @@ function openQuickNewProduct(defaultName, callback) {
     };
     products.push(newProd);
     DB.set('products', products);
+    window._blockPullUntil = Date.now() + 180000;
+    jjPush(false);
     renderInventory && renderInventory();
     modal.remove();
     showToast('Product "' + name + '" created', 'success');
@@ -12733,8 +12744,7 @@ function confirmPOReceipt(id, po, modal) {
     showToast('Please select where stock is being received', 'error');
     return;
   }
-  // Pull fresh stock first so we're adding to current quantities
-  window._blockPullUntil = 0;
+  // Apply GRV to current stock
   var notes  = document.getElementById('recv-notes').value.trim();
   var isConsignment = po.payStatus === 'consignment' || po.stockStatus === 'consignment';
 
@@ -12791,10 +12801,11 @@ function confirmPOReceipt(id, po, modal) {
       receivedItems.push({ productId: item.productId, productName: item.productName, qty: recvQty, unitCost: item.unitCost||0 });
     });
 
-    // Save updated stock quantities
+    // Save updated stock quantities and push to Firebase immediately
     DB.set('products', products);
-    // Block pull for 3 minutes so Firebase doesn't overwrite what we just added
-    window._blockPullUntil = Date.now() + 180000;
+    window._blockPullUntil = Date.now() + 300000;
+    clearTimeout(JJ.timer); JJ.pushing = false; JJ.timer = null;
+    jjPush(false);
 
     // Auto-create a GRV record so stock receipt is fully audited
     var grvs = DB.get('grvRecords') || [];
