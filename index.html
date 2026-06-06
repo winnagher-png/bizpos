@@ -1625,15 +1625,16 @@ const DB = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)) || [] } catch { return [] } },
   set(key, val) {
     localStorage.setItem(key, JSON.stringify(val));
-    // Auto-push to Firebase after any data change — debounced 1.5s so rapid sets batch together
+    // Block pull for 3 minutes so Firebase can't overwrite local changes
+    window._blockPullUntil = Date.now() + 180000;
+    // Immediately push to Firebase — no delay
     if (typeof jjPush === 'function' && typeof JJ !== 'undefined') {
       clearTimeout(JJ._autoTimer);
+      clearTimeout(JJ.timer);
+      JJ.timer = null;
       JJ._autoTimer = setTimeout(function() {
-        if (!JJ.pushing) {
-          clearTimeout(JJ.timer); JJ.timer = null;
-          jjPush(true);
-        }
-      }, 1500);
+        if (!JJ.pushing) jjPush(true);
+      }, 800);
     }
   },
   getObj(key, def={}) { try { return JSON.parse(localStorage.getItem(key)) || def } catch { return def } },
