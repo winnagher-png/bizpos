@@ -1625,6 +1625,10 @@ const DB = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)) || [] } catch { return [] } },
   set(key, val) {
     localStorage.setItem(key, JSON.stringify(val));
+    // Track when products were last changed locally
+    if (key === 'products') {
+      window._lastLocalProductChange = Date.now();
+    }
     // Block pull for 3 minutes so Firebase can't overwrite local changes
     window._blockPullUntil = Date.now() + 180000;
     // Immediately push to Firebase — no delay
@@ -2572,8 +2576,8 @@ function saveProduct() {
     category:  (document.getElementById('p-cat')      ? document.getElementById('p-cat').value.trim()      : ''),
     price:     parseFloat(document.getElementById('p-price')    ? document.getElementById('p-price').value    : 0) || 0,
     cost:      parseFloat(document.getElementById('p-cost')     ? document.getElementById('p-cost').value     : 0) || 0,
-    qty:       parseInt(document.getElementById('p-qty')        ? document.getElementById('p-qty').value        : 0) || 0,
-    qtyWh:     parseInt(document.getElementById('p-qty-wh')     ? document.getElementById('p-qty-wh').value     : 0) || 0,
+    qty:       document.getElementById('p-qty') && document.getElementById('p-qty').value !== '' ? parseInt(document.getElementById('p-qty').value) || 0 : null,
+    qtyWh:     document.getElementById('p-qty-wh') && document.getElementById('p-qty-wh').value !== '' ? parseInt(document.getElementById('p-qty-wh').value) || 0 : null,
     lowAt:     parseInt(document.getElementById('p-low')        ? document.getElementById('p-low').value        : 5) || 5,
     reorderAt: parseInt(document.getElementById('p-reorder')    ? document.getElementById('p-reorder').value    : 0) || 0,
     reorderQty:parseInt(document.getElementById('p-reorder-qty')? document.getElementById('p-reorder-qty').value: 0) || 0,
@@ -2586,6 +2590,9 @@ function saveProduct() {
   if (id) {
     var idx = products.findIndex(function(p){ return p.id === id; });
     if (idx > -1) {
+      // Only update qty if explicitly set — never zero out existing stock
+      if (data.qty === null) delete data.qty;
+      if (data.qtyWh === null) delete data.qtyWh;
       products[idx] = Object.assign({}, products[idx], data);
     }
   } else {
@@ -8766,15 +8773,15 @@ function jjWrite(remote) {
       }
 
       if (k === 'products') {
-        // Block during active stocktake — don't overwrite counts in progress
+        // SAFETY 1: Block pull entirely if block is active (recent local change)
         if (window._blockPullUntil && Date.now() < window._blockPullUntil) return;
 
-        // SAFETY: Never accept all-zero product data from Firebase
+        // SAFETY 2: Never accept all-zero product data from Firebase
         if (Array.isArray(remote[k]) && remote[k].length > 0) {
           var remoteTotal = remote[k].reduce(function(s,p){ return s+(parseInt(p.qty)||0)+(parseInt(p.qtyWh)||0); }, 0);
           var localTotal  = Array.isArray(local) ? local.reduce(function(s,p){ return s+(parseInt(p.qty)||0)+(parseInt(p.qtyWh)||0); }, 0) : 0;
           if (remoteTotal === 0 && localTotal > 0) {
-            console.warn('SAFETY: Rejecting all-zero product data from Firebase — keeping local');
+            console.warn('SAFETY: Rejecting all-zero product data from Firebase');
             return;
           }
         }
@@ -8782,38 +8789,43 @@ function jjWrite(remote) {
         var remProds = remote[k] || [];
         var locProds = local || [];
 
+        // If local is empty and remote has data — restore from remote
         if (!locProds.length && remProds.length) {
           localStorage.setItem('products', JSON.stringify(remProds));
           return;
         }
 
-        // Remote timestamp vs local last-push timestamp
-        // If remote is newer than our last push, remote qty wins (another device updated it)
-        // If local is newer (we just pushed), local qty wins
-        var remoteAt = remote._at ? new Date(remote._at).getTime() : 0;
+        // If remote is empty — keep local always
+        if (!remProds.length) return;
+
+        // Compare timestamps — always prefer the most recently changed qty
+        var remoteAt      = remote._at ? new Date(remote._at).getTime() : 0;
         var localLastPush = window._lastSuccessfulPushAt || 0;
-        var remoteIsNewer = remoteAt > localLastPush;
+        var localLastChange = window._lastLocalProductChange || 0;
+
+        // Local wins if: we changed something more recently than Firebase was last updated
+        var localQtyWins = localLastChange > remoteAt || localLastPush > remoteAt;
 
         var result = remProds.map(function(rp) {
           var lp = locProds.find(function(x){ return x.id === rp.id; });
-          if (!lp) return rp; // new product, take from remote
+          if (!lp) return rp; // new product from another device
 
-          // Use remote as base (latest name/price/category)
+          // Always use remote for non-qty fields (name, price, category etc)
           var merged = JSON.parse(JSON.stringify(rp));
 
-          if (remoteIsNewer) {
-            // Remote device pushed more recently — trust remote qty completely
-            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : 0;
-            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
-          } else {
-            // We pushed more recently — keep our local qty
+          if (localQtyWins) {
+            // Local qty is more up to date — protect it
             merged.qty   = parseInt(lp.qty)   >= 0 ? parseInt(lp.qty)   : (parseInt(rp.qty)||0);
             merged.qtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : (parseInt(rp.qtyWh)||0);
+          } else {
+            // Remote is more up to date (another device made a change)
+            merged.qty   = parseInt(rp.qty)   >= 0 ? parseInt(rp.qty)   : 0;
+            merged.qtyWh = parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
           }
           return merged;
         });
 
-        // Keep local products not in remote (newly added on this device)
+        // Keep local-only products (not yet pushed to remote)
         locProds.forEach(function(lp) {
           if (!result.find(function(rp){ return rp.id === lp.id; })) {
             result.push(lp);
