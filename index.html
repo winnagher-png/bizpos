@@ -1625,12 +1625,19 @@ const DB = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)) || [] } catch { return [] } },
   set(key, val) {
     localStorage.setItem(key, JSON.stringify(val));
-    // Track when products were last changed locally
+    // Track when products were last changed locally — persist across page loads
     if (key === 'products') {
       window._lastLocalProductChange = Date.now();
+      try { localStorage.setItem('_lastLocalProductChange', String(Date.now())); } catch(e){}
+      // Stamp each product with when it was last changed (for per-product merge)
+      if (Array.isArray(val)) {
+        var now = Date.now();
+        val.forEach(function(p) { if (!p._changedAt) p._changedAt = now; });
+        localStorage.setItem(key, JSON.stringify(val));
+      }
     }
-    // Block pull for 3 minutes so Firebase can't overwrite local changes
-    window._blockPullUntil = Date.now() + 180000;
+    // Block product overwrite for 2 minutes — still allow other data to sync
+    window._blockPullUntil = Date.now() + 120000;
     // Immediately push to Firebase — no delay
     if (typeof jjPush === 'function' && typeof JJ !== 'undefined') {
       clearTimeout(JJ._autoTimer);
@@ -1826,6 +1833,21 @@ function restoreStaffProfiles() {
 
 // MASTER PIN LIST — hardcoded into the app, cannot be wiped
 // To add/change staff PINs, update this list and redeploy
+// Restore persisted timestamps on page load and assign device ID
+(function() {
+  try {
+    var lpc = localStorage.getItem('_lastLocalProductChange');
+    if (lpc) window._lastLocalProductChange = parseInt(lpc);
+    var lpp = localStorage.getItem('_lastSuccessfulPushAt');
+    if (lpp) window._lastSuccessfulPushAt = parseInt(lpp);
+    // Assign a stable device ID for this browser
+    if (!localStorage.getItem('_deviceId')) {
+      localStorage.setItem('_deviceId', 'dev_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6));
+    }
+    window._deviceId = localStorage.getItem('_deviceId');
+  } catch(e){}
+})();
+
 var STAFF_PINS = [
   {id:"7wxwd4jy", name:"Charne",  role:"manager",    pin:"9921", payType:"daily",  rate:350, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
   {id:"mgr-tania",name:"Tania",   role:"manager",    pin:"1987", payType:"daily",  rate:350, clockedIn:false,clockedInAt:null,shifts:[],onLeave:false,commission:{enabled:false,target:4000,rate:10}},
@@ -2660,7 +2682,7 @@ function saveWriteoff() {
   if (qty > p.qty) { alert('Cannot write off more than current stock ('+p.qty+')'); return; }
   const reason = document.getElementById('wo-reason').value;
   const notes = document.getElementById('wo-notes').value.trim();
-  p.qty -= qty;
+  p.qty -= qty; p._changedAt = Date.now();
   DB.set('products', products);
   window._blockPullUntil = Date.now() + 180000;
   jjPush(false);
@@ -4836,7 +4858,7 @@ function completeSale() {
   // Deduct from shop stock only
   saleCart.forEach(item => {
     const p = products.find(x=>x.id===item.productId);
-    if (p) p.qty = (parseInt(p.qty)||0) - (parseInt(item.qty)||1); // allow negative
+    if (p) { p.qty = (parseInt(p.qty)||0) - (parseInt(item.qty)||1); p._changedAt = Date.now(); } // allow negative
   });
   DB.set('products', products);
   // Block pull for 3 minutes and immediately push to Firebase
@@ -5026,7 +5048,7 @@ function _doVoidSale(id, reason) {
   var products = DB.get('products');
   s.items.forEach(function(item) {
     var p = products.find(function(x){ return x.id===item.productId; });
-    if (p) p.qty = (p.qty||0) + item.qty;
+    if (p) { p.qty = (p.qty||0) + item.qty; p._changedAt = Date.now(); }
   });
   DB.set('sales', sales);
   DB.set('products', products);
@@ -8200,6 +8222,7 @@ function submitTransfer() {
   const shopBefore = p.qty||0, whBefore = p.qtyWh||0;
   if (isS2W) { p.qty = shopBefore - qty; p.qtyWh = whBefore + qty; }
   else { p.qtyWh = whBefore - qty; p.qty = shopBefore + qty; }
+  p._changedAt = Date.now();
   DB.set('products', products);
   window._blockPullUntil = Date.now() + 180000;
   jjPush(false);
@@ -8572,7 +8595,7 @@ var JJ = {
 
 // ── Collect ALL local data into one object ──
 function jjCollect() {
-  var d = { _at: new Date().toISOString(), _v: 3 };
+  var d = { _at: new Date().toISOString(), _v: 3, _device: window._deviceId || 'unknown' };
   JJ.keys.forEach(function(k) {
     try {
       var raw = localStorage.getItem(k);
@@ -8705,11 +8728,23 @@ function jjWrite(remote) {
           localStorage.setItem('sales', JSON.stringify(remoteSales));
           return;
         }
-        // Add any remote sales not in local
+        // Merge sales — add missing, update if remote has newer data (e.g. voided flag)
         var merged2 = localSales.slice();
         remoteSales.forEach(function(rs) {
-          if (!merged2.find(function(ls){ return ls.id === rs.id; })) {
-            merged2.push(rs);
+          var existIdx = merged2.findIndex(function(ls){ return ls.id === rs.id; });
+          if (existIdx === -1) {
+            merged2.push(rs); // new sale from another device
+          } else {
+            // Update if remote voided the sale and local hasn't
+            if (rs.voided && !merged2[existIdx].voided) {
+              merged2[existIdx] = rs;
+            }
+            // Update if remote has newer updatedAt
+            var remDate = new Date(rs.updatedAt || rs.date || 0).getTime();
+            var locDate = new Date(merged2[existIdx].updatedAt || merged2[existIdx].date || 0).getTime();
+            if (remDate > locDate) {
+              merged2[existIdx] = rs;
+            }
           }
         });
         // Sort by date
@@ -8822,12 +8857,20 @@ function jjWrite(remote) {
           var localQtyWh = parseInt(lp.qtyWh) >= 0 ? parseInt(lp.qtyWh) : 0;
           var remoteQtyWh= parseInt(rp.qtyWh) >= 0 ? parseInt(rp.qtyWh) : 0;
 
-          if (localIsNewer) {
-            // We made a change more recently — protect local qty completely
+          // Use per-product timestamps if available, otherwise fall back to global
+          var localProdChanged  = parseInt(lp._changedAt || 0);
+          var remoteProdChanged = parseInt(rp._changedAt || 0);
+          var localWins;
+          if (localProdChanged && remoteProdChanged) {
+            localWins = localProdChanged >= remoteProdChanged;
+          } else {
+            localWins = localIsNewer;
+          }
+
+          if (localWins) {
             merged.qty   = localQty;
             merged.qtyWh = localQtyWh;
           } else {
-            // Remote is newer (another device, e.g. a sale or GRV on another device)
             merged.qty   = remoteQty;
             merged.qtyWh = remoteQtyWh;
           }
@@ -8972,6 +9015,7 @@ function jjPush(silent) {
     JJ.connected  = r && r.ok;
     if (r && r.ok) {
       window._lastSuccessfulPushAt = Date.now(); // track when WE last pushed successfully
+      try { localStorage.setItem('_lastSuccessfulPushAt', String(Date.now())); } catch(e){}
       updateSyncIndicator('ok', 'Saved ' + new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'}));
       setTimeout(function(){ updateSyncIndicator('ok','Sync on'); }, 3000);
       // Refresh UI with merged data
@@ -8992,10 +9036,10 @@ function jjPush(silent) {
 
 // ── Pull from Firebase ──
 function jjPull(silent, cb) {
-  if (window._blockPullUntil && Date.now() < window._blockPullUntil) {
-    if (cb) cb(false);
-    return;
-  }
+  // Don't skip pull entirely — just let jjWrite handle what to merge and what to protect
+  // This ensures other devices' sales, members, expenses still sync even when we have
+  // a recent local product change
+  // (product qty protection happens inside jjWrite, not here)
   if (!silent) updateSyncIndicator('syncing', 'Updating...');
 
   fetch(JJ.url + '?t=' + Date.now(), { cache: 'no-store' })
