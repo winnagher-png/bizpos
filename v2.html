@@ -233,7 +233,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -283,6 +283,7 @@ function startListeners(){
     if(currentTab==='cashup')renderCashup();
   });
   db.ref('bizpos/expenses').on('value',s=>{STATE.expenses=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/pettyCash').on('value',s=>{STATE.pettyCash=s.val()||{balance:0,history:[]};});
   db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
   db.ref('bizpos/staff').on('value',s=>{STATE.staff=s.val()?Object.values(s.val()):STAFF_PINS;});
 }
@@ -473,6 +474,8 @@ function openEditProduct(id){
 }
 
 // ── CASHUP ──
+let tillExpenses = []; // itemised till expenses for current cashup
+
 function renderCashup(){
   const el=document.getElementById('cashup-content');if(!el)return;
   const today=localDateStr();
@@ -481,26 +484,107 @@ function renderCashup(){
   const cash=ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const card=ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
   const eft=ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
+  const pc=STATE.pettyCash||{balance:0};
+  const expTotal=tillExpenses.reduce((a,e)=>a+e.amount,0);
+  const toBank=Math.max(0,cash-expTotal);
+  const variance=(cash+card+eft)-tot;
+
+  // Cashup history
+  const history=[...STATE.cashups].sort((a,b)=>b.date>a.date?1:-1).slice(0,5);
+
   el.innerHTML=`
     <div class="card">
-      <div class="section-title">Today's Sales — ${today}</div>
-      <div class="totals-row"><span style="font-weight:700">Total</span><span style="font-weight:800;color:var(--accent)">${fmt(tot)}</span></div>
-      <div class="totals-row"><span style="color:var(--text3)">Cash</span><span>${fmt(cash)}</span></div>
-      <div class="totals-row"><span style="color:var(--text3)">Card</span><span>${fmt(card)}</span></div>
-      <div class="totals-row"><span style="color:var(--text3)">EFT</span><span>${fmt(eft)}</span></div>
+      <div class="section-title">Today — ${today}</div>
+      <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;color:var(--accent)">${fmt(tot)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">💵 Cash</span><span>${fmt(cash)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${ts.length}</span></div>
     </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="section-title" style="margin:0">Till Expenses</div>
+        <button class="btn btn-secondary" onclick="addTillExpense()" style="padding:6px 12px;font-size:12px">+ Add</button>
+      </div>
+      <div id="till-expense-list" style="margin-top:8px">${renderTillExpenses()}</div>
+      <div class="totals-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
+        <span style="font-weight:700">Total Expenses</span>
+        <span style="font-weight:800;color:var(--red)">${fmt(expTotal)}</span>
+      </div>
+    </div>
+
     <div class="card">
       <div class="section-title">Cash Up</div>
-      <label>Cash counted</label><input type="number" class="input" id="cu-counted" placeholder="0.00">
-      <label>Card declared</label><input type="number" class="input" id="cu-card" placeholder="0.00" value="${card.toFixed(2)}">
-      <label>EFT declared</label><input type="number" class="input" id="cu-eft" placeholder="0.00" value="${eft.toFixed(2)}">
-      <label>Till expenses (cash paid out)</label><input type="number" class="input" id="cu-expenses" placeholder="0.00">
-      <label>Staff on shift</label><input type="text" class="input" id="cu-staff" placeholder="e.g. Jordan & Charne" value="${currentUser?currentUser.name:''}">
-      <label>Notes</label><input type="text" class="input" id="cu-notes" placeholder="Optional">
+      <label>Cash counted in till</label>
+      <input type="number" class="input" id="cu-counted" placeholder="0.00" oninput="updateCashupCalc()">
+      <label>Card declared</label>
+      <input type="number" class="input" id="cu-card" placeholder="0.00" value="${card.toFixed(2)}" oninput="updateCashupCalc()">
+      <label>EFT declared</label>
+      <input type="number" class="input" id="cu-eft" placeholder="0.00" value="${eft.toFixed(2)}" oninput="updateCashupCalc()">
+      <label>Staff on shift</label>
+      <input type="text" class="input" id="cu-staff" placeholder="e.g. Jordan & Charne" value="${currentUser?currentUser.name:''}">
+      <label>Notes</label>
+      <input type="text" class="input" id="cu-notes" placeholder="Optional">
+      <div id="cashup-calc" style="margin-top:12px;background:var(--bg3);border-radius:10px;padding:12px">
+        <div class="totals-row"><span style="color:var(--text3)">Till expenses</span><span style="color:var(--red)">${fmt(expTotal)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Variance</span><span id="cu-variance-disp" style="font-weight:700">—</span></div>
+        <div class="totals-row"><span style="font-weight:700">To Bank</span><span id="cu-tobank-disp" style="font-weight:800;color:var(--accent)">—</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Petty Cash</span><span style="font-weight:700">${fmt(pc.balance)}</span></div>
+      </div>
       <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="saveCashup()">✓ Commit Cash Up</button>
-    </div>`;
+    </div>
+
+    ${history.length?`<div class="card">
+      <div class="section-title">Recent Cash Ups</div>
+      ${history.map(c=>`
+        <div class="totals-row">
+          <div><div style="font-size:13px;font-weight:700">${c.date?c.date.slice(0,10):''}</div><div style="font-size:11px;color:var(--text3)">${c.staffName||'—'}</div></div>
+          <div style="text-align:right"><div style="font-weight:700;color:var(--accent)">${fmt(c.toBank)} banked</div><div style="font-size:11px;color:var(--text3)">Sales: ${fmt(c.totalSales)}</div></div>
+        </div>`).join('<hr style="border:none;border-top:1px solid var(--border)">')}
+    </div>`:''}`;
 }
+
+function renderTillExpenses(){
+  if(!tillExpenses.length) return '<div style="color:var(--text3);font-size:12px;text-align:center;padding:8px">No till expenses</div>';
+  return tillExpenses.map((e,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;font-size:13px">${e.desc}</div>
+      <div style="font-weight:700;color:var(--red)">${fmt(e.amount)}</div>
+      <button onclick="removeTillExpense(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer">×</button>
+    </div>`).join('');
+}
+
+function addTillExpense(){
+  const desc=prompt('Expense description (e.g. Jordan wages):');
+  if(!desc||!desc.trim())return;
+  const amount=parseFloat(prompt('Amount (R):')||'0');
+  if(!amount)return;
+  tillExpenses.push({id:uid(),desc:desc.trim(),amount,category:'Till expense'});
+  renderCashup();
+}
+
+function removeTillExpense(i){
+  tillExpenses.splice(i,1);
+  renderCashup();
+}
+
+function updateCashupCalc(){
+  const today=localDateStr();
+  const ts=STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
+  const tot=ts.reduce((a,s)=>a+s.total,0);
+  const counted=parseFloat(document.getElementById('cu-counted').value)||0;
+  const card=parseFloat(document.getElementById('cu-card').value)||0;
+  const eft=parseFloat(document.getElementById('cu-eft').value)||0;
+  const expTotal=tillExpenses.reduce((a,e)=>a+e.amount,0);
+  const toBank=Math.max(0,counted-expTotal);
+  const variance=counted-(tot-card-eft);
+  const vEl=document.getElementById('cu-variance-disp');
+  const bEl=document.getElementById('cu-tobank-disp');
+  if(vEl){vEl.textContent=fmt(variance);vEl.style.color=variance>=0?'var(--green)':'var(--red)';}
+  if(bEl)bEl.textContent=fmt(toBank);
+}
+
 async function saveCashup(){
   const today=localDateStr();
   const ts=STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
@@ -508,16 +592,39 @@ async function saveCashup(){
   const counted=parseFloat(document.getElementById('cu-counted').value)||0;
   const card=parseFloat(document.getElementById('cu-card').value)||0;
   const eft=parseFloat(document.getElementById('cu-eft').value)||0;
-  const expenses=parseFloat(document.getElementById('cu-expenses').value)||0;
   const staff=document.getElementById('cu-staff').value||currentUser.name;
   const notes=document.getElementById('cu-notes').value||'';
-  const toBank=Math.max(0,counted-expenses);
+  const expTotal=tillExpenses.reduce((a,e)=>a+e.amount,0);
+  const toBank=Math.max(0,counted-expTotal);
   const variance=counted-(totalSales-card-eft);
-  const cashup={id:'cu_'+today.replace(/-/g,''),date:today+'T12:00:00.000Z',staff:currentUser.id,staffName:staff,totalSales,counted,cardDeclared:card,eftDeclared:eft,tillExpenses:expenses,toBank,variance,notes,committedAt:new Date().toISOString()};
+
+  const cashup={
+    id:'cu_'+today.replace(/-/g,''),
+    date:today+'T12:00:00.000Z',
+    staff:currentUser.id, staffName:staff,
+    totalSales, counted,
+    cardDeclared:card, eftDeclared:eft,
+    tillExpenses:expTotal,
+    cashupExpenses:tillExpenses.slice(),
+    toBank, variance, notes,
+    committedAt:new Date().toISOString()
+  };
+
+  // Update petty cash
+  const pc=STATE.pettyCash||{balance:0,history:[]};
+  const newBalance=(pc.balance||0)+toBank;
+  const pcEntry={id:uid(),date:new Date().toISOString(),delta:toBank,newBalance,oldBalance:pc.balance||0,reason:'Cashup banked — '+today,type:'cashup'};
+  const newHistory=[...(pc.history||[]),pcEntry];
+
   try{
-    await db.ref('bizpos/cashups/'+cashup.id).set(cashup);
+    await Promise.all([
+      db.ref('bizpos/cashups/'+cashup.id).set(cashup),
+      db.ref('bizpos/pettyCash').set({balance:newBalance,history:newHistory}),
+    ]);
+    tillExpenses=[];
     showToast('Cash up saved — Banked: '+fmt(toBank),'success',5000);
-  }catch(e){showToast('Error saving cashup','error');}
+    renderCashup();
+  }catch(e){showToast('Error saving cashup','error');console.error(e);}
 }
 
 // ── REPORTS ──
