@@ -545,12 +545,12 @@ function renderReports(){
 
 // ── INIT ──
 window.addEventListener('DOMContentLoaded',function(){
-  startListeners();
-  setTimeout(function(){
-    document.getElementById('loading').classList.add('hidden');
-    document.getElementById('pin-screen').classList.remove('hidden');
-    setTimeout(()=>document.getElementById('pin-input').focus(),100);
-  },1500);
+  // Show PIN screen immediately — don't wait for Firebase
+  document.getElementById('loading').classList.add('hidden');
+  document.getElementById('pin-screen').classList.remove('hidden');
+  setTimeout(()=>document.getElementById('pin-input').focus(),100);
+  // Start Firebase listeners in background
+  try { startListeners(); } catch(e) { console.error('Firebase init error:', e); }
 });
 </script>
 </body>
