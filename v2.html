@@ -270,21 +270,21 @@ function startListeners(){
     STATE.connected=s.val();
     document.getElementById('sync-status').textContent=STATE.connected?'● Live':'○ Offline';
   });
-  db.ref('products').on('value',s=>{
+  db.ref('bizpos/products').on('value',s=>{
     STATE.products=s.val()?Object.values(s.val()):[];
     renderProductGrid();renderStockList();
   });
-  db.ref('sales').orderByChild('date').limitToLast(500).on('value',s=>{
+  db.ref('bizpos/sales').orderByChild('date').limitToLast(500).on('value',s=>{
     STATE.sales=s.val()?Object.values(s.val()):[];
     if(currentTab==='reports')renderReports();
   });
-  db.ref('cashups').on('value',s=>{
+  db.ref('bizpos/cashups').on('value',s=>{
     STATE.cashups=s.val()?Object.values(s.val()):[];
     if(currentTab==='cashup')renderCashup();
   });
-  db.ref('expenses').on('value',s=>{STATE.expenses=s.val()?Object.values(s.val()):[];});
-  db.ref('members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
-  db.ref('staff').on('value',s=>{STATE.staff=s.val()?Object.values(s.val()):STAFF_PINS;});
+  db.ref('bizpos/expenses').on('value',s=>{STATE.expenses=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/staff').on('value',s=>{STATE.staff=s.val()?Object.values(s.val()):STAFF_PINS;});
 }
 
 // ── LOGIN ──
@@ -418,10 +418,10 @@ async function completeSale(){
   const total=cart.reduce((a,x)=>a+x.lineTotal,0);
   const saleId=uid();
   const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,voided:false};
-  const updates={'sales/'+saleId:sale};
+  const updates={'bizpos/sales/'+saleId:sale};
   cart.forEach(item=>{
     const p=STATE.products.find(x=>x.id===item.productId);
-    if(p){updates['products/'+item.productId+'/qty']=Math.max(0,(p.qty||0)-item.qty);updates['products/'+item.productId+'/updatedAt']=new Date().toISOString();}
+    if(p){updates['bizpos/products/'+item.productId+'/qty']=Math.max(0,(p.qty||0)-item.qty);updates['bizpos/products/'+item.productId+'/updatedAt']=new Date().toISOString();}
   });
   try{
     await db.ref().update(updates);
@@ -458,14 +458,14 @@ function openAddProduct(){
   const price=parseFloat(prompt('Selling price (R):')||'0');
   const qty=parseInt(prompt('Opening stock:')||'0');
   const prod={id:uid(),name:name.trim(),price,cost:0,qty,qtyWh:0,category:'Uncategorised',active:true,reorderAt:5,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-  db.ref('products/'+prod.id).set(prod).then(()=>showToast(name+' added','success'));
+  db.ref('bizpos/products/'+prod.id).set(prod).then(()=>showToast(name+' added','success'));
 }
 function openEditProduct(id){
   const p=STATE.products.find(x=>x.id===id);if(!p)return;
   const name=prompt('Name:',p.name);if(name===null)return;
   const price=parseFloat(prompt('Price:',p.price)||p.price);
   const qty=parseInt(prompt('Stock qty:',p.qty||0)||p.qty||0);
-  db.ref('products/'+id).update({name:name.trim(),price,qty,updatedAt:new Date().toISOString()}).then(()=>showToast('Updated','success'));
+  db.ref('bizpos/products/'+id).update({name:name.trim(),price,qty,updatedAt:new Date().toISOString()}).then(()=>showToast('Updated','success'));
 }
 
 // ── CASHUP ──
@@ -511,7 +511,7 @@ async function saveCashup(){
   const variance=counted-(totalSales-card-eft);
   const cashup={id:'cu_'+today.replace(/-/g,''),date:today+'T12:00:00.000Z',staff:currentUser.id,staffName:staff,totalSales,counted,cardDeclared:card,eftDeclared:eft,tillExpenses:expenses,toBank,variance,notes,committedAt:new Date().toISOString()};
   try{
-    await db.ref('cashups/'+cashup.id).set(cashup);
+    await db.ref('bizpos/cashups/'+cashup.id).set(cashup);
     showToast('Cash up saved — Banked: '+fmt(toBank),'success',5000);
   }catch(e){showToast('Error saving cashup','error');}
 }
