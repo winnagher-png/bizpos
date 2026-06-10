@@ -1,0 +1,27 @@
+{
+  "name": "Jack & Jill's BizPos",
+  "short_name": "BizPos",
+  "description": "Jack & Jill's Adventure Club — Point of Sale System",
+  "start_url": "/bizpos/",
+  "scope": "/bizpos/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#2D6A4F",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%232D6A4F'/><text y='130' x='96' font-size='120' text-anchor='middle' fill='white'>🌿</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='80' fill='%232D6A4F'/><text y='350' x='256' font-size='320' text-anchor='middle' fill='white'>🌿</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "en-ZA"
+}
