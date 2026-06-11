@@ -143,6 +143,7 @@
       </div>
       <div id="pos-member-badge" style="display:none;background:#FEF3C7;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;color:#92400E;white-space:nowrap;cursor:pointer" onclick="clearPosMember()">✕</div>
     </div>
+    <div id="pos-clockout-bar" style="display:none;margin-bottom:8px"></div>
     <div class="card">
       <div class="section-title">Current Sale</div>
       <div id="pos-items"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
@@ -391,6 +392,7 @@ function startListeners(){
     if(currentTab==='members')renderMembersList();
     // Re-check birthdays when member data loads
     if(currentUser) checkBirthdays();
+    if(currentUser) renderPOSClockoutBar();
   });
   db.ref('bizpos/rollTasks').on('value',s=>{
     STATE.rollTasks = s.val() ? Object.values(s.val()) : [];
@@ -533,6 +535,24 @@ function showBirthdayBanner(names, count){
     <button onclick="document.getElementById('birthday-banner').remove()" style="background:rgba(255,255,255,.3);border:none;color:#fff;font-size:16px;font-weight:800;cursor:pointer;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center">×</button>
   </div>`;
   document.body.appendChild(banner);
+}
+
+function renderPOSClockoutBar(){
+  const bar = document.getElementById('pos-clockout-bar');
+  if(!bar || !currentUser) return;
+  const isCashier = currentUser.role === 'cashier';
+  if(!isCashier){ bar.style.display='none'; return; }
+  const live = STATE.staff.find(s=>s.id===currentUser.id)||{};
+  if(!live.clockedIn){ bar.style.display='none'; return; }
+  const startTime = live.clockedInAt ? new Date(live.clockedInAt).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
+  bar.style.display = 'block';
+  bar.innerHTML = `<div style="background:linear-gradient(135deg,#0066FF,#00CFFF);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+    <div style="flex:1">
+      <div style="font-size:12px;font-weight:800;color:#fff">⏱️ On shift since ${startTime}</div>
+      <div style="font-size:11px;color:rgba(255,255,255,.8)">${currentUser.name}</div>
+    </div>
+    <button onclick="clockOut('${currentUser.id}')" style="background:#fff;color:#0066FF;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer">Clock Out</button>
+  </div>`;
 }
 
 function applyRolePermissions(role){
