@@ -1054,35 +1054,335 @@ async function saveCashup(){
     tillExpenses=[];
     showToast('Cash up saved — Banked: '+fmt(toBank),'success',5000);
     renderCashup();
+    // Send daily email report
+    setTimeout(()=>{ try{ sendDailyEmail(cashup); }catch(e){ console.warn('Email failed:',e); } }, 1000);
   }catch(e){showToast('Error saving cashup','error');console.error(e);}
 }
 
+
 // ── REPORTS ──
+
 function renderReports(){
-  const el=document.getElementById('reports-content');if(!el)return;
-  const today=localDateStr();
-  const ts=STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
-  const tot=ts.reduce((a,s)=>a+s.total,0);
-  const week=STATE.sales.filter(s=>!s.voided&&new Date(s.date)>=new Date(Date.now()-7*864e5)).reduce((a,s)=>a+s.total,0);
-  el.innerHTML=`
+  const el = document.getElementById('reports-content');
+  if(!el) return;
+  const today = localDateStr();
+  const ts = STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
+  const tot = ts.reduce((a,s)=>a+s.total,0);
+  const cash = ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
+  const card = ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
+  const eft  = ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
+
+  // Last 7 days
+  const week = STATE.sales.filter(s=>!s.voided&&new Date(s.date)>=new Date(Date.now()-7*864e5));
+  const weekTot = week.reduce((a,s)=>a+s.total,0);
+
+  // Last 30 days
+  const month = STATE.sales.filter(s=>!s.voided&&new Date(s.date)>=new Date(Date.now()-30*864e5));
+  const monthTot = month.reduce((a,s)=>a+s.total,0);
+
+  // Top 5 products today
+  const prodTotals = {};
+  ts.forEach(s=>(s.items||[]).forEach(i=>{
+    if(!prodTotals[i.name]) prodTotals[i.name]={qty:0,rev:0};
+    prodTotals[i.name].qty+=(i.qty||1);
+    prodTotals[i.name].rev+=(i.price||0)*(i.qty||1);
+  }));
+  const topProds = Object.entries(prodTotals).sort((a,b)=>b[1].rev-a[1].rev).slice(0,5);
+
+  // Staff hours this week (managers/supervisors)
+  const mgmtStaff = STAFF_PINS.filter(s=>s.role!=='cashier');
+  const staffHours = mgmtStaff.map(s=>{
+    const live = STATE.staff.find(x=>x.id===s.id)||{};
+    const shift = live.todayShift;
+    return shift ? {name:s.name,role:s.role,hours:shift.hours,date:shift.date} : null;
+  }).filter(Boolean);
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:16px">
+      <button class="btn btn-primary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('today',this)">Today</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('week',this)">7 Days</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('month',this)">30 Days</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('cashups',this)">Cashups</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('staff',this)">Staff Hours</button>
+    </div>
+    <div id="report-body">
+      ${renderTodayReport(today,ts,tot,cash,card,eft,topProds)}
+    </div>`;
+}
+
+function setReportPeriod(period, btn){
+  document.querySelectorAll('#tab-reports .btn').forEach(b=>b.className='btn btn-secondary');
+  btn.className='btn btn-primary';
+  const el = document.getElementById('report-body');
+  if(!el) return;
+  const today = localDateStr();
+
+  if(period==='today'){
+    const ts=STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
+    const tot=ts.reduce((a,s)=>a+s.total,0);
+    const cash=ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
+    const card=ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
+    const eft=ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
+    const prodTotals={};
+    ts.forEach(s=>(s.items||[]).forEach(i=>{
+      if(!prodTotals[i.name])prodTotals[i.name]={qty:0,rev:0};
+      prodTotals[i.name].qty+=(i.qty||1);prodTotals[i.name].rev+=(i.price||0)*(i.qty||1);
+    }));
+    const topProds=Object.entries(prodTotals).sort((a,b)=>b[1].rev-a[1].rev).slice(0,5);
+    el.innerHTML = renderTodayReport(today,ts,tot,cash,card,eft,topProds);
+
+  } else if(period==='week'||period==='month'){
+    const days = period==='week'?7:30;
+    const sales=STATE.sales.filter(s=>!s.voided&&new Date(s.date)>=new Date(Date.now()-days*864e5));
+    const tot=sales.reduce((a,s)=>a+s.total,0);
+    // Group by day
+    const byDay={};
+    sales.forEach(s=>{
+      const d=localDateStr(s.date);
+      if(!byDay[d])byDay[d]={date:d,total:0,count:0};
+      byDay[d].total+=s.total; byDay[d].count++;
+    });
+    const days_arr=Object.values(byDay).sort((a,b)=>b.date>a.date?1:-1);
+    const prodTotals={};
+    sales.forEach(s=>(s.items||[]).forEach(i=>{
+      if(!prodTotals[i.name])prodTotals[i.name]={qty:0,rev:0};
+      prodTotals[i.name].qty+=(i.qty||1);prodTotals[i.name].rev+=(i.price||0)*(i.qty||1);
+    }));
+    const topProds=Object.entries(prodTotals).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
+    el.innerHTML = `
+      <div class="card">
+        <div class="section-title">Last ${days} days</div>
+        <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;color:#1A1A1A">${fmt(tot)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${sales.length}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Avg per day</span><span>${fmt(days_arr.length?tot/days_arr.length:0)}</span></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Daily Breakdown</div>
+        ${days_arr.map(d=>`<div class="totals-row">
+          <span style="font-size:12px">${d.date}</span>
+          <span style="font-size:12px;color:var(--text3)">${d.count} sales</span>
+          <span style="font-weight:700">${fmt(d.total)}</span>
+        </div>`).join('')}
+      </div>
+      <div class="card">
+        <div class="section-title">Top Products</div>
+        ${topProds.map((p,i)=>`<div class="totals-row">
+          <span style="font-size:13px">${i+1}. ${p[0]}</span>
+          <span style="font-size:12px;color:var(--text3)">${p[1].qty} units</span>
+          <span style="font-weight:700">${fmt(p[1].rev)}</span>
+        </div>`).join('')}
+      </div>`;
+
+  } else if(period==='cashups'){
+    const cashups=[...STATE.cashups].sort((a,b)=>b.date>a.date?1:-1).slice(0,30);
+    el.innerHTML = `
+      <div class="card">
+        <div class="section-title">Cashup History</div>
+        ${cashups.length?cashups.map(c=>`
+          <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:13px;font-weight:700">${c.date?c.date.slice(0,10):''}</div>
+                <div style="font-size:11px;color:var(--text3)">${c.staffName||'—'} · ${c.totalSales?fmt(c.totalSales)+' sales':''}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:800;color:#16A34A">${fmt(c.toBank||0)} banked</div>
+                <div style="font-size:11px;color:${(c.variance||0)>=0?'#16A34A':'#DC2626'}">${(c.variance||0)>=0?'+':''}${fmt(c.variance||0)} variance</div>
+              </div>
+            </div>
+          </div>`).join(''):'<div style="color:var(--text3);text-align:center;padding:20px">No cashups yet</div>'}
+      </div>`;
+
+  } else if(period==='staff'){
+    renderStaffHoursReport(el);
+  }
+}
+
+function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
+  return `
     <div class="card">
       <div class="section-title">Today — ${today}</div>
-      <div class="totals-row"><span style="font-weight:700">Sales</span><span style="font-weight:800;color:var(--accent)">${fmt(tot)}</span></div>
+      <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;font-size:20px;color:#1A1A1A">${fmt(tot)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">💵 Cash</span><span>${fmt(cash)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${ts.length}</span></div>
     </div>
-    <div class="card">
-      <div class="section-title">Last 7 Days</div>
-      <div class="totals-row"><span style="font-weight:700">Total</span><span style="font-weight:800;color:var(--accent)">${fmt(week)}</span></div>
-    </div>
+    ${topProds.length?`<div class="card">
+      <div class="section-title">Top Sellers Today</div>
+      ${topProds.map((p,i)=>`<div class="totals-row">
+        <span style="font-size:13px">${i+1}. ${p[0]}</span>
+        <span style="font-size:12px;color:var(--text3)">${p[1].qty} units</span>
+        <span style="font-weight:700">${fmt(p[1].rev)}</span>
+      </div>`).join('')}
+    </div>`:''}
     <div class="card">
       <div class="section-title">Recent Sales</div>
-      ${[...STATE.sales].reverse().slice(0,15).map(s=>`
+      ${[...ts].reverse().slice(0,10).map(s=>`
         <div class="totals-row">
-          <span style="font-size:12px;color:var(--text3)">${new Date(s.date).toLocaleDateString('en-ZA')} · ${s.staffName||'—'} · ${s.paymentMethod}</span>
+          <div>
+            <div style="font-size:12px;font-weight:600">${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}</div>
+            <div style="font-size:11px;color:var(--text3)">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.paymentMethod}</div>
+          </div>
           <span style="font-weight:700">${fmt(s.total)}</span>
         </div>`).join('')}
     </div>`;
 }
+
+function renderStaffHoursReport(el){
+  // Get shifts for past 14 days from staff data
+  const shifts = [];
+  STATE.staff.forEach(s=>{
+    const pin = STAFF_PINS.find(p=>p.id===s.id);
+    if(!pin) return;
+    // Today's shift
+    if(s.todayShift){
+      shifts.push({...s.todayShift, name:pin.name, role:pin.role, staffId:s.id});
+    }
+    // Past shifts
+    (s.shiftHistory||[]).forEach(sh=>{
+      shifts.push({...sh, name:pin.name, role:pin.role, staffId:s.id});
+    });
+  });
+  shifts.sort((a,b)=>b.date>a.date?1:-1);
+
+  // Group by staff
+  const byStaff = {};
+  shifts.forEach(sh=>{
+    if(!byStaff[sh.staffId]) byStaff[sh.staffId]={name:sh.name,role:sh.role,shifts:[],totalHours:0,totalWage:0};
+    byStaff[sh.staffId].shifts.push(sh);
+    byStaff[sh.staffId].totalHours += (sh.hours||0);
+    byStaff[sh.staffId].totalWage  += (sh.wage||0);
+  });
+
+  const mgmt = Object.values(byStaff).filter(s=>s.role!=='cashier');
+  const cashiers = Object.values(byStaff).filter(s=>s.role==='cashier');
+
+  el.innerHTML = `
+    ${mgmt.length?`<div class="card">
+      <div class="section-title" style="color:#1A1A1A">👔 Managers & Supervisors — Hours Log</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Pay these manually — use this to calculate wages</div>
+      ${mgmt.map(s=>`
+        <div style="border-bottom:1px solid var(--border);padding:10px 0">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="font-weight:700">${s.name}</span>
+            <span style="font-weight:700">${s.totalHours.toFixed(1)} hrs total</span>
+          </div>
+          ${s.shifts.slice(0,7).map(sh=>`
+            <div style="font-size:11px;color:var(--text3);display:flex;justify-content:space-between;padding:2px 0">
+              <span>${sh.date}</span>
+              <span>${sh.start||'—'} – ${sh.end||'—'}</span>
+              <span>${(sh.hours||0).toFixed(1)}hrs</span>
+            </div>`).join('')}
+        </div>`).join('')}
+    </div>`:''}
+    ${cashiers.length?`<div class="card">
+      <div class="section-title">👷 Cashiers — Wages Summary</div>
+      ${cashiers.map(s=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:700">${s.name}</div>
+            <div style="font-size:11px;color:var(--text3)">${s.totalHours.toFixed(1)} hrs · ${s.shifts.length} shifts</div>
+          </div>
+          <div style="font-weight:800;color:#DC2626">R${s.totalWage.toFixed(2)}</div>
+        </div>`).join('')}
+    </div>`:''}
+    ${!shifts.length?'<div style="color:var(--text3);text-align:center;padding:30px">No shift data yet</div>':''}`;
+}
+
+// ── DAILY EMAIL ON CASHUP ──
+function sendDailyEmail(cashup){
+  try{
+    const today = localDateStr();
+    const ts = STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
+    const tot = ts.reduce((a,s)=>a+s.total,0);
+    const cash = ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
+    const card = ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
+    const eft  = ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
+    const pc   = STATE.pettyCash||{balance:0};
+
+    // Top sellers
+    const prodTotals={};
+    ts.forEach(s=>(s.items||[]).forEach(i=>{
+      if(!prodTotals[i.name])prodTotals[i.name]={qty:0,rev:0};
+      prodTotals[i.name].qty+=(i.qty||1);prodTotals[i.name].rev+=(i.price||0)*(i.qty||1);
+    }));
+    const topProds=Object.entries(prodTotals).sort((a,b)=>b[1].rev-a[1].rev).slice(0,5);
+
+    // Today's expenses
+    const todayExp = STATE.expenses.filter(e=>e.date===today);
+    const cardExp  = todayExp.filter(e=>e.payMethod==='card'||e.payMethod==='eft'||e.payMethod==='debit_order');
+    const pcExp    = todayExp.filter(e=>e.payMethod==='petty_cash');
+
+    // Staff shifts today
+    const shifts = STATE.staff.map(s=>{
+      const pin=STAFF_PINS.find(p=>p.id===s.id);
+      if(!pin||!s.todayShift||s.todayShift.date!==today) return null;
+      return {name:pin.name,role:pin.role,...s.todayShift};
+    }).filter(Boolean);
+
+    let body = "============================================\n";
+    body += "JACK & JILL'S ADVENTURE CLUB — DAILY REPORT\n";
+    body += "============================================\n";
+    body += "Date:   "+today+"\n";
+    body += "Staff:  "+(cashup.staffName||currentUser.name)+"\n\n";
+
+    body += "--- SALES ---\n";
+    body += "Total:        "+fmt(tot)+"\n";
+    body += "Cash:         "+fmt(cash)+"\n";
+    body += "Card:         "+fmt(card)+"\n";
+    body += "EFT:          "+fmt(eft)+"\n";
+    body += "Transactions: "+ts.length+"\n\n";
+
+    if(topProds.length){
+      body += "--- TOP SELLERS ---\n";
+      topProds.forEach((p,i)=>{ body+=(i+1)+". "+p[0]+" — "+p[1].qty+" units / "+fmt(p[1].rev)+"\n"; });
+      body += "\n";
+    }
+
+    body += "--- CASH UP ---\n";
+    body += "Cash counted: "+fmt(cashup.counted||0)+"\n";
+    body += "Card:         "+fmt(cashup.cardDeclared||0)+"\n";
+    body += "EFT:          "+fmt(cashup.eftDeclared||0)+"\n";
+    body += "Till expenses:"+fmt(cashup.tillExpenses||0)+"\n";
+    body += "Variance:     "+fmt(cashup.variance||0)+"\n";
+    body += "Banked:       "+fmt(cashup.toBank||0)+"\n\n";
+
+    if((cashup.cashupExpenses||[]).length){
+      body += "--- TILL EXPENSES ---\n";
+      cashup.cashupExpenses.forEach(e=>{ body+="  "+e.desc+": "+fmt(e.amount)+"\n"; });
+      body += "\n";
+    }
+
+    body += "--- PETTY CASH ---\n";
+    body += "Balance: "+fmt(pc.balance)+"\n\n";
+
+    if(cardExp.length){
+      body += "--- CARD/EFT EXPENSES ---\n";
+      cardExp.forEach(e=>{ body+="  "+e.desc+": "+fmt(e.amount)+" ["+e.payMethod+"]\n"; });
+      body += "Total: "+fmt(cardExp.reduce((a,e)=>a+e.amount,0))+"\n\n";
+    }
+
+    if(pcExp.length){
+      body += "--- PETTY CASH EXPENSES ---\n";
+      pcExp.forEach(e=>{ body+="  "+e.desc+": "+fmt(e.amount)+"\n"; });
+      body += "Total: "+fmt(pcExp.reduce((a,e)=>a+e.amount,0))+"\n\n";
+    }
+
+    if(shifts.length){
+      body += "--- STAFF HOURS ---\n";
+      shifts.forEach(s=>{ body+="  "+s.name+" ("+s.role+"): "+s.start+" – "+s.end+" ("+s.hours+"hrs)"+(s.wage?", R"+s.wage:"")+"\n"; });
+      body += "\n";
+    }
+
+    body += "============================================\n";
+    body += "Sent by BizPos\n";
+
+    const subject = "J&J Daily Report — "+today+" — "+fmt(tot)+" sales";
+    window.open('mailto:winnagher@gmail.com?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
+  }catch(e){ console.warn('Email failed:',e); }
+}
+
 
 // ── EXPENSES & PETTY CASH ──
 let expenseFilter = 'all';
