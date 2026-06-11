@@ -400,16 +400,23 @@ function applyRolePermissions(role){
   const isSupervisor = role === 'supervisor';
   const isCashier    = role === 'cashier';
 
-  // Bottom nav — show/hide tabs
+  // Everyone gets POS
+  // Cashiers + supervisors get cashup (limited)
+  // Only managers get full reports, expenses, POs, members, stock editing
+
   const navCashup  = document.getElementById('nav-cashup');
   const navReports = document.getElementById('nav-reports');
   const navStock   = document.getElementById('nav-stock');
   const navMore    = document.getElementById('nav-more');
 
-  if(navCashup)  navCashup.style.display  = (isManager||isSupervisor) ? '' : 'none';
+  // Cashup — everyone can access (for banking, till expenses, clock in/out)
+  if(navCashup)  navCashup.style.display = '';
+  // Reports — managers only
   if(navReports) navReports.style.display = isManager ? '' : 'none';
-  if(navStock)   navStock.style.display   = (isManager||isSupervisor) ? '' : 'none';
-  if(navMore)    navMore.style.display    = isManager ? '' : 'none';
+  // Stock — managers and supervisors (for stocktake, write-offs)
+  if(navStock)   navStock.style.display = (isManager||isSupervisor) ? '' : 'none';
+  // More (expenses, POs, members, staff) — managers only
+  if(navMore)    navMore.style.display = isManager ? '' : 'none';
 }
 function lockApp(){
   currentUser=null; cart=[]; selectedPayMethod=null;
@@ -563,9 +570,112 @@ function openAddProduct(){
 }
 function openEditProduct(id){
   const p=STATE.products.find(x=>x.id===id);if(!p)return;
-  const name=prompt('Name:',p.name);if(name===null)return;
-  const price=parseFloat(prompt('Price:',p.price)||p.price);
-  const qty=parseInt(prompt('Stock qty:',p.qty||0)||p.qty||0);
+  const isManager = currentUser && currentUser.role==='manager';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">
+    <div class="modal-title">${p.name}</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:16px">
+      <div class="totals-row"><span style="color:var(--text3)">Price</span><span style="font-weight:700">${fmt(p.price)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Shop floor</span><span style="font-weight:700">${p.qty||0}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Warehouse</span><span style="font-weight:700">${p.qtyWh||0}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Category</span><span style="font-weight:700">${p.category||'—'}</span></div>
+    </div>
+    <button class="btn btn-danger btn-full" style="margin-bottom:8px" onclick="openWriteOff('${p.id}',this)">🗑️ Write Off Stock</button>
+    ${isManager?`<button class="btn btn-secondary btn-full" style="margin-bottom:8px" onclick="openEditProductForm('${p.id}',this)">✏️ Edit Product</button>`:''}
+    <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function openWriteOff(id, btn){
+  const p = STATE.products.find(x=>x.id===id);if(!p)return;
+  btn.closest('.modal-overlay').remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">
+    <div class="modal-title">Write Off Stock</div>
+    <div style="font-size:14px;font-weight:700;margin-bottom:4px">${p.name}</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">Shop: ${p.qty||0} · Warehouse: ${p.qtyWh||0}</div>
+    <label>Location</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <button id="wo-loc-shop" class="btn btn-primary" style="font-size:12px" onclick="setWOLoc(this,'shop')">🏪 Shop Floor</button>
+      <button id="wo-loc-wh" class="btn btn-secondary" style="font-size:12px" onclick="setWOLoc(this,'warehouse')">🏭 Warehouse</button>
+    </div>
+    <label>Quantity to write off *</label>
+    <input type="number" class="input" id="wo-qty" placeholder="0" inputmode="numeric">
+    <label>Reason *</label>
+    <select class="input" id="wo-reason" style="margin-top:4px">
+      <option value="">Select reason...</option>
+      <option>Damaged</option>
+      <option>Expired</option>
+      <option>Stolen</option>
+      <option>Used in store</option>
+      <option>Sample / tester</option>
+      <option>Admin error</option>
+      <option>Other</option>
+    </select>
+    <label>Notes</label>
+    <input type="text" class="input" id="wo-notes" placeholder="Optional details">
+    <div style="background:#FEE2E2;border-radius:8px;padding:10px;margin-top:12px;font-size:12px;color:#991B1B;font-weight:600">
+      ⚠️ This permanently removes stock and cannot be undone
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-danger" onclick="commitWriteOff('${p.id}',this)">Confirm Write Off</button>
+    </div>
+  </div>`;
+  overlay._wloc = 'shop';
+  document.body.appendChild(overlay);
+}
+
+function setWOLoc(btn, loc){
+  btn.closest('.modal').querySelector('#wo-loc-shop').className = loc==='shop'?'btn btn-primary':'btn btn-secondary';
+  btn.closest('.modal').querySelector('#wo-loc-wh').className   = loc==='warehouse'?'btn btn-primary':'btn btn-secondary';
+  btn.closest('.modal-overlay')._wloc = loc;
+}
+
+async function commitWriteOff(id, btn){
+  const overlay = btn.closest('.modal-overlay');
+  const qty     = parseInt(document.getElementById('wo-qty').value)||0;
+  const reason  = document.getElementById('wo-reason').value;
+  const notes   = document.getElementById('wo-notes').value||'';
+  const loc     = overlay._wloc || 'shop';
+  if(!qty || qty<=0){ showToast('Enter quantity','error'); return; }
+  if(!reason){ showToast('Select a reason','error'); return; }
+  const p = STATE.products.find(x=>x.id===id);if(!p)return;
+  const available = loc==='warehouse'?(p.qtyWh||0):(p.qty||0);
+  if(qty > available){ showToast('Not enough stock in this location','error'); return; }
+  const updates = {};
+  if(loc==='warehouse'){
+    updates['bizpos/products/'+id+'/qtyWh'] = available - qty;
+  } else {
+    updates['bizpos/products/'+id+'/qty'] = available - qty;
+  }
+  updates['bizpos/products/'+id+'/updatedAt'] = new Date().toISOString();
+  // Log write-off record
+  const woId = uid();
+  updates['bizpos/writeoffs/'+woId] = {
+    id:woId, productId:id, productName:p.name,
+    qty, location:loc, reason, notes,
+    date:new Date().toISOString().slice(0,10),
+    createdAt:new Date().toISOString(),
+    createdBy:currentUser.name,
+    value: qty*(p.cost||p.price||0)
+  };
+  try{
+    await db.ref().update(updates);
+    overlay.remove();
+    showToast(qty+' x '+p.name+' written off','success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+function openEditProductForm(id, btn){
+  const p = STATE.products.find(x=>x.id===id);if(!p)return;
+  btn.closest('.modal-overlay').remove();
+  const name  = prompt('Name:', p.name); if(name===null)return;
+  const price = parseFloat(prompt('Price:', p.price)||p.price);
+  const qty   = parseInt(prompt('Shop floor qty:', p.qty||0)||p.qty||0);
   db.ref('bizpos/products/'+id).update({name:name.trim(),price,qty,updatedAt:new Date().toISOString()}).then(()=>showToast('Updated','success'));
 }
 
@@ -1876,6 +1986,23 @@ function buildAndEmailStocktakeReport(r){
 
   const subject = "Stocktake Report — " + (r.committedAt?r.committedAt.slice(0,10):'') + " — " + (r.location==='warehouse'?'Warehouse':'Shop Floor');
   window.open('mailto:winnagher@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
+}
+
+// ── SHIFT HOURS ──
+async function logShiftHours(){
+  const start = (document.getElementById('shift-start').value||'').trim();
+  const end   = (document.getElementById('shift-end').value||'').trim();
+  if(!start||!end){ showToast('Enter start and end time','error'); return; }
+  // Calculate hours
+  const [sh,sm] = start.split(':').map(Number);
+  const [eh,em] = end.split(':').map(Number);
+  const hours = Math.max(0, ((eh*60+em)-(sh*60+sm))/60).toFixed(2);
+  const shift = { start, end, hours:parseFloat(hours), date:new Date().toISOString().slice(0,10), staffId:currentUser.id, staffName:currentUser.name };
+  try{
+    await db.ref('bizpos/staff/'+currentUser.id+'/todayShift').set(shift);
+    showToast('Shift logged — '+hours+' hours','success');
+    renderCashup();
+  }catch(e){ showToast('Error logging shift','error'); }
 }
 
 // ── INIT ──
