@@ -132,6 +132,13 @@
       <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
     </div>
     <div id="product-grid"></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <div style="flex:1;position:relative">
+        <input type="text" class="input" id="pos-member-search" placeholder="👤 Search member..." oninput="searchPosMember(this.value)" autocomplete="off" style="font-size:13px">
+        <div id="pos-member-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;z-index:999;max-height:160px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
+      </div>
+      <div id="pos-member-badge" style="display:none;background:#FEF3C7;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;color:#92400E;white-space:nowrap;cursor:pointer" onclick="clearPosMember()">✕</div>
+    </div>
     <div class="card">
       <div class="section-title">Current Sale</div>
       <div id="pos-items"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
@@ -213,6 +220,18 @@
       <button class="btn btn-primary" onclick="startStocktake()" id="btn-start-stocktake" style="padding:8px 14px;font-size:12px">+ New Count</button>
     </div>
     <div id="stocktake-content"></div>
+  </div>
+
+  <div id="tab-members" class="tab">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:18px;font-weight:800">Members</div>
+      <button class="btn btn-primary" onclick="openAddMember()" style="padding:8px 14px;font-size:12px">+ Add Member</button>
+    </div>
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="input" placeholder="Search members..." oninput="filterMembers(this.value)" style="padding-left:36px">
+    </div>
+    <div id="members-list"></div>
   </div>
 
   <div id="tab-more" class="tab">
@@ -302,7 +321,7 @@ const STAFF_PINS = [
   {id:'trainee1',  name:'Trainee', role:'cashier',             pin:'1234', payType:'hourly', rate:25},
 ];
 
-let currentUser=null, cart=[], selectedPayMethod=null, currentTab='pos';
+let currentUser=null, cart=[], selectedPayMethod=null, currentTab='pos', selectedMember=null;
 
 // ── HELPERS ──
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
@@ -349,7 +368,10 @@ function startListeners(){
     if(currentTab==='expenses')renderPettyCash();
     if(currentTab==='cashup')renderCashup();
   });
-  db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/members').on('value',s=>{
+    STATE.members=s.val()?Object.values(s.val()):[];
+    if(currentTab==='members')renderMembersList();
+  });
   db.ref('bizpos/stocktakeReports').on('value',s=>{
     STATE.stocktakeReports=s.val()?Object.values(s.val()):[];
     if(currentTab==='stocktake')renderStocktakeContent();
@@ -443,6 +465,7 @@ function switchTab(tab){
   if(tab==='expenses'){renderExpenses();renderPettyCash();}
   if(tab==='po')renderPOList();
   if(tab==='stocktake')renderStocktakeContent();
+  if(tab==='members')renderMembersList();
 }
 
 // ── POS ──
@@ -505,6 +528,11 @@ function openPayment(){
   openModal('modal-payment');
 }
 function selectPayment(method){
+  // Check store credit availability
+  if(method==='store_credit'){
+    if(!selectedMember){ showToast('Select a member first to use store credit','error'); return; }
+    if((selectedMember.storeCredit||0)<=0){ showToast(selectedMember.name+' has no store credit','error'); return; }
+  }
   selectedPayMethod=method;
   ['cash','card','eft','credit'].forEach(m=>{document.getElementById('pay-'+m).className='btn btn-secondary';});
   document.getElementById('pay-'+method).className='btn btn-primary';
@@ -532,10 +560,29 @@ async function completeSale(){
       updates['bizpos/products/'+item.productId+'/updatedAt']=new Date().toISOString();
     }
   });
+  // Add member info to sale
+  if(selectedMember){
+    updates['bizpos/sales/'+saleId+'/memberId'] = selectedMember.id;
+    updates['bizpos/sales/'+saleId+'/memberName'] = selectedMember.name;
+  }
+
   try{
     await db.ref().update(updates);
-    showToast('Sale complete — '+fmt(total),'success');
-    closeModal('modal-payment');clearSale();
+    // Award loyalty points
+    if(selectedMember){
+      const pts = Math.floor(total/100);
+      if(pts>0){
+        await awardLoyaltyPoints(selectedMember.id, total);
+        showToast('Sale complete — '+fmt(total)+' · +'+pts+' pts for '+selectedMember.name,'success',4000);
+      } else {
+        showToast('Sale complete — '+fmt(total),'success');
+      }
+    } else {
+      showToast('Sale complete — '+fmt(total),'success');
+    }
+    clearPosMember();
+    closeModal('modal-payment');
+    clearSale();
   }catch(e){showToast('Error — check connection','error');console.error(e);}
 }
 
@@ -2058,6 +2105,295 @@ async function logShiftHours(){
     showToast('Shift logged — '+hoursRounded+'hrs — wage R'+wage+' added to till expenses','success',5000);
     renderCashup();
   }catch(e){ showToast('Error logging shift','error'); }
+}
+
+
+// ── MEMBERS & LOYALTY ──
+// Loyalty: 1 point per R100 spent. 1000 points = R100 store credit
+
+function renderMembersList(filter){
+  const el = document.getElementById('members-list');
+  if(!el) return;
+  let members = STATE.members.slice().sort((a,b) => a.name.localeCompare(b.name));
+  if(filter) members = members.filter(m =>
+    m.name.toLowerCase().includes(filter.toLowerCase()) ||
+    (m.phone||'').includes(filter) ||
+    (m.memberId||'').toLowerCase().includes(filter.toLowerCase())
+  );
+
+  // Summary bar
+  const totalMembers = STATE.members.length;
+  const totalPoints  = STATE.members.reduce((a,m)=>a+(m.points||0),0);
+  const totalCredit  = STATE.members.reduce((a,m)=>a+(m.storeCredit||0),0);
+
+  const summaryHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:800">${totalMembers}</div>
+        <div style="font-size:10px;color:var(--text3)">MEMBERS</div>
+      </div>
+      <div style="background:#FEF3C7;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:#92400E">${totalPoints}</div>
+        <div style="font-size:10px;color:#92400E">TOTAL PTS</div>
+      </div>
+      <div style="background:#DCFCE7;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:18px;font-weight:800;color:#166534">${fmt(totalCredit)}</div>
+        <div style="font-size:10px;color:#166534">STORE CREDIT</div>
+      </div>
+    </div>`;
+
+  if(!members.length){
+    el.innerHTML = summaryHTML + '<div style="color:var(--text3);text-align:center;padding:30px">No members yet</div>';
+    return;
+  }
+
+  el.innerHTML = summaryHTML + members.map(m => {
+    const initials = m.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    const birthday = m.idNumber ? getBirthdayFromID(m.idNumber) : null;
+    const isBirthday = birthday && birthday === new Date().toISOString().slice(5,10);
+    return `<div class="list-item" onclick="openMemberDetail('${m.id}')">
+      <div style="width:42px;height:42px;border-radius:50%;background:#1A1A1A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;flex-shrink:0">${initials}${isBirthday?' 🎂':''}</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${m.name}${m.memberId?' <span style="font-size:11px;color:var(--text3);font-weight:400">#${m.memberId}</span>':''}</div>
+        <div class="list-item-sub">${m.phone||'No phone'} · Joined ${m.joinDate||'—'}</div>
+        <div style="margin-top:3px;display:flex;gap:8px">
+          <span style="font-size:11px;font-weight:700;color:#92400E">⭐ ${m.points||0} pts</span>
+          ${(m.storeCredit||0)>0?`<span style="font-size:11px;font-weight:700;color:#166534">💳 ${fmt(m.storeCredit)} credit</span>`:''}
+        </div>
+      </div>
+      <div style="color:var(--text3)">›</div>
+    </div>`;
+  }).join('');
+}
+
+function filterMembers(val){ renderMembersList(val); }
+
+function getBirthdayFromID(id){
+  if(!id || id.length < 6) return null;
+  const y = id.slice(0,2);
+  const m = id.slice(2,4);
+  const d = id.slice(4,6);
+  return m + '-' + d; // MM-DD for comparison
+}
+
+function getAgeFromID(id){
+  if(!id || id.length < 6) return null;
+  const y = parseInt(id.slice(0,2));
+  const fullY = y > 30 ? 1900+y : 2000+y;
+  const m = parseInt(id.slice(2,4))-1;
+  const d = parseInt(id.slice(4,6));
+  const born = new Date(fullY,m,d);
+  const age = Math.floor((Date.now()-born)/(365.25*24*60*60*1000));
+  return age;
+}
+
+function openAddMember(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">
+    <div class="modal-title">New Member</div>
+    <label>Full Name *</label>
+    <input type="text" class="input" id="mem-name" placeholder="Full name">
+    <label>Phone *</label>
+    <input type="tel" class="input" id="mem-phone" placeholder="e.g. 0821234567" inputmode="tel">
+    <label>SA ID Number (optional — for birthday detection)</label>
+    <input type="text" class="input" id="mem-id" placeholder="13-digit SA ID" inputmode="numeric" maxlength="13">
+    <label>Email (optional)</label>
+    <input type="email" class="input" id="mem-email" placeholder="email@example.com">
+    <label>Notes</label>
+    <input type="text" class="input" id="mem-notes" placeholder="Optional">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMember(this)">Add Member</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(()=>document.getElementById('mem-name').focus(),100);
+}
+
+async function saveMember(btn){
+  const name  = (document.getElementById('mem-name').value||'').trim();
+  const phone = (document.getElementById('mem-phone').value||'').trim();
+  const idNum = (document.getElementById('mem-id').value||'').trim();
+  const email = (document.getElementById('mem-email').value||'').trim();
+  const notes = (document.getElementById('mem-notes').value||'').trim();
+  if(!name){ showToast('Enter member name','error'); return; }
+  if(!phone){ showToast('Enter phone number','error'); return; }
+
+  // Format phone to +27
+  let fmtPhone = phone.replace(/\s+/g,'');
+  if(fmtPhone.startsWith('0')) fmtPhone = '+27' + fmtPhone.slice(1);
+  if(!fmtPhone.startsWith('+27')) fmtPhone = '+27' + fmtPhone;
+
+  const memberId = 'JJ' + String(STATE.members.length+1).padStart(4,'0');
+  const age = idNum ? getAgeFromID(idNum) : null;
+  const member = {
+    id: uid(), memberId, name, phone:fmtPhone, idNumber:idNum||'',
+    email, notes, joinDate:new Date().toISOString().slice(0,10),
+    points:0, storeCredit:0, totalSpend:0, visitCount:0,
+    age, createdAt:new Date().toISOString(), createdBy:currentUser.name
+  };
+  try{
+    await db.ref('bizpos/members/'+member.id).set(member);
+    btn.closest('.modal-overlay').remove();
+    showToast(name+' added as member #'+memberId,'success');
+  }catch(e){ showToast('Error adding member','error'); }
+}
+
+function openMemberDetail(id){
+  const m = STATE.members.find(x=>x.id===id);
+  if(!m) return;
+  const age = m.idNumber ? getAgeFromID(m.idNumber) : null;
+  const birthday = m.idNumber ? getBirthdayFromID(m.idNumber) : null;
+  const isBirthday = birthday && birthday === new Date().toISOString().slice(5,10);
+  const pointsToCredit = Math.floor((m.points||0)/1000)*100;
+  const nextMilestone = 1000 - ((m.points||0) % 1000);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.innerHTML = `<div class="modal" style="max-width:420px">
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="width:64px;height:64px;border-radius:50%;background:#1A1A1A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;margin:0 auto 8px">
+        ${m.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)}
+      </div>
+      <div style="font-size:20px;font-weight:800">${m.name} ${isBirthday?'🎂':''}</div>
+      <div style="font-size:12px;color:var(--text3)">#${m.memberId||'—'} · Member since ${m.joinDate||'—'}</div>
+      ${isBirthday?'<div style="background:#FEF3C7;border-radius:8px;padding:6px 12px;margin-top:6px;font-size:12px;font-weight:700;color:#92400E">🎂 Happy Birthday!</div>':''}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:#FEF3C7;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#92400E">${m.points||0}</div>
+        <div style="font-size:10px;color:#92400E">LOYALTY POINTS</div>
+        <div style="font-size:10px;color:#92400E">${nextMilestone} pts to next R100</div>
+      </div>
+      <div style="background:#DCFCE7;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#166534">${fmt(m.storeCredit||0)}</div>
+        <div style="font-size:10px;color:#166534">STORE CREDIT</div>
+        ${pointsToCredit>0?`<div style="font-size:10px;color:#166534">${fmt(pointsToCredit)} redeemable</div>`:''}
+      </div>
+    </div>
+
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:16px">
+      <div class="totals-row"><span style="color:var(--text3);font-size:13px">Phone</span><span style="font-size:13px">${m.phone||'—'}</span></div>
+      ${m.email?`<div class="totals-row"><span style="color:var(--text3);font-size:13px">Email</span><span style="font-size:13px">${m.email}</span></div>`:''}
+      ${age?`<div class="totals-row"><span style="color:var(--text3);font-size:13px">Age</span><span style="font-size:13px">${age} years</span></div>`:''}
+      <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total spend</span><span style="font-size:13px;font-weight:700">${fmt(m.totalSpend||0)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3);font-size:13px">Visits</span><span style="font-size:13px">${m.visitCount||0}</span></div>
+      ${m.notes?`<div class="totals-row"><span style="color:var(--text3);font-size:13px">Notes</span><span style="font-size:13px">${m.notes}</span></div>`:''}
+    </div>
+
+    ${pointsToCredit>0?`
+    <div style="background:#DCFCE7;border:1px solid #16A34A;border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:#166534;margin-bottom:8px">⭐ Redeem Points</div>
+      <div style="font-size:12px;color:#166534;margin-bottom:8px">${m.points||0} points = ${fmt(pointsToCredit)} store credit available</div>
+      <button class="btn btn-success btn-full" style="font-size:12px" onclick="redeemPoints('${m.id}',${m.points||0},${pointsToCredit},this)">Convert to Store Credit</button>
+    </div>`:''}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <button class="btn btn-secondary" onclick="addManualPoints('${m.id}',this)" style="font-size:12px">+ Adjust Points</button>
+      <button class="btn btn-secondary" onclick="addStoreCredit('${m.id}',this)" style="font-size:12px">+ Add Credit</button>
+    </div>
+    <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function redeemPoints(id, points, creditAmount, btn){
+  const m = STATE.members.find(x=>x.id===id);
+  if(!m) return;
+  const pointsUsed = Math.floor(points/1000)*1000;
+  const newPoints = points - pointsUsed;
+  const newCredit = (m.storeCredit||0) + creditAmount;
+  try{
+    await db.ref('bizpos/members/'+id).update({
+      points: newPoints,
+      storeCredit: newCredit,
+      updatedAt: new Date().toISOString()
+    });
+    btn.closest('.modal-overlay').remove();
+    showToast(fmt(creditAmount)+' store credit added to '+m.name,'success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+async function addManualPoints(id, btn){
+  const pts = parseInt(prompt('Add or remove points (use - for deduction):'))||0;
+  if(!pts){ return; }
+  const m = STATE.members.find(x=>x.id===id);
+  if(!m) return;
+  const newPoints = Math.max(0,(m.points||0)+pts);
+  try{
+    await db.ref('bizpos/members/'+id).update({points:newPoints,updatedAt:new Date().toISOString()});
+    btn.closest('.modal-overlay').remove();
+    showToast('Points updated','success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+async function addStoreCredit(id, btn){
+  const amount = parseFloat(prompt('Add store credit amount (R):')||'0');
+  if(!amount||amount<=0) return;
+  const m = STATE.members.find(x=>x.id===id);
+  if(!m) return;
+  const newCredit = (m.storeCredit||0)+amount;
+  try{
+    await db.ref('bizpos/members/'+id).update({storeCredit:newCredit,updatedAt:new Date().toISOString()});
+    btn.closest('.modal-overlay').remove();
+    showToast(fmt(amount)+' credit added','success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+// Award points on sale completion — called from completeSale
+async function awardLoyaltyPoints(memberId, saleTotal){
+  if(!memberId) return;
+  const m = STATE.members.find(x=>x.id===memberId);
+  if(!m) return;
+  const newPoints = (m.points||0) + Math.floor(saleTotal/100);
+  const newSpend  = (m.totalSpend||0) + saleTotal;
+  const newVisits = (m.visitCount||0) + 1;
+  await db.ref('bizpos/members/'+memberId).update({
+    points:newPoints, totalSpend:newSpend, visitCount:newVisits, updatedAt:new Date().toISOString()
+  });
+}
+
+// ── POS MEMBER SEARCH ──
+function searchPosMember(val){
+  const dd = document.getElementById('pos-member-drop');
+  if(!dd) return;
+  if(!val||val.length<2){ dd.style.display='none'; return; }
+  const matches = STATE.members.filter(m =>
+    m.name.toLowerCase().includes(val.toLowerCase()) ||
+    (m.phone||'').includes(val) ||
+    (m.memberId||'').toLowerCase().includes(val.toLowerCase())
+  ).slice(0,6);
+  if(!matches.length){ dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(m => `
+    <div onclick="selectPosMember('${m.id}')" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700">${m.name} <span style="font-weight:400;color:var(--text3)">#${m.memberId||''}</span></div>
+      <div style="font-size:11px;color:var(--text3)">⭐ ${m.points||0} pts · 💳 ${fmt(m.storeCredit||0)} credit · ${m.phone||''}</div>
+    </div>`).join('');
+  dd.style.display = 'block';
+}
+
+function selectPosMember(id){
+  selectedMember = STATE.members.find(m=>m.id===id);
+  const dd = document.getElementById('pos-member-drop');
+  const inp = document.getElementById('pos-member-search');
+  const badge = document.getElementById('pos-member-badge');
+  if(dd) dd.style.display='none';
+  if(inp) inp.value='';
+  if(badge && selectedMember){
+    badge.textContent = '👤 '+selectedMember.name+' · ⭐'+selectedMember.points+' pts';
+    badge.style.display='block';
+  }
+  showToast('Member: '+selectedMember.name,'success',2000);
+}
+
+function clearPosMember(){
+  selectedMember = null;
+  const badge = document.getElementById('pos-member-badge');
+  if(badge){ badge.style.display='none'; badge.textContent=''; }
 }
 
 // ── INIT ──
