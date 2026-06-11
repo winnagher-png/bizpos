@@ -184,11 +184,25 @@
     <div id="expenses-list"></div>
   </div>
 
+  <div id="tab-po" class="tab">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:18px;font-weight:800">Purchase Orders</div>
+      <button class="btn btn-primary" onclick="openNewPO()" style="padding:8px 14px;font-size:12px">+ New PO</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn btn-primary" style="font-size:11px;padding:6px 12px" onclick="filterPOs('all',this)">All</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px" onclick="filterPOs('draft',this)">Draft</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px" onclick="filterPOs('confirmed',this)">Confirmed</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px" onclick="filterPOs('received',this)">Received</button>
+    </div>
+    <div id="po-list"></div>
+  </div>
+
   <div id="tab-more" class="tab">
     <div style="font-size:18px;font-weight:800;margin-bottom:16px">More</div>
     <div class="list-item" onclick="switchTab('expenses')"><div style="font-size:24px">💸</div><div class="list-item-body"><div class="list-item-title">Expenses</div><div class="list-item-sub">Log and track expenses</div></div><div>›</div></div>
     <div class="list-item"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Coming soon</div></div></div>
-    <div class="list-item"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Coming soon</div></div></div>
+    <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
     <div class="list-item"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Coming soon</div></div></div>
     <div class="list-item"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Coming soon</div></div></div>
     <div style="margin-top:24px">
@@ -259,7 +273,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -318,6 +332,10 @@ function startListeners(){
     if(currentTab==='cashup')renderCashup();
   });
   db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/purchaseOrders').on('value',s=>{
+    STATE.purchaseOrders=s.val()?Object.values(s.val()):[];
+    if(currentTab==='po')renderPOList();
+  });
   db.ref('bizpos/staff').on('value',s=>{STATE.staff=s.val()?Object.values(s.val()):STAFF_PINS;});
 }
 
@@ -373,6 +391,7 @@ function switchTab(tab){
   if(tab==='reports')renderReports();
   if(tab==='stock')renderStockList();
   if(tab==='expenses'){renderExpenses();renderPettyCash();}
+  if(tab==='po')renderPOList();
 }
 
 // ── POS ──
@@ -915,6 +934,327 @@ async function savePettyCashOut(btn){
     btn.closest('.modal-overlay').remove();
     showToast(fmt(amount)+' paid out','success');
   }catch(e){ showToast('Error','error'); }
+}
+
+
+// ── PURCHASE ORDERS & GRV ──
+let poFilter = 'all';
+let currentPOLines = [];
+let currentPOType = 'stock';
+
+function renderPOList(){
+  const el = document.getElementById('po-list');
+  if(!el) return;
+  let pos = (STATE.purchaseOrders||[]).slice().sort((a,b) => b.createdAt > a.createdAt ? 1 : -1);
+  if(poFilter !== 'all') pos = pos.filter(p => p.status === poFilter);
+  if(!pos.length){ el.innerHTML='<div style="color:var(--text3);text-align:center;padding:30px">No purchase orders</div>'; return; }
+  el.innerHTML = pos.map(po => {
+    const statusColor = po.status==='received'?'var(--green)':po.status==='confirmed'?'var(--accent)':'var(--text3)';
+    const typeIcon = po.poType==='expense'?'🧾':'📦';
+    return `<div class="list-item" onclick="openPODetail('${po.id}')">
+      <div style="font-size:24px">${typeIcon}</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${po.poNumber||po.id} — ${po.supplierName||'—'}</div>
+        <div class="list-item-sub">${po.createdAt?po.createdAt.slice(0,10):''} · ${po.lines?po.lines.length:0} items · <span style="color:${statusColor};font-weight:600;text-transform:capitalize">${po.status||'draft'}</span></div>
+      </div>
+      <div style="font-weight:800;color:var(--accent)">${fmt(po.total||0)}</div>
+    </div>`;
+  }).join('');
+}
+
+function filterPOs(filter, btn){
+  poFilter = filter;
+  document.querySelectorAll('#tab-po .btn').forEach(b => { if(b.textContent.toLowerCase()===filter||filter==='all'&&b.textContent==='All') b.className='btn btn-primary'; else b.className='btn btn-secondary'; });
+  renderPOList();
+}
+
+function openNewPO(){
+  currentPOLines = [];
+  currentPOType = 'stock';
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-new-po';
+  overlay.innerHTML = `<div class="modal" style="max-width:480px">
+    <div class="modal-title">New Purchase Order</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <button id="po-type-stock" class="btn btn-primary" onclick="setPOType('stock')">📦 Stock PO</button>
+      <button id="po-type-expense" class="btn btn-secondary" onclick="setPOType('expense')">🧾 Expense PO</button>
+    </div>
+    <label>Supplier *</label>
+    <input type="text" class="input" id="po-supplier" placeholder="Supplier name">
+    <label>Date</label>
+    <input type="date" class="input" id="po-date" value="${new Date().toISOString().slice(0,10)}">
+    <label>Payment Terms</label>
+    <select class="input" id="po-payment" style="margin-top:4px">
+      <option value="cash">Cash on delivery</option>
+      <option value="eft">EFT</option>
+      <option value="credit">Credit/Account</option>
+      <option value="consignment">Consignment</option>
+    </select>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase">Line Items</div>
+      <button class="btn btn-secondary" onclick="addPOLine()" style="padding:6px 12px;font-size:12px">+ Add Line</button>
+    </div>
+    <div id="po-lines-container"></div>
+    <div class="totals-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
+      <span style="font-weight:700">Total</span>
+      <span id="po-total-display" style="font-weight:800;color:var(--accent)">R0.00</span>
+    </div>
+    <label>Notes</label>
+    <input type="text" class="input" id="po-notes" placeholder="Optional">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-new-po').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePO('draft')">Save Draft</button>
+    </div>
+    <button class="btn btn-success btn-full" style="margin-top:8px" onclick="savePO('confirmed')">✓ Confirm PO</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  renderPOLines();
+}
+
+function setPOType(type){
+  currentPOType = type;
+  currentPOLines = [];
+  document.getElementById('po-type-stock').className = type==='stock'?'btn btn-primary':'btn btn-secondary';
+  document.getElementById('po-type-expense').className = type==='expense'?'btn btn-primary':'btn btn-secondary';
+  renderPOLines();
+}
+
+function addPOLine(){
+  if(currentPOType === 'stock'){
+    currentPOLines.push({productName:'',qty:1,unitCost:0});
+  } else {
+    currentPOLines.push({desc:'',category:'Maintenance',amount:0});
+  }
+  renderPOLines();
+}
+
+function renderPOLines(){
+  const el = document.getElementById('po-lines-container');
+  if(!el) return;
+  if(!currentPOLines.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center;padding:8px">No lines — tap + Add Line</div>'; updatePOTotal(); return; }
+  if(currentPOType === 'stock'){
+    el.innerHTML = currentPOLines.map((line,i) => `
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:4px;margin-bottom:6px;align-items:center">
+        <input type="text" class="input" placeholder="Product name" value="${line.productName||''}"
+          oninput="currentPOLines[${i}].productName=this.value;updatePOTotal()"
+          style="font-size:12px;padding:8px">
+        <input type="number" class="input" placeholder="Qty" value="${line.qty||1}"
+          oninput="currentPOLines[${i}].qty=parseInt(this.value)||1;updatePOTotal()"
+          style="font-size:12px;padding:8px;text-align:center">
+        <input type="number" class="input" placeholder="Cost" value="${line.unitCost||''}"
+          oninput="currentPOLines[${i}].unitCost=parseFloat(this.value)||0;updatePOTotal()"
+          style="font-size:12px;padding:8px;text-align:right">
+        <button onclick="currentPOLines.splice(${i},1);renderPOLines()" style="background:none;border:none;color:var(--red);font-size:18px;cursor:pointer;padding:4px">×</button>
+      </div>`).join('');
+  } else {
+    const cats = ['Maintenance','Utilities','Marketing','Equipment','Office & Admin','Transport & Travel','Other'];
+    el.innerHTML = currentPOLines.map((line,i) => `
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:4px;margin-bottom:6px;align-items:center">
+        <input type="text" class="input" placeholder="Description" value="${line.desc||''}"
+          oninput="currentPOLines[${i}].desc=this.value;updatePOTotal()"
+          style="font-size:12px;padding:8px">
+        <select class="input" style="font-size:11px;padding:8px"
+          onchange="currentPOLines[${i}].category=this.value">
+          ${cats.map(c=>`<option${line.category===c?' selected':''}>${c}</option>`).join('')}
+        </select>
+        <input type="number" class="input" placeholder="Amount" value="${line.amount||''}"
+          oninput="currentPOLines[${i}].amount=parseFloat(this.value)||0;updatePOTotal()"
+          style="font-size:12px;padding:8px;text-align:right">
+        <button onclick="currentPOLines.splice(${i},1);renderPOLines()" style="background:none;border:none;color:var(--red);font-size:18px;cursor:pointer;padding:4px">×</button>
+      </div>`).join('');
+  }
+  updatePOTotal();
+}
+
+function updatePOTotal(){
+  const total = currentPOType==='stock'
+    ? currentPOLines.reduce((a,l) => a+(l.qty||1)*(l.unitCost||0), 0)
+    : currentPOLines.reduce((a,l) => a+(l.amount||0), 0);
+  const el = document.getElementById('po-total-display');
+  if(el) el.textContent = fmt(total);
+}
+
+async function savePO(status){
+  const supplier = (document.getElementById('po-supplier').value||'').trim();
+  if(!supplier){ showToast('Enter a supplier name','error'); return; }
+  if(!currentPOLines.length){ showToast('Add at least one line item','error'); return; }
+  const total = currentPOType==='stock'
+    ? currentPOLines.reduce((a,l) => a+(l.qty||1)*(l.unitCost||0), 0)
+    : currentPOLines.reduce((a,l) => a+(l.amount||0), 0);
+  const pos = STATE.purchaseOrders||[];
+  const poNum = 'PO-' + String(pos.length+1).padStart(4,'0');
+  const po = {
+    id: uid(),
+    poNumber: poNum,
+    poType: currentPOType,
+    supplierName: supplier,
+    date: document.getElementById('po-date').value,
+    paymentTerms: document.getElementById('po-payment').value,
+    notes: document.getElementById('po-notes').value||'',
+    lines: currentPOLines.slice(),
+    total, status,
+    createdAt: new Date().toISOString(),
+    createdBy: currentUser.name,
+  };
+  try{
+    await db.ref('bizpos/purchaseOrders/'+po.id).set(po);
+    document.getElementById('modal-new-po').remove();
+    showToast(poNum+' saved','success');
+  }catch(e){ showToast('Error saving PO','error'); }
+}
+
+function openPODetail(id){
+  const po = (STATE.purchaseOrders||[]).find(p=>p.id===id);
+  if(!po) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-po-detail';
+  const isStock = po.poType !== 'expense';
+  const canGRV = isStock && po.status === 'confirmed';
+  const linesHTML = (po.lines||[]).map(l => isStock
+    ? `<div class="totals-row"><span style="font-size:13px">${l.productName||'—'} × ${l.qty}</span><span style="font-weight:700">${fmt((l.qty||1)*(l.unitCost||0))}</span></div>`
+    : `<div class="totals-row"><span style="font-size:13px">${l.desc||'—'} (${l.category})</span><span style="font-weight:700">${fmt(l.amount||0)}</span></div>`
+  ).join('');
+
+  overlay.innerHTML = `<div class="modal" style="max-width:480px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div class="modal-title" style="margin:0">${po.poNumber}</div>
+      <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${po.status==='received'?'#DCFCE7':po.status==='confirmed'?'#DBEAFE':'#F3F4F6'};color:${po.status==='received'?'#166534':po.status==='confirmed'?'#1E40AF':'#374151'};text-transform:capitalize">${po.status}</span>
+    </div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${po.poType==='expense'?'🧾 Expense PO':'📦 Stock PO'} · ${po.supplierName} · ${po.date||''}</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
+      ${linesHTML}
+      <div class="totals-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
+        <span style="font-weight:700">Total</span><span style="font-weight:800;color:var(--accent)">${fmt(po.total||0)}</span>
+      </div>
+    </div>
+    ${po.notes?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Notes: ${po.notes}</div>`:''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-po-detail').remove()">Close</button>
+      ${po.status==='draft'?`<button class="btn btn-primary" onclick="confirmPO('${po.id}')">Confirm PO</button>`:''}
+      ${canGRV?`<button class="btn btn-success" onclick="openGRV('${po.id}')">📥 Receive (GRV)</button>`:''}
+      ${po.status==='confirmed'&&po.poType==='expense'?`<button class="btn btn-success" onclick="markPOPaid('${po.id}')">✓ Mark Paid</button>`:''}
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function confirmPO(id){
+  try{
+    await db.ref('bizpos/purchaseOrders/'+id+'/status').set('confirmed');
+    document.getElementById('modal-po-detail').remove();
+    showToast('PO confirmed','success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+async function markPOPaid(id){
+  try{
+    await db.ref('bizpos/purchaseOrders/'+id+'/status').set('received');
+    document.getElementById('modal-po-detail').remove();
+    showToast('PO marked as paid','success');
+  }catch(e){ showToast('Error','error'); }
+}
+
+function openGRV(poId){
+  const po = (STATE.purchaseOrders||[]).find(p=>p.id===poId);
+  if(!po) return;
+  document.getElementById('modal-po-detail').remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-grv';
+  const linesHTML = (po.lines||[]).map((l,i) => `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:8px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:8px">${l.productName||'—'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Ordered</div>
+          <div style="font-size:16px;font-weight:700">${l.qty}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Received</div>
+          <input type="number" class="input" id="grv-qty-${i}" value="${l.qty}" style="font-size:16px;font-weight:700;text-align:center;padding:6px">
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Location</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <button id="grv-loc-shop-${i}" class="btn btn-primary" style="font-size:12px;padding:8px" onclick="setGRVLoc(${i},'shop')">🏪 Shop Floor</button>
+          <button id="grv-loc-wh-${i}" class="btn btn-secondary" style="font-size:12px;padding:8px" onclick="setGRVLoc(${i},'warehouse')">🏭 Warehouse</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  overlay.innerHTML = `<div class="modal" style="max-width:480px">
+    <div class="modal-title">Receive Stock — ${po.poNumber}</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${po.supplierName}</div>
+    ${linesHTML}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-grv').remove()">Cancel</button>
+      <button class="btn btn-success" onclick="commitGRV('${po.id}')">✓ Receive All</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  // Store GRV locations
+  window._grvLocs = (po.lines||[]).map(() => 'shop');
+}
+
+function setGRVLoc(i, loc){
+  window._grvLocs[i] = loc;
+  document.getElementById('grv-loc-shop-'+i).className = loc==='shop'?'btn btn-primary':'btn btn-secondary';
+  document.getElementById('grv-loc-wh-'+i).className = loc==='warehouse'?'btn btn-primary':'btn btn-secondary';
+}
+
+async function commitGRV(poId){
+  const po = (STATE.purchaseOrders||[]).find(p=>p.id===poId);
+  if(!po) return;
+  const updates = {};
+  const lines = po.lines||[];
+  lines.forEach((l,i) => {
+    const receivedQty = parseInt(document.getElementById('grv-qty-'+i).value)||0;
+    if(receivedQty <= 0) return;
+    const loc = (window._grvLocs||[])[i] || 'shop';
+    // Find existing product or create new one
+    let prod = STATE.products.find(p => p.name && p.name.toLowerCase()===l.productName.toLowerCase());
+    if(prod){
+      if(loc==='warehouse'){
+        updates['bizpos/products/'+prod.id+'/qtyWh'] = (prod.qtyWh||0) + receivedQty;
+      } else {
+        updates['bizpos/products/'+prod.id+'/qty'] = (prod.qty||0) + receivedQty;
+      }
+      updates['bizpos/products/'+prod.id+'/updatedAt'] = new Date().toISOString();
+    } else {
+      // Auto-create product
+      const newId = uid();
+      updates['bizpos/products/'+newId] = {
+        id:newId, name:l.productName, price:l.unitCost||0, cost:l.unitCost||0,
+        qty: loc==='shop' ? receivedQty : 0,
+        qtyWh: loc==='warehouse' ? receivedQty : 0,
+        category:'Uncategorised', active:true, reorderAt:5,
+        createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(),
+      };
+    }
+  });
+
+  // Log expense for stock purchase
+  const expId = uid();
+  updates['bizpos/expenses/'+expId] = {
+    id:expId, desc:'Stock purchase — '+po.supplierName+' ('+po.poNumber+')',
+    amount:po.total||0, category:'Stock purchase', payMethod:po.paymentTerms||'cash',
+    date:new Date().toISOString().slice(0,10), status:'paid',
+    createdAt:new Date().toISOString(), createdBy:currentUser.name, poId:po.id
+  };
+
+  // Mark PO as received
+  updates['bizpos/purchaseOrders/'+poId+'/status'] = 'received';
+  updates['bizpos/purchaseOrders/'+poId+'/receivedAt'] = new Date().toISOString();
+  updates['bizpos/purchaseOrders/'+poId+'/receivedBy'] = currentUser.name;
+
+  try{
+    await db.ref().update(updates);
+    document.getElementById('modal-grv').remove();
+    showToast('Stock received! Products updated.','success',4000);
+  }catch(e){ showToast('Error receiving stock','error'); console.error(e); }
 }
 
 // ── INIT ──
