@@ -616,7 +616,7 @@ function renderProductGrid(filter){
   if(!grid)return;
   let prods=STATE.products.filter(p=>p.active!==false);
   if(filter)prods=prods.filter(p=>p.name.toLowerCase().includes(filter.toLowerCase()));
-  prods.sort((a,b)=>a.name.localeCompare(b.name));
+  prods.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   grid.innerHTML=prods.map(p=>`
     <div class="product-tile${(p.qty||0)<=0?' out':''}" onclick="addToCart('${p.id}')">
       <div class="product-tile-name">${p.name}</div>
@@ -745,7 +745,7 @@ function renderStockList(filter){
   if(!el)return;
   let prods=STATE.products.filter(p=>p.active!==false);
   if(filter)prods=prods.filter(p=>p.name.toLowerCase().includes(filter.toLowerCase()));
-  prods.sort((a,b)=>a.name.localeCompare(b.name));
+  prods.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   if(!prods.length){el.innerHTML='<div style="color:var(--text3);text-align:center;padding:40px">No products yet</div>';return;}
   const canEdit = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
   el.innerHTML=prods.map(p=>{
@@ -3900,7 +3900,7 @@ function renderStockList(filter){
   // Apply search
   if(stockSearchVal) prods = prods.filter(p=>p.name.toLowerCase().includes(stockSearchVal.toLowerCase()));
 
-  prods.sort((a,b)=>a.name.localeCompare(b.name));
+  prods.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
 
   if(!prods.length){
     el.innerHTML = `<div style="color:var(--text3);text-align:center;padding:30px">${
