@@ -1341,11 +1341,76 @@ function openSaleDetail(saleId){
       <strong>Voided by:</strong> ${s.voidedBy||'—'}<br>
       <strong>Reason:</strong> ${s.voidReason||'No reason given'}
     </div>`:''}
-    ${!s.voided&&isManager?`
-      <button class="btn btn-danger btn-full" style="margin-bottom:8px" onclick="openVoidSale('${s.id}',this)">🚫 Void This Sale</button>`:''}
+    ${!s.voided?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <button class="btn btn-secondary" onclick="openEditSale('${s.id}',this)">✏️ Edit Sale</button>
+      ${isManager?`<button class="btn btn-danger" onclick="openVoidSale('${s.id}',this)">🚫 Void</button>`:'<div></div>'}
+    </div>`:''}
     <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
   </div>`;
   document.body.appendChild(overlay);
+}
+
+function openEditSale(saleId, btn){
+  const s = STATE.sales.find(x=>x.id===saleId);
+  if(!s || s.voided) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const payMethods = ['cash','card','eft','store_credit'];
+  const members = STATE.members.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const staff = STAFF_PINS;
+  overlay.innerHTML = `<div class="modal" style="max-width:400px">
+    <div class="modal-title">Edit Sale</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
+      ⚡ Fix mistakes — change payment method, staff or member. Cannot change items or total.
+    </div>
+    <label>Payment Method</label>
+    <select class="input" id="es-payment" style="margin-top:4px">
+      ${payMethods.map(m=>`<option value="${m}"${s.paymentMethod===m?' selected':''}>${m}</option>`).join('')}
+    </select>
+    <label>Staff Member</label>
+    <select class="input" id="es-staff" style="margin-top:4px">
+      ${staff.map(st=>`<option value="${st.id}"${s.staff===st.id?' selected':''}>${st.name}</option>`).join('')}
+    </select>
+    <label>Member (optional)</label>
+    <select class="input" id="es-member" style="margin-top:4px">
+      <option value="">No member</option>
+      ${members.map(m=>`<option value="${m.id}"${s.memberId===m.id?' selected':''}>${m.name} #${m.memberId}</option>`).join('')}
+    </select>
+    <label>Notes</label>
+    <input type="text" class="input" id="es-notes" placeholder="Reason for edit" value="${s.editNotes||''}">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="commitEditSale('${s.id}',this)">Save Changes</button>
+    </div>
+  </div>`;
+  btn.closest('.modal-overlay').remove();
+  document.body.appendChild(overlay);
+}
+
+async function commitEditSale(saleId, btn){
+  const payment = document.getElementById('es-payment').value;
+  const staffId = document.getElementById('es-staff').value;
+  const memberId = document.getElementById('es-member').value;
+  const notes   = document.getElementById('es-notes').value||'';
+  const staffPin = STAFF_PINS.find(s=>s.id===staffId);
+  const member   = STATE.members.find(m=>m.id===memberId);
+
+  const updates = {
+    ['bizpos/sales/'+saleId+'/paymentMethod']: payment,
+    ['bizpos/sales/'+saleId+'/staff']:         staffId,
+    ['bizpos/sales/'+saleId+'/staffName']:     staffPin?staffPin.name:'—',
+    ['bizpos/sales/'+saleId+'/memberId']:      memberId||null,
+    ['bizpos/sales/'+saleId+'/memberName']:    member?member.name:null,
+    ['bizpos/sales/'+saleId+'/editedAt']:      new Date().toISOString(),
+    ['bizpos/sales/'+saleId+'/editedBy']:      currentUser.name,
+    ['bizpos/sales/'+saleId+'/editNotes']:     notes,
+  };
+
+  try{
+    await db.ref().update(updates);
+    btn.closest('.modal-overlay').remove();
+    showToast('Sale updated','success');
+  }catch(e){ showToast('Error updating sale','error'); }
 }
 
 function openVoidSale(saleId, btn){
