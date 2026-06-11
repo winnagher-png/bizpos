@@ -259,6 +259,7 @@
     <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
     <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
     <div class="list-item" onclick="openNewRollTask()"><div style="font-size:24px">🚬</div><div class="list-item-body"><div class="list-item-title">Roll Joints</div><div class="list-item-sub">Create a rolling task for staff</div></div><div>›</div></div>
+    <div class="list-item" onclick="openWhatsAppExport()"><div style="font-size:24px">📱</div><div class="list-item-body"><div class="list-item-title">WhatsApp Broadcast</div><div class="list-item-sub">Export opted-in member contacts</div></div><div>›</div></div>
     <div class="list-item" onclick="switchTab('staff')"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Clock in/out & shift management</div></div><div>›</div></div>
     <div style="margin-top:24px">
       <button onclick="lockApp()" class="btn btn-secondary btn-full">🔒 Lock / Switch User</button>
@@ -369,6 +370,7 @@ function startListeners(){
   db.ref('bizpos/products').on('value',s=>{
     STATE.products=s.val()?Object.values(s.val()):[];
     renderProductGrid();renderStockList();
+    if(currentUser) setTimeout(checkReorderAlerts, 2000);
   });
   db.ref('bizpos/sales').orderByChild('date').limitToLast(500).on('value',s=>{
     STATE.sales=s.val()?Object.values(s.val()):[];
@@ -449,6 +451,7 @@ function loginSuccess(staff){
   setTimeout(checkBirthdays, 2000);
   // Show clock-in popup after short delay
   setTimeout(function(){ showClockInPrompt(staff); }, 500);
+  setTimeout(checkReorderAlerts, 3000);
 }
 
 function showClockInPrompt(staff){
@@ -4053,6 +4056,192 @@ async function archiveProduct(id, btn){
     btn.closest('.modal-overlay').remove();
     showToast('Product archived','success');
   }catch(e){ showToast('Error','error'); }
+}
+
+
+// ── WHATSAPP BROADCAST EXPORT ──
+function openWhatsAppExport(){
+  const optedIn = STATE.members.filter(m=>m.marketingOptIn!==false&&m.phone);
+  const optedOut = STATE.members.filter(m=>m.marketingOptIn===false&&m.phone);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.innerHTML = `<div class="modal" style="max-width:440px">
+    <div class="modal-title">📱 WhatsApp Broadcast</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:#DCFCE7;border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:#166534">${optedIn.length}</div>
+        <div style="font-size:11px;color:#166534">Opted IN</div>
+      </div>
+      <div style="background:#FEE2E2;border-radius:10px;padding:12px;text-align:center">
+        <div style="font-size:28px;font-weight:800;color:#991B1B">${optedOut.length}</div>
+        <div style="font-size:11px;color:#991B1B">Opted OUT</div>
+      </div>
+    </div>
+
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
+      Export opted-in members as a contact list (.vcf file) that you can import into your phone and add to a WhatsApp broadcast list.
+    </div>
+
+    <div class="section-title">Opted-in members (${optedIn.length})</div>
+    <div style="max-height:200px;overflow-y:auto;background:var(--bg3);border-radius:10px;padding:8px;margin-bottom:16px">
+      ${optedIn.map(m=>`<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between">
+        <span>${m.name}</span><span style="color:var(--text3)">${m.phone}</span>
+      </div>`).join('')}
+    </div>
+
+    <button class="btn btn-primary btn-full" style="margin-bottom:8px" onclick="downloadVCF()">
+      📥 Download as Contacts (.vcf)
+    </button>
+    <button class="btn btn-secondary btn-full" style="margin-bottom:8px" onclick="copyNumbersToClipboard()">
+      📋 Copy Numbers to Clipboard
+    </button>
+    <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function downloadVCF(){
+  const optedIn = STATE.members.filter(m=>m.marketingOptIn!==false&&m.phone);
+  let vcf = '';
+  optedIn.forEach(m=>{
+    let phone = m.phone.replace(/\s/g,'');
+    if(phone.startsWith('0')) phone = '+27'+phone.slice(1);
+    if(!phone.startsWith('+')) phone = '+27'+phone;
+    const name = 'J&J ' + m.name;
+    vcf += 'BEGIN:VCARD\nVERSION:3.0\n';
+    vcf += 'FN:'+name+'\n';
+    vcf += 'N:'+m.name+';;;;\n';
+    vcf += 'TEL;TYPE=CELL:'+phone+'\n';
+    vcf += 'ORG:Jack & Jill Member\n';
+    vcf += 'END:VCARD\n';
+  });
+  const blob = new Blob([vcf], {type:'text/vcard'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'JJ_Members_'+new Date().toISOString().slice(0,10)+'.vcf';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Contacts downloaded — '+optedIn.length+' members','success',4000);
+}
+
+function copyNumbersToClipboard(){
+  const optedIn = STATE.members.filter(m=>m.marketingOptIn!==false&&m.phone);
+  const numbers = optedIn.map(m=>{
+    let phone = m.phone.replace(/\s/g,'');
+    if(phone.startsWith('0')) phone = '+27'+phone.slice(1);
+    if(!phone.startsWith('+')) phone = '+27'+phone;
+    return phone;
+  }).join('\n');
+  navigator.clipboard.writeText(numbers).then(()=>{
+    showToast(optedIn.length+' numbers copied to clipboard','success');
+  }).catch(()=>{
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = numbers;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast(optedIn.length+' numbers copied','success');
+  });
+}
+
+// ── REORDER ALERTS ──
+let _reorderAlertShown = false;
+
+function checkReorderAlerts(){
+  if(_reorderAlertShown) return;
+  const low = STATE.products.filter(p=>{
+    if(p.active===false||!(p.reorderAt>0)) return false;
+    return (p.qty||0) <= p.reorderAt;
+  });
+  if(!low.length) return;
+  _reorderAlertShown = true;
+  showReorderAlert(low);
+}
+
+function showReorderAlert(lowItems){
+  const out   = lowItems.filter(p=>(p.qty||0)<=0);
+  const low   = lowItems.filter(p=>(p.qty||0)>0);
+  const existing = document.getElementById('reorder-banner');
+  if(existing) existing.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'reorder-banner';
+  banner.style.cssText = 'position:fixed;bottom:72px;left:0;right:0;z-index:498;padding:0 12px';
+  banner.innerHTML = `<div style="background:linear-gradient(135deg,#FF4500,#FF8C00);color:#fff;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 0 20px rgba(255,69,0,.4),0 4px 12px rgba(0,0,0,.3);cursor:pointer;animation:pulse-glow 2s infinite" onclick="openReorderDetail()">
+    <span style="font-size:24px">⚠️</span>
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:900">${out.length>0?out.length+' OUT OF STOCK':''}${out.length>0&&low.length>0?' · ':''}${low.length>0?low.length+' LOW STOCK':''}</div>
+      <div style="font-size:11px;opacity:.9">Tap to view and reorder</div>
+    </div>
+    <button onclick="event.stopPropagation();document.getElementById('reorder-banner').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:14px;font-weight:800;cursor:pointer;border-radius:50%;width:24px;height:24px">×</button>
+  </div>`;
+  document.body.appendChild(banner);
+}
+
+function openReorderDetail(){
+  const low = STATE.products.filter(p=>{
+    if(p.active===false||!(p.reorderAt>0)) return false;
+    return (p.qty||0) <= p.reorderAt;
+  }).sort((a,b)=>(a.qty||0)-(b.qty||0));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.innerHTML = `<div class="modal" style="max-width:420px;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">⚠️ Stock Reorder Alert</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">These products need to be reordered</div>
+
+    <div class="section-title" style="color:var(--red)">🔴 Out of Stock</div>
+    ${low.filter(p=>(p.qty||0)<=0).map(p=>`
+      <div class="list-item" style="border-color:var(--red)">
+        <div style="font-size:20px">📦</div>
+        <div class="list-item-body">
+          <div class="list-item-title">${p.name}</div>
+          <div style="font-size:11px;color:var(--red);font-weight:700">OUT OF STOCK · Reorder at: ${p.reorderAt}</div>
+        </div>
+        <button onclick="quickCreatePO('${p.id}')" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">+ PO</button>
+      </div>`).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px">None</div>'}
+
+    <div class="section-title" style="color:#92400E;margin-top:12px">⚠️ Low Stock</div>
+    ${low.filter(p=>(p.qty||0)>0).map(p=>`
+      <div class="list-item" style="border-color:#F59E0B">
+        <div style="font-size:20px">📦</div>
+        <div class="list-item-body">
+          <div class="list-item-title">${p.name}</div>
+          <div style="font-size:11px;color:#92400E;font-weight:700">${p.qty||0} left · Reorder at: ${p.reorderAt}</div>
+        </div>
+        <button onclick="quickCreatePO('${p.id}')" style="background:#92400E;border:none;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">+ PO</button>
+      </div>`).join('') || '<div style="color:var(--text3);font-size:12px;padding:8px">None</div>'}
+
+    <button class="btn btn-secondary btn-full" style="margin-top:12px" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function quickCreatePO(productId){
+  const p = STATE.products.find(x=>x.id===productId);
+  if(!p) return;
+  document.querySelector('.modal-overlay:last-child').remove();
+  // Switch to PO tab and open new PO pre-filled
+  switchTab('po');
+  openNewPO();
+  // Pre-fill product after modal opens
+  setTimeout(()=>{
+    const lines = [{productName:p.name, qty:10, unitCost:p.cost||0}];
+    currentPOLines = lines;
+    renderPOLines();
+    updatePOTotal();
+    showToast('Pre-filled with '+p.name+' — add supplier and adjust qty','success',4000);
+  }, 300);
 }
 
 // ── NOTIFICATIONS ──
