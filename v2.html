@@ -198,12 +198,20 @@
     <div id="po-list"></div>
   </div>
 
+  <div id="tab-stocktake" class="tab">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:18px;font-weight:800">Stocktake</div>
+      <button class="btn btn-primary" onclick="startStocktake()" id="btn-start-stocktake" style="padding:8px 14px;font-size:12px">+ New Count</button>
+    </div>
+    <div id="stocktake-content"></div>
+  </div>
+
   <div id="tab-more" class="tab">
     <div style="font-size:18px;font-weight:800;margin-bottom:16px">More</div>
     <div class="list-item" onclick="switchTab('expenses')"><div style="font-size:24px">💸</div><div class="list-item-body"><div class="list-item-title">Expenses</div><div class="list-item-sub">Log and track expenses</div></div><div>›</div></div>
     <div class="list-item"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Coming soon</div></div></div>
     <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
-    <div class="list-item"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Coming soon</div></div></div>
+    <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
     <div class="list-item"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Coming soon</div></div></div>
     <div style="margin-top:24px">
       <button onclick="lockApp()" class="btn btn-secondary btn-full">🔒 Lock / Switch User</button>
@@ -273,7 +281,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -332,6 +340,10 @@ function startListeners(){
     if(currentTab==='cashup')renderCashup();
   });
   db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/stocktakeReports').on('value',s=>{
+    STATE.stocktakeReports=s.val()?Object.values(s.val()):[];
+    if(currentTab==='stocktake')renderStocktakeContent();
+  });
   db.ref('bizpos/suppliers').on('value',s=>{
     STATE.suppliers=s.val()?Object.values(s.val()):[];
   });
@@ -395,6 +407,7 @@ function switchTab(tab){
   if(tab==='stock')renderStockList();
   if(tab==='expenses'){renderExpenses();renderPettyCash();}
   if(tab==='po')renderPOList();
+  if(tab==='stocktake')renderStocktakeContent();
 }
 
 // ── POS ──
@@ -1393,6 +1406,306 @@ function selectPOProduct(lineIdx, name, cost){
   // Update cost field
   renderPOLines();
   updatePOTotal();
+}
+
+
+// ── STOCKTAKE ──
+let stocktakeSession = null; // {location, counts: {productId: qty}}
+
+function renderStocktakeContent(){
+  const el = document.getElementById('stocktake-content');
+  if(!el) return;
+
+  if(stocktakeSession){
+    renderActiveStocktake();
+    return;
+  }
+
+  // Show history
+  const reports = [...(STATE.stocktakeReports||[])].sort((a,b) => b.committedAt > a.committedAt ? 1 : -1);
+  if(!reports.length){
+    el.innerHTML = '<div style="color:var(--text3);text-align:center;padding:40px">No stocktakes yet — tap + New Count</div>';
+    return;
+  }
+  el.innerHTML = reports.map(r => {
+    const gains  = (r.variances||[]).filter(v=>v.diff>0).length;
+    const losses = (r.variances||[]).filter(v=>v.diff<0).length;
+    return `<div class="list-item" onclick="openStocktakeReport('${r.id}')">
+      <div style="font-size:24px">📋</div>
+      <div class="list-item-body">
+        <div class="list-item-title">${r.committedAt?r.committedAt.slice(0,10):''} — ${r.location==='warehouse'?'🏭 Warehouse':'🏪 Shop Floor'}</div>
+        <div class="list-item-sub">${r.totalCounted||0} items · by ${r.staffName||'—'}</div>
+        <div style="margin-top:4px">
+          <span style="font-size:11px;font-weight:700;color:var(--green);margin-right:8px">▲ ${gains} gains</span>
+          <span style="font-size:11px;font-weight:700;color:var(--red)">▼ ${losses} losses</span>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:var(--green);font-weight:700">${fmt(r.gainValue||0)}</div>
+        <div style="font-size:11px;color:var(--red);font-weight:700">${fmt(r.lossValue||0)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function startStocktake(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal">
+    <div class="modal-title">New Stocktake</div>
+    <div class="section-title">Location</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <button id="st-loc-shop" class="btn btn-primary" onclick="setSTLoc('shop')">🏪 Shop Floor</button>
+      <button id="st-loc-wh" class="btn btn-secondary" onclick="setSTLoc('warehouse')">🏭 Warehouse</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="beginStocktake(this)">Start Counting</button>
+    </div>
+  </div>`;
+  overlay.querySelector('#st-loc-shop')._loc = 'shop';
+  document.body.appendChild(overlay);
+  overlay._loc = 'shop';
+  overlay.querySelector('#st-loc-shop').onclick = function(){ setSTLocOverlay(overlay,'shop'); };
+  overlay.querySelector('#st-loc-wh').onclick   = function(){ setSTLocOverlay(overlay,'warehouse'); };
+  overlay.querySelector('.btn-primary:last-child').onclick = function(){ beginStocktake(overlay); };
+}
+
+function setSTLocOverlay(overlay, loc){
+  overlay._loc = loc;
+  overlay.querySelector('#st-loc-shop').className = loc==='shop'?'btn btn-primary':'btn btn-secondary';
+  overlay.querySelector('#st-loc-wh').className   = loc==='warehouse'?'btn btn-primary':'btn btn-secondary';
+}
+
+function beginStocktake(overlay){
+  const loc = overlay._loc || 'shop';
+  overlay.remove();
+  stocktakeSession = { location: loc, counts: {}, startedAt: new Date().toISOString() };
+  document.getElementById('btn-start-stocktake').style.display = 'none';
+  renderActiveStocktake();
+}
+
+function renderActiveStocktake(){
+  const el = document.getElementById('stocktake-content');
+  if(!el || !stocktakeSession) return;
+  const loc = stocktakeSession.location;
+  const prods = STATE.products.filter(p => p.active!==false).sort((a,b) => a.name.localeCompare(b.name));
+  const counted = Object.keys(stocktakeSession.counts).length;
+
+  el.innerHTML = `
+    <div style="background:var(--accent);color:#fff;border-radius:14px;padding:14px;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;opacity:.8">${loc==='warehouse'?'🏭 Warehouse Stocktake':'🏪 Shop Floor Stocktake'}</div>
+      <div style="font-size:22px;font-weight:800;margin-top:2px">${counted} / ${prods.length} counted</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <button class="btn btn-secondary" onclick="cancelStocktake()" style="font-size:12px">Cancel</button>
+      <button class="btn btn-success" onclick="commitStocktake()" style="font-size:12px">✓ Commit Count</button>
+    </div>
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="input" placeholder="Search products..." oninput="filterSTProducts(this.value)" style="padding-left:36px">
+    </div>
+    <div id="st-product-list">
+      ${prods.map(p => {
+        const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+        const counted  = stocktakeSession.counts[p.id] !== undefined ? stocktakeSession.counts[p.id] : '';
+        const hasCounted = stocktakeSession.counts[p.id] !== undefined;
+        const diff = hasCounted ? (stocktakeSession.counts[p.id] - expected) : null;
+        const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
+        return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-color:var(--accent)':''}">
+          <div class="list-item-body">
+            <div class="list-item-title" style="font-size:13px">${p.name}</div>
+            <div style="font-size:11px;color:var(--text3)">Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}</div>
+          </div>
+          <input type="number" inputmode="numeric"
+            id="st-count-${p.id}"
+            value="${counted}"
+            placeholder="Count"
+            oninput="updateSTCount('${p.id}',this.value)"
+            style="width:70px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:16px;font-weight:700;text-align:center;background:var(--bg)">
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function filterSTProducts(val){
+  const el = document.getElementById('st-product-list');
+  if(!el || !stocktakeSession) return;
+  const loc = stocktakeSession.location;
+  let prods = STATE.products.filter(p => p.active!==false);
+  if(val) prods = prods.filter(p => p.name.toLowerCase().includes(val.toLowerCase()));
+  prods.sort((a,b) => a.name.localeCompare(b.name));
+  el.innerHTML = prods.map(p => {
+    const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+    const countedVal = stocktakeSession.counts[p.id] !== undefined ? stocktakeSession.counts[p.id] : '';
+    const hasCounted = stocktakeSession.counts[p.id] !== undefined;
+    const diff = hasCounted ? (stocktakeSession.counts[p.id] - expected) : null;
+    const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
+    return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-color:var(--accent)':''}">
+      <div class="list-item-body">
+        <div class="list-item-title" style="font-size:13px">${p.name}</div>
+        <div style="font-size:11px;color:var(--text3)">Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}</div>
+      </div>
+      <input type="number" inputmode="numeric"
+        id="st-count-${p.id}"
+        value="${countedVal}"
+        placeholder="Count"
+        oninput="updateSTCount('${p.id}',this.value)"
+        style="width:70px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:16px;font-weight:700;text-align:center;background:var(--bg)">
+    </div>`;
+  }).join('');
+}
+
+function updateSTCount(productId, val){
+  if(val===''||val===null){
+    delete stocktakeSession.counts[productId];
+  } else {
+    stocktakeSession.counts[productId] = parseInt(val)||0;
+  }
+  // Update the diff display inline
+  const p = STATE.products.find(x=>x.id===productId);
+  if(!p) return;
+  const loc = stocktakeSession.location;
+  const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+  const hasCounted = stocktakeSession.counts[productId] !== undefined;
+  const diff = hasCounted ? (stocktakeSession.counts[productId] - expected) : null;
+  const inp = document.getElementById('st-count-'+productId);
+  if(inp){
+    inp.style.borderColor = hasCounted ? 'var(--accent)' : 'var(--border)';
+    const row = inp.closest('.list-item');
+    if(row) row.style.borderColor = hasCounted ? 'var(--accent)' : 'var(--border)';
+    const sub = row ? row.querySelector('.list-item-body div:last-child') : null;
+    if(sub){
+      const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
+      sub.innerHTML = `Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}`;
+    }
+  }
+  // Update counter
+  const counterEl = document.querySelector('#stocktake-content .list-item-body ~ div, #stocktake-content [style*="font-size:22px"]');
+  const counted = Object.keys(stocktakeSession.counts).length;
+  const total = STATE.products.filter(p=>p.active!==false).length;
+  const countEl = document.querySelector('#stocktake-content [style*="font-size:22px"]');
+  if(countEl) countEl.textContent = counted + ' / ' + total + ' counted';
+}
+
+function cancelStocktake(){
+  if(!confirm('Cancel this stocktake? Your counts will be lost.')) return;
+  stocktakeSession = null;
+  document.getElementById('btn-start-stocktake').style.display = '';
+  renderStocktakeContent();
+}
+
+async function commitStocktake(){
+  if(!stocktakeSession) return;
+  const counted = Object.keys(stocktakeSession.counts).length;
+  if(!counted){ showToast('Count at least one product first','error'); return; }
+  if(!confirm('Commit this stocktake? Stock quantities will be updated.')) return;
+
+  const loc = stocktakeSession.location;
+  const updates = {};
+  const variances = [];
+  let gainValue = 0, lossValue = 0, totalCounted = 0;
+
+  STATE.products.filter(p=>p.active!==false).forEach(p => {
+    if(stocktakeSession.counts[p.id] === undefined) return;
+    const newQty = stocktakeSession.counts[p.id];
+    const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+    const diff = newQty - expected;
+    totalCounted += newQty;
+
+    if(loc==='warehouse'){
+      updates['bizpos/products/'+p.id+'/qtyWh'] = newQty;
+    } else {
+      updates['bizpos/products/'+p.id+'/qty'] = newQty;
+    }
+    updates['bizpos/products/'+p.id+'/updatedAt'] = new Date().toISOString();
+
+    if(diff !== 0){
+      variances.push({
+        productId:p.id, name:p.name,
+        expected, counted:newQty, diff,
+        value: Math.abs(diff) * (p.cost||p.price||0)
+      });
+      if(diff > 0) gainValue += diff * (p.cost||p.price||0);
+      else lossValue += Math.abs(diff) * (p.cost||p.price||0);
+    }
+  });
+
+  const reportId = uid();
+  const report = {
+    id: reportId,
+    location: loc,
+    staffName: currentUser.name,
+    committedAt: new Date().toISOString(),
+    totalCounted, variances,
+    gainValue, lossValue,
+    netVariance: gainValue - lossValue,
+  };
+
+  updates['bizpos/stocktakeReports/'+reportId] = report;
+
+  try{
+    await db.ref().update(updates);
+    stocktakeSession = null;
+    document.getElementById('btn-start-stocktake').style.display = '';
+    showToast('Stocktake committed — '+variances.length+' variances','success',5000);
+
+    // Show variance report
+    setTimeout(() => openStocktakeReport(reportId), 500);
+  }catch(e){
+    showToast('Error committing stocktake','error');
+    console.error(e);
+  }
+}
+
+function openStocktakeReport(id){
+  const r = (STATE.stocktakeReports||[]).find(x=>x.id===id);
+  if(!r) return;
+  const gains  = (r.variances||[]).filter(v=>v.diff>0);
+  const losses = (r.variances||[]).filter(v=>v.diff<0);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:480px">
+    <div class="modal-title">Stocktake Report</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">
+      ${r.committedAt?r.committedAt.slice(0,10):''} · ${r.location==='warehouse'?'🏭 Warehouse':'🏪 Shop Floor'} · by ${r.staffName||'—'}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:20px;font-weight:800">${r.totalCounted||0}</div>
+        <div style="font-size:10px;color:var(--text3)">Items Counted</div>
+      </div>
+      <div style="background:#DCFCE7;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:16px;font-weight:800;color:var(--green)">${fmt(r.gainValue||0)}</div>
+        <div style="font-size:10px;color:var(--green)">▲ Gains</div>
+      </div>
+      <div style="background:#FEE2E2;border-radius:10px;padding:10px;text-align:center">
+        <div style="font-size:16px;font-weight:800;color:var(--red)">${fmt(r.lossValue||0)}</div>
+        <div style="font-size:10px;color:var(--red)">▼ Losses</div>
+      </div>
+    </div>
+
+    ${gains.length?`<div class="section-title" style="color:var(--green)">▲ Gains (${gains.length})</div>
+    ${gains.map(v=>`<div class="totals-row">
+      <span style="font-size:13px">${v.name}</span>
+      <span style="font-size:12px;color:var(--text3)">exp ${v.expected} → got ${v.counted}</span>
+      <span style="font-weight:700;color:var(--green)">+${v.diff}</span>
+    </div>`).join('')}`:''}
+
+    ${losses.length?`<div class="section-title" style="color:var(--red);margin-top:12px">▼ Losses (${losses.length})</div>
+    ${losses.map(v=>`<div class="totals-row">
+      <span style="font-size:13px">${v.name}</span>
+      <span style="font-size:12px;color:var(--text3)">exp ${v.expected} → got ${v.counted}</span>
+      <span style="font-weight:700;color:var(--red)">${v.diff}</span>
+    </div>`).join('')}`:''}
+
+    ${!gains.length&&!losses.length?'<div style="text-align:center;padding:20px;color:var(--green);font-weight:700">✓ All counts matched perfectly!</div>':''}
+
+    <button class="btn btn-secondary btn-full" style="margin-top:16px" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
 }
 
 // ── INIT ──
