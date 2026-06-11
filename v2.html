@@ -2225,7 +2225,9 @@ async function saveMember(btn){
   if(fmtPhone.startsWith('0')) fmtPhone = '+27' + fmtPhone.slice(1);
   if(!fmtPhone.startsWith('+27')) fmtPhone = '+27' + fmtPhone;
 
-  const memberId = 'JJ' + String(STATE.members.length+1).padStart(4,'0');
+  // Generate member ID from last 4 digits of phone
+  const last4 = fmtPhone.replace(/\D/g,'').slice(-4);
+  const memberId = 'JJ' + last4;
   const age = idNum ? getAgeFromID(idNum) : null;
   const member = {
     id: uid(), memberId, name, phone:fmtPhone, idNumber:idNum||'',
