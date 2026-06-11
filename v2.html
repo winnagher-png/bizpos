@@ -1606,6 +1606,7 @@ async function commitStocktake(){
   const variances = [];
   let gainValue = 0, lossValue = 0, totalCounted = 0;
 
+  const allItems = [];
   STATE.products.filter(p=>p.active!==false).forEach(p => {
     if(stocktakeSession.counts[p.id] === undefined) return;
     const newQty = stocktakeSession.counts[p.id];
@@ -1620,9 +1621,18 @@ async function commitStocktake(){
     }
     updates['bizpos/products/'+p.id+'/updatedAt'] = new Date().toISOString();
 
+    // Track all items for full report
+    allItems.push({
+      productId:p.id, name:p.name,
+      category: p.category||'Uncategorised',
+      expected, counted:newQty, diff,
+      value: Math.abs(diff) * (p.cost||p.price||0)
+    });
+
     if(diff !== 0){
       variances.push({
         productId:p.id, name:p.name,
+        category: p.category||'Uncategorised',
         expected, counted:newQty, diff,
         value: Math.abs(diff) * (p.cost||p.price||0)
       });
@@ -1637,7 +1647,7 @@ async function commitStocktake(){
     location: loc,
     staffName: currentUser.name,
     committedAt: new Date().toISOString(),
-    totalCounted, variances,
+    totalCounted, variances, allItems,
     gainValue, lossValue,
     netVariance: gainValue - lossValue,
   };
@@ -1649,6 +1659,11 @@ async function commitStocktake(){
     stocktakeSession = null;
     document.getElementById('btn-start-stocktake').style.display = '';
     showToast('Stocktake committed — '+variances.length+' variances','success',5000);
+
+    // Auto-email report
+    setTimeout(() => {
+      try { buildAndEmailStocktakeReport(report); } catch(e){ console.warn('Email failed:', e); }
+    }, 800);
 
     // Show variance report
     setTimeout(() => openStocktakeReport(reportId), 500);
@@ -1663,49 +1678,169 @@ function openStocktakeReport(id){
   if(!r) return;
   const gains  = (r.variances||[]).filter(v=>v.diff>0);
   const losses = (r.variances||[]).filter(v=>v.diff<0);
+  const ok     = (r.variances||[]).filter(v=>v.diff===0);
+
+  // Group all counted items by category
+  const allCounted = r.allItems || [];
+  const categories = {};
+  allCounted.forEach(item => {
+    const cat = item.category || 'Uncategorised';
+    if(!categories[cat]) categories[cat] = [];
+    categories[cat].push(item);
+  });
+  const catKeys = Object.keys(categories).sort();
+
+  const categoryRows = catKeys.map(cat => {
+    const items = categories[cat];
+    const rows = items.map(item => {
+      const diff = item.diff;
+      const diffColor = diff>0?'#16A34A':diff<0?'#DC2626':'#6B7280';
+      const diffText = diff>0?'+'+diff:diff===0?'✓':String(diff);
+      const bg = diff>0?'#F0FDF4':diff<0?'#FEF2F2':'';
+      return `<tr style="background:${bg}">
+        <td style="padding:6px 8px;font-size:12px">${item.name}</td>
+        <td style="padding:6px 8px;font-size:12px;text-align:center">${item.expected}</td>
+        <td style="padding:6px 8px;font-size:12px;text-align:center;font-weight:700">${item.counted}</td>
+        <td style="padding:6px 8px;font-size:12px;text-align:center;font-weight:800;color:${diffColor}">${diffText}</td>
+      </tr>`;
+    }).join('');
+    return `<tr style="background:#F3F4F6"><td colspan="4" style="padding:8px;font-size:11px;font-weight:800;color:#374151;text-transform:uppercase;letter-spacing:1px">${cat}</td></tr>${rows}`;
+  }).join('');
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal" style="max-width:480px">
-    <div class="modal-title">Stocktake Report</div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">
-      ${r.committedAt?r.committedAt.slice(0,10):''} · ${r.location==='warehouse'?'🏭 Warehouse':'🏪 Shop Floor'} · by ${r.staffName||'—'}
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.innerHTML = `<div class="modal" style="max-width:520px;max-height:90vh;overflow-y:auto">
+    <div style="text-align:center;margin-bottom:4px">
+      <div style="font-size:18px;font-weight:800">Jack & Jill's Adventure Club</div>
+      <div style="font-size:13px;color:var(--text3)">Stocktake Report — ${r.location==='warehouse'?'Warehouse':'Shop Floor'}</div>
+      <div style="font-size:12px;color:var(--text3)">${r.committedAt?r.committedAt.slice(0,10):''} · Done by: ${r.staffName||'—'}</div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
-      <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center">
-        <div style="font-size:20px;font-weight:800">${r.totalCounted||0}</div>
-        <div style="font-size:10px;color:var(--text3)">Items Counted</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin:12px 0">
+      <div style="background:var(--bg3);border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:800">${allCounted.length||r.totalCounted||0}</div>
+        <div style="font-size:9px;color:var(--text3)">TOTAL ITEMS</div>
       </div>
-      <div style="background:#DCFCE7;border-radius:10px;padding:10px;text-align:center">
-        <div style="font-size:16px;font-weight:800;color:var(--green)">${fmt(r.gainValue||0)}</div>
-        <div style="font-size:10px;color:var(--green)">▲ Gains</div>
+      <div style="background:#DCFCE7;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:800;color:#16A34A">${gains.length}</div>
+        <div style="font-size:9px;color:#16A34A">GAINS</div>
       </div>
-      <div style="background:#FEE2E2;border-radius:10px;padding:10px;text-align:center">
-        <div style="font-size:16px;font-weight:800;color:var(--red)">${fmt(r.lossValue||0)}</div>
-        <div style="font-size:10px;color:var(--red)">▼ Losses</div>
+      <div style="background:#FEE2E2;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:800;color:#DC2626">${losses.length}</div>
+        <div style="font-size:9px;color:#DC2626">LOSSES</div>
+      </div>
+      <div style="background:#F0FDF4;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:18px;font-weight:800;color:#16A34A">${ok.length}</div>
+        <div style="font-size:9px;color:#16A34A">CORRECT</div>
       </div>
     </div>
 
-    ${gains.length?`<div class="section-title" style="color:var(--green)">▲ Gains (${gains.length})</div>
-    ${gains.map(v=>`<div class="totals-row">
-      <span style="font-size:13px">${v.name}</span>
-      <span style="font-size:12px;color:var(--text3)">exp ${v.expected} → got ${v.counted}</span>
-      <span style="font-weight:700;color:var(--green)">+${v.diff}</span>
-    </div>`).join('')}`:''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px">
+      <div style="background:#DCFCE7;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#16A34A">${fmt(r.gainValue||0)}</div>
+        <div style="font-size:9px;color:#16A34A">GAIN VALUE</div>
+      </div>
+      <div style="background:#FEE2E2;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:14px;font-weight:800;color:#DC2626">${fmt(r.lossValue||0)}</div>
+        <div style="font-size:9px;color:#DC2626">LOSS VALUE</div>
+      </div>
+    </div>
 
-    ${losses.length?`<div class="section-title" style="color:var(--red);margin-top:12px">▼ Losses (${losses.length})</div>
-    ${losses.map(v=>`<div class="totals-row">
-      <span style="font-size:13px">${v.name}</span>
-      <span style="font-size:12px;color:var(--text3)">exp ${v.expected} → got ${v.counted}</span>
-      <span style="font-weight:700;color:var(--red)">${v.diff}</span>
-    </div>`).join('')}`:''}
+    ${catKeys.length ? `
+    <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:12px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:#2D6A4F;color:#fff">
+            <th style="padding:8px;font-size:11px;text-align:left">Product</th>
+            <th style="padding:8px;font-size:11px;text-align:center">Expected</th>
+            <th style="padding:8px;font-size:11px;text-align:center">Counted</th>
+            <th style="padding:8px;font-size:11px;text-align:center">Variance</th>
+          </tr>
+        </thead>
+        <tbody>${categoryRows}</tbody>
+      </table>
+    </div>` : `
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:800;color:#16A34A;text-transform:uppercase;margin-bottom:6px">▲ Gains (${gains.length})</div>
+      ${gains.map(v=>`<div class="totals-row"><span style="font-size:12px">${v.name}</span><span style="font-size:11px;color:var(--text3)">exp ${v.expected}→${v.counted}</span><span style="font-weight:700;color:#16A34A">+${v.diff}</span></div>`).join('')}
+      <div style="font-size:11px;font-weight:800;color:#DC2626;text-transform:uppercase;margin:8px 0 6px">▼ Losses (${losses.length})</div>
+      ${losses.map(v=>`<div class="totals-row"><span style="font-size:12px">${v.name}</span><span style="font-size:11px;color:var(--text3)">exp ${v.expected}→${v.counted}</span><span style="font-weight:700;color:#DC2626">${v.diff}</span></div>`).join('')}
+    </div>`}
 
-    ${!gains.length&&!losses.length?'<div style="text-align:center;padding:20px;color:var(--green);font-weight:700">✓ All counts matched perfectly!</div>':''}
-
-    <button class="btn btn-secondary btn-full" style="margin-top:16px" onclick="this.closest('.modal-overlay').remove()">Close</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+      <button class="btn btn-primary" onclick="emailStocktakeReport('${id}')">📧 Email Report</button>
+    </div>
   </div>`;
   document.body.appendChild(overlay);
+}
+
+function emailStocktakeReport(id){
+  const r = (STATE.stocktakeReports||[]).find(x=>x.id===id);
+  if(!r) return;
+  buildAndEmailStocktakeReport(r);
+}
+
+function buildAndEmailStocktakeReport(r){
+  const gains  = (r.variances||[]).filter(v=>v.diff>0);
+  const losses = (r.variances||[]).filter(v=>v.diff<0);
+  const ok     = (r.variances||[]).filter(v=>v.diff===0);
+  const allItems = r.allItems || [];
+
+  // Group by category
+  const categories = {};
+  allItems.forEach(item => {
+    const cat = item.category || 'Uncategorised';
+    if(!categories[cat]) categories[cat] = [];
+    categories[cat].push(item);
+  });
+
+  let body = "JACK & JILL'S ADVENTURE CLUB\n";
+  body += "STOCKTAKE REPORT\n";
+  body += "=====================================\n";
+  body += "Date:     " + (r.committedAt?r.committedAt.slice(0,10):'') + "\n";
+  body += "Location: " + (r.location==='warehouse'?'Warehouse':'Shop Floor') + "\n";
+  body += "Done by:  " + (r.staffName||'—') + "\n";
+  body += "=====================================\n\n";
+  body += "SUMMARY\n";
+  body += "Total items counted: " + (allItems.length||r.totalCounted||0) + "\n";
+  body += "Gains:   " + gains.length + " items  (+" + (r.gainValue||0).toFixed(2) + ")\n";
+  body += "Losses:  " + losses.length + " items  (-" + (r.lossValue||0).toFixed(2) + ")\n";
+  body += "Correct: " + ok.length + " items\n";
+  body += "Net variance: R" + ((r.gainValue||0)-(r.lossValue||0)).toFixed(2) + "\n\n";
+
+  const catKeys = Object.keys(categories).sort();
+  if(catKeys.length){
+    body += "FULL COUNT BY CATEGORY\n";
+    body += "=====================================\n";
+    catKeys.forEach(cat => {
+      body += "\n[ " + cat.toUpperCase() + " ]\n";
+      body += String("Product").padEnd(40) + String("Exp").padStart(5) + String("Got").padStart(5) + String("Var").padStart(6) + "\n";
+      body += "-".repeat(56) + "\n";
+      categories[cat].forEach(item => {
+        const diff = item.diff;
+        const diffStr = diff>0?('+'+diff):String(diff);
+        body += String(item.name).substring(0,38).padEnd(40) + String(item.expected).padStart(5) + String(item.counted).padStart(5) + diffStr.padStart(6) + "\n";
+      });
+    });
+  } else {
+    if(gains.length){
+      body += "GAINS\n-----\n";
+      gains.forEach(v=>{ body += "  +" + v.diff + " x " + v.name + " (exp " + v.expected + ", got " + v.counted + ")\n"; });
+    }
+    if(losses.length){
+      body += "\nLOSSES\n------\n";
+      losses.forEach(v=>{ body += "  " + v.diff + " x " + v.name + " (exp " + v.expected + ", got " + v.counted + ")\n"; });
+    }
+  }
+
+  body += "\n=====================================\n";
+  body += "Sent by BizPos\n";
+
+  const subject = "Stocktake Report — " + (r.committedAt?r.committedAt.slice(0,10):'') + " — " + (r.location==='warehouse'?'Warehouse':'Shop Floor');
+  window.open('mailto:winnagher@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body));
 }
 
 // ── INIT ──
