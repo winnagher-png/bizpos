@@ -423,8 +423,65 @@ function loginSuccess(staff){
   document.getElementById('pin-input').value='';
   applyRolePermissions(staff.role);
   switchTab('pos');
-  // Check birthdays after a short delay so data has loaded
   setTimeout(checkBirthdays, 2000);
+  // Show clock-in popup after short delay
+  setTimeout(function(){ showClockInPrompt(staff); }, 500);
+}
+
+function showClockInPrompt(staff){
+  // Check if already clocked in today
+  const liveStaff = STATE.staff.find(x=>x.id===staff.id)||{};
+  if(liveStaff.clockedIn) return; // already clocked in
+  const todayShift = liveStaff.todayShift;
+  if(todayShift && todayShift.date === new Date().toISOString().slice(0,10)) return; // already worked today
+
+  const now = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
+  const isCashPaid = staff.role==='cashier'; // cashiers paid from till, managers/supervisors via EFT
+  const payNote = isCashPaid
+    ? '💵 Your wages will be logged as a till expense at cashup'
+    : '🏦 Your wages will be logged as a business EFT expense';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-clockin-prompt';
+  overlay.style.zIndex = '9998';
+  overlay.innerHTML = `<div class="modal" style="max-width:340px;text-align:center">
+    <div style="font-size:48px;margin-bottom:8px">⏱️</div>
+    <div style="font-size:22px;font-weight:800;margin-bottom:4px">Good ${getGreeting()}, ${staff.name.split(' ')[0]}!</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:24px">What time did your shift start?</div>
+    <input type="time" class="input" id="login-clock-time" value="${now}"
+      style="font-size:28px;font-weight:800;text-align:center;padding:16px;margin-bottom:8px;border-color:#C9A84C">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:20px">${payNote}</div>
+    <button class="btn btn-primary btn-full" style="padding:16px;font-size:16px" onclick="commitLoginClockIn('${staff.id}')">
+      ✓ Start Shift
+    </button>
+    <button onclick="document.getElementById('modal-clockin-prompt').remove()" style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:12px;cursor:pointer;display:block;width:100%">
+      Skip (already clocked in elsewhere)
+    </button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function getGreeting(){
+  const h = new Date().getHours();
+  return h<12?'morning':h<17?'afternoon':'evening';
+}
+
+async function commitLoginClockIn(staffId){
+  const timeVal = (document.getElementById('login-clock-time').value||'').trim();
+  if(!timeVal){ showToast('Enter your start time','error'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  const clockInISO = today + 'T' + timeVal + ':00';
+  const s = STAFF_PINS.find(x=>x.id===staffId);
+  try{
+    await db.ref('bizpos/staff/'+staffId).update({
+      id:staffId, name:s?s.name:staffId, role:s?s.role:'cashier',
+      clockedIn:true, clockedInAt:clockInISO,
+      updatedAt:new Date().toISOString()
+    });
+    document.getElementById('modal-clockin-prompt').remove();
+    showToast('Shift started at '+timeVal+' · Have a great shift!','success',4000);
+  }catch(e){ showToast('Error clocking in','error'); }
 }
 
 function checkBirthdays(){
@@ -2136,7 +2193,7 @@ async function logShiftHours(){
     staffName: currentUser.name
   };
 
-  // Add wage as till expense automatically
+  const isCashPaidShift = currentUser.role === 'cashier';
   const expId = uid();
   const tillExp = {
     id: expId,
@@ -2149,11 +2206,23 @@ async function logShiftHours(){
 
   try{
     await db.ref('bizpos/staff/'+currentUser.id+'/todayShift').set(shift);
-    // Add to tillExpenses array for current cashup session
-    // Remove any existing wage expense for this staff member first (prevent duplicates)
-    tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== currentUser.id);
-    tillExpenses.push(tillExp);
-    showToast('Shift logged — '+hoursRounded+'hrs — wage R'+wage+' added to till expenses','success',5000);
+    if(isCashPaidShift){
+      // Cashiers — add to till expenses
+      tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== currentUser.id);
+      tillExpenses.push(tillExp);
+      showToast('Shift logged — '+hoursRounded+'hrs — R'+wage+' added to till expenses','success',5000);
+    } else {
+      // Managers/Supervisors — log as EFT business expense
+      try{
+        await db.ref('bizpos/expenses/'+expId).set({
+          ...tillExp,
+          payMethod:'eft', date:new Date().toISOString().slice(0,10),
+          status:'pending', notes:'Pay via EFT/bank transfer',
+          createdAt:new Date().toISOString(), createdBy:currentUser.name
+        });
+        showToast('Shift logged — '+hoursRounded+'hrs — R'+wage+' EFT expense created','success',5000);
+      }catch(e){ showToast('Shift logged','success'); }
+    }
     renderCashup();
   }catch(e){ showToast('Error logging shift','error'); }
 }
@@ -2655,21 +2724,44 @@ async function commitClockOut(staffId, btn){
       updatedAt: new Date().toISOString()
     });
 
-    // Add wage as till expense (remove duplicate if exists)
-    tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== staffId);
+    const isCashPaid = s && s.role === 'cashier';
+
     if(wage > 0){
-      tillExpenses.push({
-        id: uid(),
-        desc: (s?s.name:staffId)+' wages ('+hours+'hrs)',
-        amount: wage,
-        category: 'Salaries',
-        addedFromShift: true,
-        staffId
-      });
+      if(isCashPaid){
+        // Cashiers — add to till expenses (paid from cash)
+        tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== staffId);
+        tillExpenses.push({
+          id: uid(),
+          desc: (s?s.name:staffId)+' wages ('+hours+'hrs)',
+          amount: wage,
+          category: 'Salaries',
+          addedFromShift: true,
+          staffId
+        });
+      } else {
+        // Managers & Supervisors — log as EFT business expense
+        const expId = uid();
+        try{
+          await db.ref('bizpos/expenses/'+expId).set({
+            id:expId,
+            desc:(s?s.name:staffId)+' wages — '+today+' ('+hours+'hrs)',
+            amount:wage,
+            category:'Salaries',
+            payMethod:'eft',
+            date:today,
+            status:'pending',
+            notes:'Auto-logged from clock-out. Pay via EFT.',
+            createdAt:new Date().toISOString(),
+            createdBy:currentUser.name,
+            staffId
+          });
+        }catch(e2){ console.warn('Wage expense error:', e2); }
+      }
     }
 
     btn.closest('.modal-overlay').remove();
-    showToast((s?s.name:staffId)+' clocked out · R'+wage.toFixed(2)+' wage added','success',4000);
+    const payType = isCashPaid ? '(till cash)' : '(EFT — pay via bank)';
+    showToast((s?s.name:staffId)+' clocked out · R'+wage.toFixed(2)+' '+payType,'success',4000);
     renderStaffTab();
   }catch(e){ showToast('Error','error'); }
 }
