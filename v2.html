@@ -314,7 +314,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -378,6 +378,9 @@ function startListeners(){
     if(currentTab==='members')renderMembersList();
     // Re-check birthdays when member data loads
     if(currentUser) checkBirthdays();
+  });
+  db.ref('bizpos/writeoffs').on('value',s=>{
+    STATE.writeoffs=s.val()?Object.values(s.val()):[];
   });
   db.ref('bizpos/stocktakeReports').on('value',s=>{
     STATE.stocktakeReports=s.val()?Object.values(s.val()):[];
@@ -1455,8 +1458,95 @@ function sendDailyEmail(cashup){
       });
     }
 
+    // ── PURCHASE ORDERS ──
+    const todayPOs = (STATE.purchaseOrders||[]).filter(po=>{
+      const d = po.createdAt||po.orderedAt||po.paidAt||po.receivedAt||'';
+      return localDateStr(d)===today;
+    });
+    // Also POs that had status changes today
+    const updatedPOs = (STATE.purchaseOrders||[]).filter(po=>{
+      const dates = [po.orderedAt,po.paidAt,po.receivedAt].filter(Boolean);
+      return dates.some(d=>localDateStr(d)===today);
+    });
+    const allDailyPOs = [...new Map([...todayPOs,...updatedPOs].map(p=>[p.id,p])).values()];
+
+    if(allDailyPOs.length){
+      body += "--- PURCHASE ORDERS ---\n";
+      allDailyPOs.forEach(po=>{
+        body += "  "+po.poNumber+" — "+(po.poType==='expense'?'Expense PO':'Stock PO')+" — "+po.supplierName+"\n";
+        body += "  Status: "+(po.status||'draft').toUpperCase()+" | Total: "+fmt(po.total||0)+"\n";
+        if(po.orderedAt&&localDateStr(po.orderedAt)===today) body += "  ✓ Ordered today by "+(po.orderedBy||'—')+"\n";
+        if(po.paidAt&&localDateStr(po.paidAt)===today)       body += "  ✓ Marked paid today\n";
+        if(po.receivedAt&&localDateStr(po.receivedAt)===today) body += "  ✓ Stock received today by "+(po.receivedBy||'—')+"\n";
+        body += "  Items:\n";
+        (po.lines||[]).forEach(l=>{
+          if(po.poType==='expense') body += "    - "+l.desc+" ("+l.category+"): "+fmt(l.amount||0)+"\n";
+          else body += "    - "+l.productName+" x"+(l.qty||1)+" @ "+fmt(l.unitCost||0)+"\n";
+        });
+        body += "\n";
+      });
+    }
+
+    // ── ALL EXPENSES TODAY ──
+    const allTodayExp = STATE.expenses.filter(e=>e.date===today);
+    if(allTodayExp.length){
+      body += "--- ALL EXPENSES TODAY ---\n";
+      const grouped = {};
+      allTodayExp.forEach(e=>{
+        const cat = e.category||'Other';
+        if(!grouped[cat]) grouped[cat]=[];
+        grouped[cat].push(e);
+      });
+      let expGrandTotal = 0;
+      Object.keys(grouped).sort().forEach(cat=>{
+        body += "  ["+cat+"]\n";
+        grouped[cat].forEach(e=>{
+          expGrandTotal += (e.amount||0);
+          body += "    "+e.desc+": "+fmt(e.amount||0)+" ["+e.payMethod+"]\n";
+        });
+      });
+      body += "  TOTAL EXPENSES: "+fmt(expGrandTotal)+"\n\n";
+    }
+
+    // ── WRITE-OFFS ──
+    const todayWO = (STATE.writeoffs||[]).filter(w=>w.date===today);
+    if(todayWO.length){
+      body += "--- STOCK WRITE-OFFS ---\n";
+      let woTotal = 0;
+      todayWO.forEach(w=>{
+        woTotal += (w.value||0);
+        body += "  "+w.qty+" x "+w.productName+" ("+w.reason+") — "+fmt(w.value||0)+" by "+w.createdBy+"\n";
+      });
+      body += "  Total write-off value: "+fmt(woTotal)+"\n\n";
+    }
+
+    // ── MEMBERS ACTIVITY ──
+    const todayMembers = (STATE.members||[]).filter(m=>m.createdAt&&localDateStr(m.createdAt)===today);
+    const todaySalesWithMembers = ts.filter(s=>s.memberId);
+    if(todayMembers.length||todaySalesWithMembers.length){
+      body += "--- MEMBER ACTIVITY ---\n";
+      if(todayMembers.length){
+        body += "  New members today: "+todayMembers.length+"\n";
+        todayMembers.forEach(m=>{ body += "    + "+m.name+" (#"+m.memberId+") — "+m.phone+"\n"; });
+      }
+      if(todaySalesWithMembers.length){
+        body += "  Member sales: "+todaySalesWithMembers.length+" transactions\n";
+        const pts = todaySalesWithMembers.reduce((a,s)=>a+Math.floor(s.total/100),0);
+        body += "  Points awarded today: "+pts+"pts\n";
+      }
+      body += "\n";
+    }
+
+    // ── VOID SALES ──
+    const todayVoids = STATE.sales.filter(s=>s.voided&&s.voidedOnDate===today);
+    if(todayVoids.length){
+      body += "--- VOIDED SALES ---\n";
+      todayVoids.forEach(s=>{ body += "  "+fmt(s.total)+" — "+s.staffName+" — "+(s.voidReason||'no reason')+"\n"; });
+      body += "\n";
+    }
+
     body += "============================================\n";
-    body += "Sent by BizPos\n";
+    body += "Sent automatically by BizPos\n";
 
     const subject = "J&J Daily Report — "+today+" — "+fmt(tot)+" sales";
     window.open('mailto:winnagher@gmail.com?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
