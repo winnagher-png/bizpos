@@ -452,6 +452,7 @@ function loginSuccess(staff){
   // Show clock-in popup after short delay
   setTimeout(function(){ showClockInPrompt(staff); }, 500);
   setTimeout(checkReorderAlerts, 3000);
+  setTimeout(checkMorningNotes, 4000);
 }
 
 function showClockInPrompt(staff){
@@ -966,21 +967,40 @@ function renderCashup(){
     </div>
 
     <div class="card" style="border:2px solid #2D9E35;margin-bottom:12px">
-      <div style="font-size:14px;font-weight:800;margin-bottom:12px">✅ End of Day Checklist</div>
-      <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase">Have you logged all of today's expenses?</div>
+      <div style="font-size:15px;font-weight:900;margin-bottom:4px">✅ End of Day Checklist</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:14px">Tick off everything before committing cashup</div>
+
+      <div style="font-size:11px;font-weight:800;color:#1A1A1A;text-transform:uppercase;margin-bottom:6px">💸 Expenses Logged?</div>
       ${[
         {icon:'💵',label:'Petty cash payments (wages, airtime, consumables)',tab:'expenses'},
         {icon:'💳',label:'Card purchases & swipes',tab:'expenses'},
         {icon:'🏦',label:'EFT transfers made today',tab:'expenses'},
         {icon:'📦',label:'Stock received — GRV done?',tab:'po'},
+        {icon:'🔁',label:'Recurring debit orders this month logged?',tab:'expenses'},
       ].map((item,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
         <input type="checkbox" id="chk-eod-${i}" style="width:18px;height:18px;accent-color:#2D9E35;flex-shrink:0">
         <label for="chk-eod-${i}" style="font-size:12px;flex:1;cursor:pointer">${item.icon} ${item.label}</label>
         <button onclick="switchTab('${item.tab}')" style="background:none;border:none;color:#2D9E35;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">Go →</button>
       </div>`).join('')}
-      <div style="font-size:11px;font-weight:700;color:var(--text3);margin:12px 0 8px;text-transform:uppercase">Pending Purchase Orders</div>
-      ${(STATE.purchaseOrders||[]).filter(po=>po.status!=='received').slice(0,5).map(po=>`
+
+      <div style="font-size:11px;font-weight:800;color:#1A1A1A;text-transform:uppercase;margin:14px 0 6px">👔 Management Wages (Pay Manually)</div>
+      ${STAFF_PINS.filter(s=>s.role!=='cashier').map(s=>{
+        const live = STATE.staff.find(x=>x.id===s.id)||{};
+        const shift = live.todayShift;
+        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+          <input type="checkbox" id="chk-wage-${s.id}" style="width:18px;height:18px;accent-color:#2D9E35;flex-shrink:0">
+          <div style="flex:1">
+            <label for="chk-wage-${s.id}" style="font-size:12px;font-weight:700;cursor:pointer">${s.name} — ${s.role}</label>
+            <div style="font-size:10px;color:var(--text3)">${shift?shift.start+' – '+shift.end+' · '+shift.hours+'hrs worked':'No shift logged today'}</div>
+          </div>
+          <button onclick="switchTab('expenses')" style="background:none;border:none;color:#2D9E35;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">Log →</button>
+        </div>`;
+      }).join('')}
+
+      <div style="font-size:11px;font-weight:800;color:#1A1A1A;text-transform:uppercase;margin:14px 0 6px">📦 Pending Purchase Orders</div>
+      ${(STATE.purchaseOrders||[]).filter(po=>po.status!=='received').slice(0,8).map(po=>`
         <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="switchTab('po')">
+          <input type="checkbox" id="chk-po-${po.id}" style="width:18px;height:18px;accent-color:#2D9E35;flex-shrink:0" onclick="event.stopPropagation()">
           <span style="font-size:16px">${po.poType==='expense'?'🧾':'📦'}</span>
           <div style="flex:1">
             <div style="font-size:12px;font-weight:700">${po.poNumber} — ${po.supplierName}</div>
@@ -988,6 +1008,10 @@ function renderCashup(){
           </div>
           <span style="font-size:11px;color:#2D9E35;font-weight:700">Update →</span>
         </div>`).join('') || '<div style="font-size:12px;color:var(--text3);padding:6px">✓ No pending orders</div>'}
+
+      <div style="font-size:11px;font-weight:800;color:#1A1A1A;text-transform:uppercase;margin:14px 0 6px">📝 Staff Notes for Tomorrow</div>
+      <textarea id="staff-notes-tomorrow" class="input" rows="3" placeholder="e.g. Jordan — open at 9am, Chris — bring float change, Charne — check warehouse stock of OG Cheese..." style="font-size:12px;resize:none;margin-bottom:8px"></textarea>
+      <div style="font-size:10px;color:var(--text3)">These notes will be included in your daily email report</div>
     </div>
 
     ${history.length?`<div class="card">
@@ -1121,6 +1145,10 @@ async function saveCashup(){
       db.ref('bizpos/pettyCash').set({balance:newBalance,history:newHistory}),
     ]);
     tillExpenses=[];
+    // Capture staff notes before clearing
+    const staffNotes = (document.getElementById('staff-notes-tomorrow')||{}).value||'';
+    if(staffNotes) cashup.staffNotes = staffNotes;
+
     showToast('Cash up saved — Banked: '+fmt(toBank),'success',5000);
     renderCashup();
     // Send daily email report
@@ -1821,6 +1849,13 @@ function sendDailyEmail(cashup){
       body += "--- VOIDED SALES ---\n";
       todayVoids.forEach(s=>{ body += "  "+fmt(s.total)+" — "+s.staffName+" — "+(s.voidReason||'no reason')+"\n"; });
       body += "\n";
+    }
+
+    // Staff notes for tomorrow
+    const lastCashup = STATE.cashups.slice().sort((a,b)=>b.date>a.date?1:-1)[0];
+    if(lastCashup && lastCashup.staffNotes){
+      body += "--- NOTES FOR TOMORROW ---\n";
+      body += lastCashup.staffNotes + "\n\n";
     }
 
     body += "============================================\n";
@@ -4271,6 +4306,34 @@ function quickCreatePO(productId){
     updatePOTotal();
     showToast('Pre-filled with '+p.name+' — add supplier and adjust qty','success',4000);
   }, 300);
+}
+
+function checkMorningNotes(){
+  // Show yesterday's staff notes if it's a new day
+  const cashups = [...(STATE.cashups||[])].sort((a,b)=>b.date>a.date?1:-1);
+  const lastCashup = cashups[0];
+  if(!lastCashup || !lastCashup.staffNotes) return;
+  // Only show if note is from yesterday or earlier
+  const noteDate = localDateStr(lastCashup.date);
+  const today = localDateStr();
+  if(noteDate >= today) return;
+  // Only show once per login
+  if(window._morningNotesShown) return;
+  window._morningNotesShown = true;
+
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:60px;left:0;right:0;z-index:499;padding:0 12px';
+  banner.innerHTML = `<div style="background:linear-gradient(135deg,#7C3AED,#A855F7);color:#fff;border-radius:12px;padding:14px 16px;box-shadow:0 0 20px rgba(124,58,237,.4),0 4px 12px rgba(0,0,0,.3)">
+    <div style="display:flex;align-items:flex-start;gap:10px">
+      <span style="font-size:24px">📋</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;margin-bottom:4px">Morning Notes from ${lastCashup.staffName||'Manager'}</div>
+        <div style="font-size:12px;opacity:.9;line-height:1.5">${lastCashup.staffNotes}</div>
+      </div>
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:14px;font-weight:800;cursor:pointer;border-radius:50%;width:24px;height:24px;flex-shrink:0">×</button>
+    </div>
+  </div>`;
+  document.body.appendChild(banner);
 }
 
 // ── NOTIFICATIONS ──
