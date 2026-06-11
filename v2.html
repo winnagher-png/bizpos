@@ -245,6 +245,7 @@
     <div class="list-item"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Coming soon</div></div></div>
     <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
     <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
+    <div class="list-item" onclick="openNewRollTask()"><div style="font-size:24px">🚬</div><div class="list-item-body"><div class="list-item-title">Roll Joints</div><div class="list-item-sub">Create a rolling task for staff</div></div><div>›</div></div>
     <div class="list-item" onclick="switchTab('staff')"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Clock in/out & shift management</div></div><div>›</div></div>
     <div style="margin-top:24px">
       <button onclick="lockApp()" class="btn btn-secondary btn-full">🔒 Lock / Switch User</button>
@@ -314,7 +315,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], rollTasks:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -378,6 +379,11 @@ function startListeners(){
     if(currentTab==='members')renderMembersList();
     // Re-check birthdays when member data loads
     if(currentUser) checkBirthdays();
+  });
+  db.ref('bizpos/rollTasks').on('value',s=>{
+    STATE.rollTasks = s.val() ? Object.values(s.val()) : [];
+    // Show pending tasks to cashiers on POS
+    if(currentUser) checkPendingRollTasks();
   });
   db.ref('bizpos/writeoffs').on('value',s=>{
     STATE.writeoffs=s.val()?Object.values(s.val()):[];
@@ -3211,6 +3217,292 @@ async function commitClockOut(staffId, btn){
     showToast(msg,'success',4000);
     renderStaffTab();
   }catch(e){ showToast('Error','error'); }
+}
+
+
+// ── ROLL JOINTS ──
+
+function checkPendingRollTasks(){
+  const pending = (STATE.rollTasks||[]).filter(t=>t.status==='pending');
+  const banner = document.getElementById('roll-task-banner');
+  if(pending.length){
+    if(!banner){
+      const b = document.createElement('div');
+      b.id = 'roll-task-banner';
+      b.style.cssText = 'position:fixed;top:60px;left:0;right:0;z-index:499;padding:0 12px';
+      b.innerHTML = `<div style="background:#C9A84C;color:#1A1A1A;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2);cursor:pointer" onclick="openPendingRollTasks()">
+        <span style="font-size:24px">🚬</span>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:800">${pending.length} Rolling Task${pending.length>1?'s':''} Pending!</div>
+          <div style="font-size:11px;opacity:.8">Tap to view and complete</div>
+        </div>
+        <span style="font-size:18px">›</span>
+      </div>`;
+      document.body.appendChild(b);
+    }
+  } else {
+    if(banner) banner.remove();
+  }
+}
+
+function openPendingRollTasks(){
+  const pending = (STATE.rollTasks||[]).filter(t=>t.status==='pending');
+  if(!pending.length){ showToast('No pending tasks','success'); return; }
+  // Show first pending task
+  openRollTask(pending[0].id);
+}
+
+function openNewRollTask(){
+  const products = STATE.products.filter(p=>p.active!==false).sort((a,b)=>a.name.localeCompare(b.name));
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-new-roll';
+  overlay.innerHTML = `<div class="modal" style="max-width:440px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <span style="font-size:28px">🚬</span>
+      <div class="modal-title" style="margin:0">New Rolling Task</div>
+    </div>
+
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--text3)">
+      This task will appear on staff's POS screen. They will clean, grind and roll the flower, then confirm yield and preroll count.
+    </div>
+
+    <label>Source product (flower to use) *</label>
+    <select class="input" id="rt-source" style="margin-top:4px" onchange="updateRollSourceInfo()">
+      <option value="">Select product...</option>
+      ${products.map(p=>`<option value="${p.id}" data-qty="${p.qty||0}" data-name="${p.name}">${p.name} (${p.qty||0}g in stock)</option>`).join('')}
+    </select>
+    <div id="rt-source-info" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+
+    <label>Grams to use *</label>
+    <input type="number" class="input" id="rt-grams" placeholder="e.g. 20" inputmode="decimal" oninput="updateRollExpected()">
+
+    <label>Grams per joint (g) *</label>
+    <input type="number" class="input" id="rt-per-joint" placeholder="e.g. 0.75" value="0.75" inputmode="decimal" step="0.05" oninput="updateRollExpected()">
+
+    <div id="rt-expected-display" style="background:#F0FDF4;border-radius:8px;padding:10px;margin-top:8px;font-size:13px;font-weight:700;color:#166534;display:none"></div>
+
+    <label>Target product (prerolls to create) *</label>
+    <div style="position:relative">
+      <input type="text" class="input" id="rt-target-name" placeholder="e.g. OG Cheese GH Prerolls" oninput="filterRollTarget(this.value)" autocomplete="off">
+      <div id="rt-target-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;z-index:999;max-height:140px;overflow-y:auto;box-shadow:0 4px 8px rgba(0,0,0,.1)"></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">Type existing product name or a new one to create</div>
+
+    <label>Notes for staff (optional)</label>
+    <input type="text" class="input" id="rt-notes" placeholder="e.g. Use fine grind, remove all seeds">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-new-roll').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRollTask()">🚬 Send to Staff</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function updateRollSourceInfo(){
+  const sel = document.getElementById('rt-source');
+  const opt = sel.options[sel.selectedIndex];
+  const info = document.getElementById('rt-source-info');
+  if(opt && opt.value){
+    info.textContent = 'Available: '+opt.dataset.qty+'g in stock';
+    info.style.color = '#16A34A';
+  } else {
+    info.textContent = '';
+  }
+  updateRollExpected();
+}
+
+function updateRollExpected(){
+  const grams = parseFloat(document.getElementById('rt-grams').value)||0;
+  const perJoint = parseFloat(document.getElementById('rt-per-joint').value)||0.75;
+  const display = document.getElementById('rt-expected-display');
+  if(grams > 0 && perJoint > 0){
+    const expected = Math.floor(grams / perJoint);
+    display.textContent = 'Expected yield: approx '+expected+' prerolls ('+grams+'g ÷ '+perJoint+'g each)';
+    display.style.display = 'block';
+  } else {
+    display.style.display = 'none';
+  }
+}
+
+function filterRollTarget(val){
+  const dd = document.getElementById('rt-target-drop');
+  if(!dd||!val||val.length<2){ if(dd) dd.style.display='none'; return; }
+  const matches = STATE.products.filter(p=>p.name.toLowerCase().includes(val.toLowerCase())&&p.active!==false).slice(0,6);
+  const exact = STATE.products.find(p=>p.name.toLowerCase()===val.toLowerCase());
+  const items = matches.map(p=>`<div onclick="document.getElementById('rt-target-name').value='${p.name}';document.getElementById('rt-target-drop').style.display='none'" style="padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)">${p.name} (${p.qty||0} in stock)</div>`);
+  if(!exact && val) items.push(`<div onclick="document.getElementById('rt-target-name').value='${val}';document.getElementById('rt-target-drop').style.display='none'" style="padding:8px 10px;cursor:pointer;font-size:12px;color:var(--accent);font-weight:700">+ New product: "${val}"</div>`);
+  if(!items.length){ dd.style.display='none'; return; }
+  dd.innerHTML = items.join('');
+  dd.style.display = 'block';
+}
+
+async function saveRollTask(){
+  const sourceId   = document.getElementById('rt-source').value;
+  const grams      = parseFloat(document.getElementById('rt-grams').value)||0;
+  const perJoint   = parseFloat(document.getElementById('rt-per-joint').value)||0.75;
+  const targetName = (document.getElementById('rt-target-name').value||'').trim();
+  const notes      = document.getElementById('rt-notes').value||'';
+
+  if(!sourceId){ showToast('Select a source product','error'); return; }
+  if(!grams||grams<=0){ showToast('Enter grams to use','error'); return; }
+  if(!targetName){ showToast('Enter target product name','error'); return; }
+
+  const sourceProduct = STATE.products.find(p=>p.id===sourceId);
+  if(!sourceProduct){ showToast('Source product not found','error'); return; }
+  if((sourceProduct.qty||0) < grams){ showToast('Not enough stock — only '+sourceProduct.qty+'g available','error'); return; }
+
+  const expectedJoints = Math.floor(grams / perJoint);
+
+  const task = {
+    id: uid(),
+    status: 'pending',
+    sourceProductId: sourceId,
+    sourceProductName: sourceProduct.name,
+    gramsToUse: grams,
+    gramsPerJoint: perJoint,
+    expectedJoints,
+    targetProductName: targetName,
+    notes,
+    createdAt: new Date().toISOString(),
+    createdBy: currentUser.name,
+  };
+
+  try{
+    await db.ref('bizpos/rollTasks/'+task.id).set(task);
+    document.getElementById('modal-new-roll').remove();
+    showToast('Rolling task sent to staff!','success');
+  }catch(e){ showToast('Error saving task','error'); }
+}
+
+function openRollTask(taskId){
+  const task = (STATE.rollTasks||[]).find(t=>t.id===taskId);
+  if(!task) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-roll-task';
+  overlay.innerHTML = `<div class="modal" style="max-width:420px">
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:40px">🚬</div>
+      <div style="font-size:18px;font-weight:800">Rolling Task</div>
+      <div style="font-size:12px;color:var(--text3)">Assigned by ${task.createdBy||'manager'}</div>
+    </div>
+
+    <div style="background:#FEF3C7;border-radius:12px;padding:14px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:800;color:#92400E;margin-bottom:8px">📋 Instructions</div>
+      <div style="font-size:13px;color:#92400E">
+        Use <strong>${task.gramsToUse}g</strong> of <strong>${task.sourceProductName}</strong><br>
+        Grind at <strong>${task.gramsPerJoint}g per joint</strong><br>
+        Expected yield: <strong>~${task.expectedJoints} prerolls</strong><br>
+        Rolling into: <strong>${task.targetProductName}</strong>
+      </div>
+      ${task.notes?`<div style="margin-top:8px;font-size:12px;color:#92400E;font-style:italic">Note: ${task.notes}</div>`:''}
+    </div>
+
+    <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--text3);margin-bottom:10px">STEP 1 — WEIGH AFTER CLEANING</div>
+      <label>Actual grams after cleaning/grinding (variance for seeds, stalks, leaves)</label>
+      <input type="number" class="input" id="rt-actual-grams" placeholder="e.g. 18.5" inputmode="decimal" step="0.1"
+        oninput="updateRollVariance(${task.gramsToUse})">
+      <div id="rt-variance-display" style="font-size:12px;margin-top:6px;font-weight:700"></div>
+    </div>
+
+    <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:800;color:var(--text3);margin-bottom:10px">STEP 2 — COUNT PREROLLS COMPLETED</div>
+      <label>Number of prerolls rolled</label>
+      <input type="number" class="input" id="rt-joint-count" placeholder="e.g. 24" inputmode="numeric">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Expected: ~${task.expectedJoints} prerolls</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-roll-task').remove()">Later</button>
+      <button class="btn btn-success" onclick="commitRollTask('${task.id}')">✓ Complete Task</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function updateRollVariance(originalGrams){
+  const actual = parseFloat(document.getElementById('rt-actual-grams').value)||0;
+  const display = document.getElementById('rt-variance-display');
+  if(!actual){ display.textContent=''; return; }
+  const diff = actual - originalGrams;
+  const pct  = ((diff/originalGrams)*100).toFixed(1);
+  display.textContent = diff>=0
+    ? '✓ '+actual+'g ('+pct+'% variance — gain)'
+    : '↓ '+actual+'g ('+Math.abs(diff).toFixed(1)+'g lost to cleaning — '+Math.abs(pct)+'% variance)';
+  display.style.color = diff<-originalGrams*0.3 ? '#DC2626' : '#16A34A';
+}
+
+async function commitRollTask(taskId){
+  const task = (STATE.rollTasks||[]).find(t=>t.id===taskId);
+  if(!task) return;
+
+  const actualGrams  = parseFloat(document.getElementById('rt-actual-grams').value)||0;
+  const jointCount   = parseInt(document.getElementById('rt-joint-count').value)||0;
+
+  if(!actualGrams||actualGrams<=0){ showToast('Enter actual grams after cleaning','error'); return; }
+  if(!jointCount||jointCount<=0){ showToast('Enter number of prerolls rolled','error'); return; }
+
+  const variance = actualGrams - task.gramsToUse;
+
+  // Find source product and deduct
+  const sourceProduct = STATE.products.find(p=>p.id===task.sourceProductId);
+  // Find or create target product
+  let targetProduct = STATE.products.find(p=>p.name.toLowerCase()===task.targetProductName.toLowerCase());
+
+  const updates = {};
+
+  // Deduct source stock
+  if(sourceProduct){
+    updates['bizpos/products/'+sourceProduct.id+'/qty'] = Math.max(0,(sourceProduct.qty||0) - task.gramsToUse);
+    updates['bizpos/products/'+sourceProduct.id+'/updatedAt'] = new Date().toISOString();
+  }
+
+  // Add to target product
+  if(targetProduct){
+    updates['bizpos/products/'+targetProduct.id+'/qty'] = (targetProduct.qty||0) + jointCount;
+    updates['bizpos/products/'+targetProduct.id+'/updatedAt'] = new Date().toISOString();
+  } else {
+    // Auto-create target product
+    const newId = uid();
+    updates['bizpos/products/'+newId] = {
+      id:newId, name:task.targetProductName, price:0, cost:0,
+      qty:jointCount, qtyWh:0, category:'Prerolls',
+      active:true, reorderAt:5,
+      createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()
+    };
+  }
+
+  // Mark task complete
+  updates['bizpos/rollTasks/'+taskId+'/status'] = 'completed';
+  updates['bizpos/rollTasks/'+taskId+'/completedAt'] = new Date().toISOString();
+  updates['bizpos/rollTasks/'+taskId+'/completedBy'] = currentUser.name;
+  updates['bizpos/rollTasks/'+taskId+'/actualGrams'] = actualGrams;
+  updates['bizpos/rollTasks/'+taskId+'/gramsVariance'] = variance;
+  updates['bizpos/rollTasks/'+taskId+'/jointsRolled'] = jointCount;
+
+  // Log as write-off for the source (grams used)
+  const woId = uid();
+  updates['bizpos/writeoffs/'+woId] = {
+    id:woId, productId:task.sourceProductId,
+    productName:task.sourceProductName,
+    qty:task.gramsToUse, location:'shop',
+    reason:'Used for rolling — '+task.targetProductName,
+    notes:'Rolled '+jointCount+' prerolls. Actual yield: '+actualGrams+'g ('+variance.toFixed(1)+'g variance)',
+    date:new Date().toISOString().slice(0,10),
+    createdAt:new Date().toISOString(),
+    createdBy:currentUser.name,
+    value:0
+  };
+
+  try{
+    await db.ref().update(updates);
+    document.getElementById('modal-roll-task').remove();
+    showToast(jointCount+' '+task.targetProductName+' created! Stock updated.','success',5000);
+  }catch(e){ showToast('Error completing task','error'); console.error(e); }
 }
 
 // ── NOTIFICATIONS ──
