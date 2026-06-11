@@ -439,7 +439,7 @@ function showClockInPrompt(staff){
   const isCashPaid = staff.role==='cashier'; // cashiers paid from till, managers/supervisors via EFT
   const payNote = isCashPaid
     ? '💵 Your wages will be logged as a till expense at cashup'
-    : '🏦 Your wages will be logged as a business EFT expense';
+    : '📋 Your shift hours will be recorded for attendance tracking';
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -2207,21 +2207,13 @@ async function logShiftHours(){
   try{
     await db.ref('bizpos/staff/'+currentUser.id+'/todayShift').set(shift);
     if(isCashPaidShift){
-      // Cashiers — add to till expenses
+      // Cashiers only — add to till expenses
       tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== currentUser.id);
       tillExpenses.push(tillExp);
       showToast('Shift logged — '+hoursRounded+'hrs — R'+wage+' added to till expenses','success',5000);
     } else {
-      // Managers/Supervisors — log as EFT business expense
-      try{
-        await db.ref('bizpos/expenses/'+expId).set({
-          ...tillExp,
-          payMethod:'eft', date:new Date().toISOString().slice(0,10),
-          status:'pending', notes:'Pay via EFT/bank transfer',
-          createdAt:new Date().toISOString(), createdBy:currentUser.name
-        });
-        showToast('Shift logged — '+hoursRounded+'hrs — R'+wage+' EFT expense created','success',5000);
-      }catch(e){ showToast('Shift logged','success'); }
+      // Managers & Supervisors — hours recorded only, no auto wage
+      showToast('Shift logged — '+hoursRounded+'hrs recorded','success',3000);
     }
     renderCashup();
   }catch(e){ showToast('Error logging shift','error'); }
@@ -2661,7 +2653,9 @@ function clockOut(staffId){
       <div id="co-hours-display" style="font-size:11px;color:var(--text3)"></div>
     </div>
     <div style="background:#FEF3C7;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400E;margin-bottom:16px">
-      💡 Wage will be added as a till expense on today's cashup
+      ${(STAFF_PINS.find(x=>x.id===staffId)||{}).role==='cashier'
+        ? '💵 Wage will be added as a till expense on today's cashup'
+        : '📋 Shift hours will be recorded — pay manually when ready'}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
@@ -2726,42 +2720,25 @@ async function commitClockOut(staffId, btn){
 
     const isCashPaid = s && s.role === 'cashier';
 
-    if(wage > 0){
-      if(isCashPaid){
-        // Cashiers — add to till expenses (paid from cash)
-        tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== staffId);
-        tillExpenses.push({
-          id: uid(),
-          desc: (s?s.name:staffId)+' wages ('+hours+'hrs)',
-          amount: wage,
-          category: 'Salaries',
-          addedFromShift: true,
-          staffId
-        });
-      } else {
-        // Managers & Supervisors — log as EFT business expense
-        const expId = uid();
-        try{
-          await db.ref('bizpos/expenses/'+expId).set({
-            id:expId,
-            desc:(s?s.name:staffId)+' wages — '+today+' ('+hours+'hrs)',
-            amount:wage,
-            category:'Salaries',
-            payMethod:'eft',
-            date:today,
-            status:'pending',
-            notes:'Auto-logged from clock-out. Pay via EFT.',
-            createdAt:new Date().toISOString(),
-            createdBy:currentUser.name,
-            staffId
-          });
-        }catch(e2){ console.warn('Wage expense error:', e2); }
-      }
+    if(isCashPaid && wage > 0){
+      // Cashiers only — add to till expenses (paid from cash)
+      tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== staffId);
+      tillExpenses.push({
+        id: uid(),
+        desc: (s?s.name:staffId)+' wages ('+hours+'hrs)',
+        amount: wage,
+        category: 'Salaries',
+        addedFromShift: true,
+        staffId
+      });
     }
+    // Managers & Supervisors — shift hours recorded only, pay manually
 
     btn.closest('.modal-overlay').remove();
-    const payType = isCashPaid ? '(till cash)' : '(EFT — pay via bank)';
-    showToast((s?s.name:staffId)+' clocked out · R'+wage.toFixed(2)+' '+payType,'success',4000);
+    const msg = isCashPaid
+      ? (s?s.name:staffId)+' clocked out · R'+wage.toFixed(2)+' added to till expenses'
+      : (s?s.name:staffId)+' clocked out · '+hours+'hrs recorded';
+    showToast(msg,'success',4000);
     renderStaffTab();
   }catch(e){ showToast('Error','error'); }
 }
