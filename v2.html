@@ -273,7 +273,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -332,6 +332,9 @@ function startListeners(){
     if(currentTab==='cashup')renderCashup();
   });
   db.ref('bizpos/members').on('value',s=>{STATE.members=s.val()?Object.values(s.val()):[];});
+  db.ref('bizpos/suppliers').on('value',s=>{
+    STATE.suppliers=s.val()?Object.values(s.val()):[];
+  });
   db.ref('bizpos/purchaseOrders').on('value',s=>{
     STATE.purchaseOrders=s.val()?Object.values(s.val()):[];
     if(currentTab==='po')renderPOList();
@@ -981,7 +984,11 @@ function openNewPO(){
       <button id="po-type-expense" class="btn btn-secondary" onclick="setPOType('expense')">🧾 Expense PO</button>
     </div>
     <label>Supplier *</label>
-    <input type="text" class="input" id="po-supplier" placeholder="Supplier name">
+    <div style="position:relative">
+      <input type="text" class="input" id="po-supplier" placeholder="Type or select supplier..."
+        oninput="filterSupplierDropdown(this.value)" onfocus="filterSupplierDropdown(this.value)" autocomplete="off">
+      <div id="supplier-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;z-index:999;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
+    </div>
     <label>Date</label>
     <input type="date" class="input" id="po-date" value="${new Date().toISOString().slice(0,10)}">
     <label>Payment Terms</label>
@@ -1036,9 +1043,13 @@ function renderPOLines(){
   if(currentPOType === 'stock'){
     el.innerHTML = currentPOLines.map((line,i) => `
       <div style="display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:4px;margin-bottom:6px;align-items:center">
-        <input type="text" class="input" placeholder="Product name" value="${line.productName||''}"
-          oninput="currentPOLines[${i}].productName=this.value;updatePOTotal()"
-          style="font-size:12px;padding:8px">
+        <div style="position:relative">
+          <input type="text" class="input" placeholder="Product name" value="${line.productName||''}" id="po-line-prod-${i}"
+            oninput="currentPOLines[${i}].productName=this.value;updatePOTotal();filterPOProductDrop(${i},this.value)"
+            onfocus="filterPOProductDrop(${i},this.value)"
+            autocomplete="off" style="font-size:12px;padding:8px">
+          <div id="po-prod-drop-${i}" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;z-index:999;max-height:140px;overflow-y:auto;box-shadow:0 4px 8px rgba(0,0,0,.1)"></div>
+        </div>
         <input type="number" class="input" placeholder="Qty" value="${line.qty||1}"
           oninput="currentPOLines[${i}].qty=parseInt(this.value)||1;updatePOTotal()"
           style="font-size:12px;padding:8px;text-align:center">
@@ -1255,6 +1266,86 @@ async function commitGRV(poId){
     document.getElementById('modal-grv').remove();
     showToast('Stock received! Products updated.','success',4000);
   }catch(e){ showToast('Error receiving stock','error'); console.error(e); }
+}
+
+// ── SUPPLIER & PRODUCT SEARCH FOR PO ──
+function filterSupplierDropdown(val){
+  const dd = document.getElementById('supplier-dropdown');
+  if(!dd) return;
+  const suppliers = STATE.suppliers || [];
+  let matches = suppliers.filter(s => s.name.toLowerCase().includes((val||'').toLowerCase()));
+  if(!matches.length && !val){
+    dd.style.display = 'none'; return;
+  }
+  const items = matches.map(s =>
+    `<div onclick="selectSupplier('${s.name}')" style="padding:10px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)">${s.name}</div>`
+  );
+  // Always show "Add new supplier" option if typed something not in list
+  const exact = suppliers.find(s => s.name.toLowerCase() === (val||'').toLowerCase());
+  if(val && !exact){
+    items.push(`<div onclick="addNewSupplier('${val}')" style="padding:10px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;border-bottom:1px solid var(--border)">+ Add "${val}" as new supplier</div>`);
+  }
+  if(!items.length){ dd.style.display='none'; return; }
+  dd.innerHTML = items.join('');
+  dd.style.display = 'block';
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function handler(e){
+      if(!dd.contains(e.target) && e.target.id !== 'po-supplier'){
+        dd.style.display='none';
+        document.removeEventListener('click', handler);
+      }
+    });
+  }, 100);
+}
+
+function selectSupplier(name){
+  document.getElementById('po-supplier').value = name;
+  document.getElementById('supplier-dropdown').style.display = 'none';
+}
+
+async function addNewSupplier(name){
+  const id = uid();
+  const supplier = {id, name:name.trim(), createdAt:new Date().toISOString()};
+  try{
+    await db.ref('bizpos/suppliers/'+id).set(supplier);
+    selectSupplier(name);
+    showToast(name+' added as supplier','success');
+  }catch(e){ showToast('Error adding supplier','error'); }
+}
+
+function filterPOProductDrop(lineIdx, val){
+  const dd = document.getElementById('po-prod-drop-'+lineIdx);
+  if(!dd) return;
+  if(!val || val.length < 2){ dd.style.display='none'; return; }
+  const matches = STATE.products.filter(p =>
+    p.active !== false && p.name.toLowerCase().includes(val.toLowerCase())
+  ).slice(0,8);
+  const exact = STATE.products.find(p => p.name.toLowerCase() === val.toLowerCase());
+  const items = matches.map(p =>
+    `<div onclick="selectPOProduct(${lineIdx},'${p.name}',${p.cost||p.price||0})" style="padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)">
+      <span style="font-weight:600">${p.name}</span>
+      <span style="color:var(--text3);font-size:11px"> · ${p.qty||0} in stock · cost ${fmt(p.cost||0)}</span>
+    </div>`
+  );
+  if(!exact && val){
+    items.push(`<div onclick="selectPOProduct(${lineIdx},'${val}',0)" style="padding:8px 10px;cursor:pointer;font-size:12px;color:var(--accent);font-weight:700">+ New product: "${val}"</div>`);
+  }
+  if(!items.length){ dd.style.display='none'; return; }
+  dd.innerHTML = items.join('');
+  dd.style.display = 'block';
+}
+
+function selectPOProduct(lineIdx, name, cost){
+  currentPOLines[lineIdx].productName = name;
+  currentPOLines[lineIdx].unitCost = cost;
+  const inp = document.getElementById('po-line-prod-'+lineIdx);
+  if(inp) inp.value = name;
+  const dd = document.getElementById('po-prod-drop-'+lineIdx);
+  if(dd) dd.style.display = 'none';
+  // Update cost field
+  renderPOLines();
+  updatePOTotal();
 }
 
 // ── INIT ──
