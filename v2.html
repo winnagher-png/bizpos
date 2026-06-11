@@ -126,7 +126,7 @@
 
 <div id="main" class="hidden">
 
-  <div id="tab-pos" class="tab active">
+  <div id="tab-pos" class="tab active" style="padding-bottom:80px">
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
       <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
@@ -391,7 +391,25 @@ function loginSuccess(staff){
   document.getElementById('bottom-nav').classList.remove('hidden');
   document.getElementById('top-user').textContent=staff.name;
   document.getElementById('pin-input').value='';
+  applyRolePermissions(staff.role);
   switchTab('pos');
+}
+
+function applyRolePermissions(role){
+  const isManager    = role === 'manager';
+  const isSupervisor = role === 'supervisor';
+  const isCashier    = role === 'cashier';
+
+  // Bottom nav — show/hide tabs
+  const navCashup  = document.getElementById('nav-cashup');
+  const navReports = document.getElementById('nav-reports');
+  const navStock   = document.getElementById('nav-stock');
+  const navMore    = document.getElementById('nav-more');
+
+  if(navCashup)  navCashup.style.display  = (isManager||isSupervisor) ? '' : 'none';
+  if(navReports) navReports.style.display = isManager ? '' : 'none';
+  if(navStock)   navStock.style.display   = (isManager||isSupervisor) ? '' : 'none';
+  if(navMore)    navMore.style.display    = isManager ? '' : 'none';
 }
 function lockApp(){
   currentUser=null; cart=[]; selectedPayMethod=null;
@@ -1521,10 +1539,14 @@ function renderActiveStocktake(){
         const hasCounted = stocktakeSession.counts[p.id] !== undefined;
         const diff = hasCounted ? (stocktakeSession.counts[p.id] - expected) : null;
         const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
+        const isManager = currentUser && currentUser.role === 'manager';
         return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-color:var(--accent)':''}">
           <div class="list-item-body">
             <div class="list-item-title" style="font-size:13px">${p.name}</div>
-            <div style="font-size:11px;color:var(--text3)">Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}</div>
+            <div style="font-size:11px;color:var(--text3)">${isManager
+              ? `Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}`
+              : hasCounted ? `<span style="color:var(--text3)">Counted ✓</span>` : 'Enter physical count'
+            }</div>
           </div>
           <input type="number" inputmode="numeric"
             id="st-count-${p.id}"
@@ -1550,10 +1572,14 @@ function filterSTProducts(val){
     const hasCounted = stocktakeSession.counts[p.id] !== undefined;
     const diff = hasCounted ? (stocktakeSession.counts[p.id] - expected) : null;
     const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
+    const isManagerF = currentUser && currentUser.role === 'manager';
     return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-color:var(--accent)':''}">
       <div class="list-item-body">
         <div class="list-item-title" style="font-size:13px">${p.name}</div>
-        <div style="font-size:11px;color:var(--text3)">Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}</div>
+        <div style="font-size:11px;color:var(--text3)">${isManagerF
+          ? `Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}`
+          : hasCounted ? `<span style="color:var(--text3)">Counted ✓</span>` : 'Enter physical count'
+        }</div>
       </div>
       <input type="number" inputmode="numeric"
         id="st-count-${p.id}"
