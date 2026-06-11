@@ -1240,6 +1240,8 @@ function setReportPeriod(period, btn){
 }
 
 function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
+  const allToday = STATE.sales.filter(s=>localDateStr(s.date)===today);
+  const voids = allToday.filter(s=>s.voided);
   return `
     <div class="card">
       <div class="section-title">Today — ${today}</div>
@@ -1248,6 +1250,7 @@ function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
       <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${ts.length}</span></div>
+      ${voids.length?`<div class="totals-row"><span style="color:var(--red)">⚠️ Voided</span><span style="color:var(--red);font-weight:700">${voids.length} sales</span></div>`:''}
     </div>
     ${topProds.length?`<div class="card">
       <div class="section-title">Top Sellers Today</div>
@@ -1258,16 +1261,153 @@ function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
       </div>`).join('')}
     </div>`:''}
     <div class="card">
-      <div class="section-title">Recent Sales</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="section-title" style="margin:0">Recent Sales</div>
+        <button onclick="openSalesHistory()" style="background:none;border:none;color:#2D9E35;font-size:12px;font-weight:700;cursor:pointer">View All →</button>
+      </div>
       ${[...ts].reverse().slice(0,10).map(s=>`
-        <div class="totals-row">
+        <div class="totals-row" style="cursor:pointer" onclick="openSaleDetail('${s.id}')">
           <div>
             <div style="font-size:12px;font-weight:600">${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}</div>
             <div style="font-size:11px;color:var(--text3)">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.paymentMethod}</div>
           </div>
           <span style="font-weight:700">${fmt(s.total)}</span>
         </div>`).join('')}
-    </div>`;
+    </div>
+    ${voids.length?`<div class="card" style="border-color:var(--red)">
+      <div class="section-title" style="color:var(--red)">⚠️ Voided Sales Today</div>
+      ${voids.map(s=>`<div class="totals-row">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--red)">${s.staffName||'—'}</div>
+          <div style="font-size:11px;color:var(--text3)">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.voidReason||'no reason'}</div>
+        </div>
+        <span style="font-weight:700;color:var(--red);text-decoration:line-through">${fmt(s.total)}</span>
+      </div>`).join('')}
+    </div>`:''}`;
+}
+
+function openSalesHistory(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '8px';
+  const sales = [...STATE.sales].sort((a,b)=>b.date>a.date?1:-1).slice(0,100);
+  overlay.innerHTML = `<div class="modal" style="max-width:480px;max-height:92vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div class="modal-title" style="margin:0">Sales History</div>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">×</button>
+    </div>
+    ${sales.map(s=>`
+      <div class="list-item" onclick="openSaleDetail('${s.id}')" style="cursor:pointer;${s.voided?'opacity:.6;':''}">
+        <div style="font-size:20px">${s.voided?'🚫':s.paymentMethod==='cash'?'💵':s.paymentMethod==='card'?'💳':'🏦'}</div>
+        <div class="list-item-body">
+          <div class="list-item-title" style="font-size:13px;${s.voided?'text-decoration:line-through;color:var(--red)':''}">${fmt(s.total)} ${s.voided?'— VOIDED':''}</div>
+          <div class="list-item-sub">${localDateStr(s.date)} ${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}</div>
+        </div>
+        <div style="color:var(--text3)">›</div>
+      </div>`).join('')}
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function openSaleDetail(saleId){
+  const s = STATE.sales.find(x=>x.id===saleId);
+  if(!s) return;
+  const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:400px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div class="modal-title" style="margin:0">Sale Detail</div>
+      ${s.voided?'<span style="background:#FEE2E2;color:#991B1B;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px">VOIDED</span>':''}
+    </div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
+      ${localDateStr(s.date)} ${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}
+    </div>
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
+      ${(s.items||[]).map(i=>`<div class="totals-row">
+        <span style="font-size:13px">${i.name} × ${i.qty||1}</span>
+        <span style="font-weight:700">${fmt((i.price||0)*(i.qty||1))}</span>
+      </div>`).join('')}
+      <div class="totals-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
+        <span style="font-weight:700">Total</span>
+        <span style="font-weight:800;font-size:18px">${fmt(s.total)}</span>
+      </div>
+      <div class="totals-row"><span style="color:var(--text3)">Payment</span><span>${s.paymentMethod}</span></div>
+      ${s.cashTendered?`<div class="totals-row"><span style="color:var(--text3)">Tendered</span><span>${fmt(s.cashTendered)}</span></div>`:''}
+      ${s.cashTendered?`<div class="totals-row"><span style="color:var(--text3)">Change</span><span>${fmt(s.cashTendered-s.total)}</span></div>`:''}
+    </div>
+    ${s.voided?`<div style="background:#FEE2E2;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#991B1B">
+      <strong>Voided by:</strong> ${s.voidedBy||'—'}<br>
+      <strong>Reason:</strong> ${s.voidReason||'No reason given'}
+    </div>`:''}
+    ${!s.voided&&isManager?`
+      <button class="btn btn-danger btn-full" style="margin-bottom:8px" onclick="openVoidSale('${s.id}',this)">🚫 Void This Sale</button>`:''}
+    <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function openVoidSale(saleId, btn){
+  const s = STATE.sales.find(x=>x.id===saleId);
+  if(!s) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:360px">
+    <div class="modal-title">Void Sale</div>
+    <div style="background:#FEE2E2;border-radius:10px;padding:12px;margin-bottom:16px;font-size:13px;color:#991B1B">
+      ⚠️ This will void ${fmt(s.total)} and restore stock. This cannot be undone.
+    </div>
+    <label>Reason for void *</label>
+    <select class="input" id="void-reason" style="margin-top:4px;margin-bottom:4px">
+      <option value="">Select reason...</option>
+      <option>Wrong item scanned</option>
+      <option>Customer changed mind</option>
+      <option>Duplicate sale</option>
+      <option>Pricing error</option>
+      <option>Test transaction</option>
+      <option>Other</option>
+    </select>
+    <input type="text" class="input" id="void-notes" placeholder="Additional notes (optional)" style="margin-top:8px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-danger" onclick="commitVoidSale('${saleId}',this)">Confirm Void</button>
+    </div>
+  </div>`;
+  // Close the sale detail modal first
+  btn.closest('.modal-overlay').remove();
+  document.body.appendChild(overlay);
+}
+
+async function commitVoidSale(saleId, btn){
+  const reason = document.getElementById('void-reason').value;
+  const notes  = document.getElementById('void-notes').value||'';
+  if(!reason){ showToast('Select a reason','error'); return; }
+
+  const s = STATE.sales.find(x=>x.id===saleId);
+  if(!s || s.voided){ showToast('Sale already voided','error'); return; }
+
+  const updates = {};
+  updates['bizpos/sales/'+saleId+'/voided']      = true;
+  updates['bizpos/sales/'+saleId+'/voidedAt']    = new Date().toISOString();
+  updates['bizpos/sales/'+saleId+'/voidedBy']    = currentUser.name;
+  updates['bizpos/sales/'+saleId+'/voidReason']  = reason + (notes?' — '+notes:'');
+  updates['bizpos/sales/'+saleId+'/voidedOnDate']= localDateStr();
+
+  // Restore stock
+  (s.items||[]).forEach(item=>{
+    const p = STATE.products.find(x=>x.id===item.productId);
+    if(p){
+      updates['bizpos/products/'+item.productId+'/qty'] = (p.qty||0) + (item.qty||1);
+      updates['bizpos/products/'+item.productId+'/updatedAt'] = new Date().toISOString();
+    }
+  });
+
+  try{
+    await db.ref().update(updates);
+    btn.closest('.modal-overlay').remove();
+    showToast('Sale voided — stock restored','success',4000);
+  }catch(e){ showToast('Error voiding sale','error'); }
 }
 
 function renderStaffHoursReport(el){
