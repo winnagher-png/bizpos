@@ -1536,8 +1536,15 @@ function sendDailyEmail(cashup){
     if(todayMembers.length||todaySalesWithMembers.length){
       body += "--- MEMBER ACTIVITY ---\n";
       if(todayMembers.length){
-        body += "  New members today: "+todayMembers.length+"\n";
-        todayMembers.forEach(m=>{ body += "    + "+m.name+" (#"+m.memberId+") — "+m.phone+"\n"; });
+        body += "  NEW MEMBERS TODAY: "+todayMembers.length+"\n";
+        body += "  (Add to work phone contacts)\n";
+        todayMembers.forEach(m=>{
+          body += "\n    NAME:    "+m.name+"\n";
+          body += "    PHONE:   "+m.phone+"\n";
+          body += "    ID:      #"+m.memberId+"\n";
+          body += "    MARKETING: "+(m.marketingOptIn!==false?"✓ OPTED IN — add to broadcast list":"✗ OPTED OUT — do not add")+"\n";
+          if(m.email) body += "    EMAIL:   "+m.email+"\n";
+        });
       }
       if(todaySalesWithMembers.length){
         body += "  Member sales: "+todaySalesWithMembers.length+" transactions\n";
@@ -2748,9 +2755,10 @@ function renderMembersList(filter){
       <div class="list-item-body">
         <div class="list-item-title">${m.name}${m.memberId?' <span style="font-size:11px;color:var(--text3);font-weight:400">#${m.memberId}</span>':''}</div>
         <div class="list-item-sub">${m.phone||'No phone'} · Joined ${m.joinDate||'—'}</div>
-        <div style="margin-top:3px;display:flex;gap:8px">
+        <div style="margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">
           <span style="font-size:11px;font-weight:700;color:#92400E">⭐ ${m.points||0} pts</span>
           ${(m.storeCredit||0)>0?`<span style="font-size:11px;font-weight:700;color:#166534">💳 ${fmt(m.storeCredit)} credit</span>`:''}
+          <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;background:${m.marketingOptIn!==false?'#DCFCE7':'#FEE2E2'};color:${m.marketingOptIn!==false?'#166534':'#991B1B'}">${m.marketingOptIn!==false?'📣 Marketing ON':'🚫 Opted Out'}</span>
         </div>
       </div>
       <div style="color:var(--text3)">›</div>
@@ -2794,6 +2802,13 @@ function openAddMember(){
     <input type="email" class="input" id="mem-email" placeholder="email@example.com">
     <label>Notes</label>
     <input type="text" class="input" id="mem-notes" placeholder="Optional">
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-top:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px">Marketing Opt-In</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button id="mem-optin-yes" class="btn btn-success" style="font-size:12px;padding:10px" onclick="setOptIn(true)">✓ Opted IN</button>
+        <button id="mem-optin-no" class="btn btn-secondary" style="font-size:12px;padding:10px" onclick="setOptIn(false)">✗ Opted OUT</button>
+      </div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
       <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
       <button class="btn btn-primary" onclick="saveMember(this)">Add Member</button>
@@ -2801,6 +2816,14 @@ function openAddMember(){
   </div>`;
   document.body.appendChild(overlay);
   setTimeout(()=>document.getElementById('mem-name').focus(),100);
+}
+
+let _memberOptIn = true; // default opted in
+
+function setOptIn(val){
+  _memberOptIn = val;
+  document.getElementById('mem-optin-yes').className = val ? 'btn btn-success' : 'btn btn-secondary';
+  document.getElementById('mem-optin-no').className  = !val ? 'btn btn-danger' : 'btn btn-secondary';
 }
 
 async function saveMember(btn){
@@ -2825,8 +2848,10 @@ async function saveMember(btn){
     id: uid(), memberId, name, phone:fmtPhone, idNumber:idNum||'',
     email, notes, joinDate:new Date().toISOString().slice(0,10),
     points:0, storeCredit:0, totalSpend:0, visitCount:0,
-    age, createdAt:new Date().toISOString(), createdBy:currentUser.name
+    age, marketingOptIn: _memberOptIn,
+    createdAt:new Date().toISOString(), createdBy:currentUser.name
   };
+  _memberOptIn = true; // reset for next member
   try{
     await db.ref('bizpos/members/'+member.id).set(member);
     btn.closest('.modal-overlay').remove();
@@ -2877,6 +2902,7 @@ function openMemberDetail(id){
       <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total spend</span><span style="font-size:13px;font-weight:700">${fmt(m.totalSpend||0)}</span></div>
       <div class="totals-row"><span style="color:var(--text3);font-size:13px">Visits</span><span style="font-size:13px">${m.visitCount||0}</span></div>
       ${m.notes?`<div class="totals-row"><span style="color:var(--text3);font-size:13px">Notes</span><span style="font-size:13px">${m.notes}</span></div>`:''}
+      <div class="totals-row"><span style="color:var(--text3);font-size:13px">Marketing</span><span style="font-size:13px;font-weight:700;color:${m.marketingOptIn!==false?'#166534':'#991B1B'}">${m.marketingOptIn!==false?'✓ Opted In':'✗ Opted Out'}</span></div>
     </div>
 
     ${pointsToCredit>0?`
