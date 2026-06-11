@@ -1369,10 +1369,90 @@ function sendDailyEmail(cashup){
       body += "Total: "+fmt(pcExp.reduce((a,e)=>a+e.amount,0))+"\n\n";
     }
 
+    // ── STAFF HOURS PAYROLL ──
+    body += "--- STAFF PAYROLL REPORT ---\n";
     if(shifts.length){
-      body += "--- STAFF HOURS ---\n";
-      shifts.forEach(s=>{ body+="  "+s.name+" ("+s.role+"): "+s.start+" – "+s.end+" ("+s.hours+"hrs)"+(s.wage?", R"+s.wage:"")+"\n"; });
-      body += "\n";
+      let totalCashierWages = 0;
+      let totalMgmtHours = 0;
+
+      const cashierShifts = shifts.filter(s=>s.role==='cashier');
+      const mgmtShifts    = shifts.filter(s=>s.role!=='cashier');
+
+      if(cashierShifts.length){
+        body += "Cashiers (paid from till):\n";
+        cashierShifts.forEach(s=>{
+          totalCashierWages += (s.wage||0);
+          body += "  "+s.name+": "+s.start+" – "+s.end+" ("+s.hours+"hrs) = R"+(s.wage||0).toFixed(2)+"\n";
+        });
+        body += "  Total cashier wages: R"+totalCashierWages.toFixed(2)+"\n";
+      }
+
+      if(mgmtShifts.length){
+        body += "Managers & Supervisors (pay manually):\n";
+        mgmtShifts.forEach(s=>{
+          totalMgmtHours += (s.hours||0);
+          body += "  "+s.name+" ("+s.role+"): "+s.start+" – "+s.end+" ("+s.hours+"hrs) — PAY MANUALLY\n";
+        });
+        body += "  Total management hours: "+totalMgmtHours.toFixed(1)+"hrs\n";
+      }
+    } else {
+      body += "No shifts recorded today\n";
+    }
+    body += "\n";
+
+    // ── PETTY CASH FULL REPORT ──
+    body += "--- PETTY CASH REPORT ---\n";
+    body += "Closing balance: "+fmt(pc.balance)+"\n";
+    const todayPCMoves = (pc.history||[]).filter(h=>h.date&&localDateStr(h.date)===today);
+    if(todayPCMoves.length){
+      body += "Movements today:\n";
+      todayPCMoves.forEach(h=>{
+        const sign = h.delta>=0 ? "+" : "";
+        body += "  "+sign+"R"+Math.abs(h.delta).toFixed(2)+" — "+(h.reason||h.type||"")+"\n";
+      });
+    } else {
+      body += "No petty cash movements today\n";
+    }
+    body += "\n";
+
+    // ── STOCKTAKE REPORT (if done today) ──
+    const todayST = (STATE.stocktakeReports||[]).filter(r=>r.committedAt&&localDateStr(r.committedAt)===today);
+    if(todayST.length){
+      todayST.forEach(r=>{
+        body += "--- STOCKTAKE REPORT ("+( r.location==='warehouse'?'WAREHOUSE':'SHOP FLOOR')+") ---\n";
+        body += "Done by: "+(r.staffName||"—")+"\n";
+        body += "Items counted: "+(r.totalCounted||0)+"\n";
+        body += "Gain value: "+fmt(r.gainValue||0)+" | Loss value: "+fmt(r.lossValue||0)+"\n";
+        body += "Net variance: "+fmt((r.gainValue||0)-(r.lossValue||0))+"\n";
+
+        // Group by category
+        const cats = {};
+        (r.allItems||[]).forEach(item=>{
+          const cat = item.category||'Uncategorised';
+          if(!cats[cat]) cats[cat]=[];
+          cats[cat].push(item);
+        });
+        const catKeys = Object.keys(cats).sort();
+        if(catKeys.length){
+          body += "\nFULL COUNT BY CATEGORY:\n";
+          catKeys.forEach(cat=>{
+            body += "[ "+cat.toUpperCase()+" ]\n";
+            cats[cat].forEach(item=>{
+              const diff = item.diff;
+              const diffStr = diff>0?('+'+diff):String(diff);
+              body += "  "+item.name.substring(0,35).padEnd(35)+" Exp:"+String(item.expected).padStart(3)+" Got:"+String(item.counted).padStart(3)+" Var:"+diffStr+"\n";
+            });
+          });
+        } else if((r.variances||[]).length){
+          const gains  = (r.variances||[]).filter(v=>v.diff>0);
+          const losses = (r.variances||[]).filter(v=>v.diff<0);
+          if(gains.length){ body+="GAINS:\n"; gains.forEach(v=>{ body+="  +"+v.diff+" x "+v.name+"\n"; }); }
+          if(losses.length){ body+="LOSSES:\n"; losses.forEach(v=>{ body+="  "+v.diff+" x "+v.name+"\n"; }); }
+        } else {
+          body += "No variances — all counts matched\n";
+        }
+        body += "\n";
+      });
     }
 
     body += "============================================\n";
