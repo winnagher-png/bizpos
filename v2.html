@@ -413,8 +413,8 @@ function applyRolePermissions(role){
   if(navCashup)  navCashup.style.display = '';
   // Reports — managers only
   if(navReports) navReports.style.display = isManager ? '' : 'none';
-  // Stock — managers and supervisors (for stocktake, write-offs)
-  if(navStock)   navStock.style.display = (isManager||isSupervisor) ? '' : 'none';
+  // Stock — everyone can view (cashiers read-only, no editing)
+  if(navStock)   navStock.style.display = '';
   // More (expenses, POs, members, staff) — managers only
   if(navMore)    navMore.style.display = isManager ? '' : 'none';
 }
@@ -546,17 +546,22 @@ function renderStockList(filter){
   if(filter)prods=prods.filter(p=>p.name.toLowerCase().includes(filter.toLowerCase()));
   prods.sort((a,b)=>a.name.localeCompare(b.name));
   if(!prods.length){el.innerHTML='<div style="color:var(--text3);text-align:center;padding:40px">No products yet</div>';return;}
+  const canEdit = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
   el.innerHTML=prods.map(p=>{
     const q=p.qty||0;
     const badge=q<=0?'stock-out':q<=(p.reorderAt||5)?'stock-low':'stock-ok';
     const label=q<=0?'Out of stock':q+' in stock';
-    return `<div class="list-item" onclick="openEditProduct('${p.id}')">
+    return `<div class="list-item" style="${canEdit?'cursor:pointer':'cursor:default'}" ${canEdit?`onclick="openEditProduct('${p.id}')"`:''}>
       <div style="font-size:22px">📦</div>
       <div class="list-item-body">
         <div class="list-item-title">${p.name}</div>
         <div class="list-item-sub">${fmt(p.price)} · <span class="stock-badge ${badge}">${label}</span></div>
+        <div style="font-size:11px;color:var(--text3)">Shop: ${p.qty||0} · WH: ${p.qtyWh||0}</div>
       </div>
-      <div style="color:var(--text3)">›</div>
+      ${canEdit
+        ? '<div style="color:var(--text3)">›</div>'
+        : `<button onclick="event.stopPropagation();openWriteOff('${p.id}',this)" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:8px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">Write Off</button>`
+      }
     </div>`;
   }).join('');
 }
@@ -655,13 +660,29 @@ async function commitWriteOff(id, btn){
   updates['bizpos/products/'+id+'/updatedAt'] = new Date().toISOString();
   // Log write-off record
   const woId = uid();
+  const woValue = qty*(p.cost||p.price||0);
   updates['bizpos/writeoffs/'+woId] = {
     id:woId, productId:id, productName:p.name,
     qty, location:loc, reason, notes,
     date:new Date().toISOString().slice(0,10),
     createdAt:new Date().toISOString(),
     createdBy:currentUser.name,
-    value: qty*(p.cost||p.price||0)
+    value: woValue
+  };
+  // Log as business expense — not petty cash, not till cash
+  const woExpId = uid();
+  updates['bizpos/expenses/'+woExpId] = {
+    id:woExpId,
+    desc:'Write-off: '+p.name+' × '+qty+' ('+reason+')',
+    amount: woValue,
+    category:'Stock write-off',
+    payMethod:'write_off',
+    date:new Date().toISOString().slice(0,10),
+    status:'paid',
+    notes: notes||reason,
+    createdAt:new Date().toISOString(),
+    createdBy:currentUser.name,
+    writeOffId:woId
   };
   try{
     await db.ref().update(updates);
@@ -1993,14 +2014,47 @@ async function logShiftHours(){
   const start = (document.getElementById('shift-start').value||'').trim();
   const end   = (document.getElementById('shift-end').value||'').trim();
   if(!start||!end){ showToast('Enter start and end time','error'); return; }
-  // Calculate hours
   const [sh,sm] = start.split(':').map(Number);
   const [eh,em] = end.split(':').map(Number);
-  const hours = Math.max(0, ((eh*60+em)-(sh*60+sm))/60).toFixed(2);
-  const shift = { start, end, hours:parseFloat(hours), date:new Date().toISOString().slice(0,10), staffId:currentUser.id, staffName:currentUser.name };
+  const hours = Math.max(0, ((eh*60+em)-(sh*60+sm))/60);
+  const hoursRounded = Math.round(hours*100)/100;
+
+  // Get staff rate from STAFF_PINS
+  const staffPin = STAFF_PINS.find(s=>s.id===currentUser.id);
+  let wage = 0;
+  if(staffPin){
+    if(staffPin.payType==='hourly') wage = hoursRounded * staffPin.rate;
+    else if(staffPin.payType==='daily') wage = staffPin.rate; // flat daily rate
+  }
+  wage = Math.round(wage*100)/100;
+
+  const shift = {
+    start, end,
+    hours: hoursRounded,
+    wage,
+    date: new Date().toISOString().slice(0,10),
+    staffId: currentUser.id,
+    staffName: currentUser.name
+  };
+
+  // Add wage as till expense automatically
+  const expId = uid();
+  const tillExp = {
+    id: expId,
+    desc: currentUser.name + ' wages (' + hoursRounded + 'hrs @ R' + (staffPin?staffPin.rate:0) + '/' + (staffPin&&staffPin.payType==='daily'?'day':'hr') + ')',
+    amount: wage,
+    category: 'Salaries',
+    addedFromShift: true,
+    staffId: currentUser.id
+  };
+
   try{
     await db.ref('bizpos/staff/'+currentUser.id+'/todayShift').set(shift);
-    showToast('Shift logged — '+hours+' hours','success');
+    // Add to tillExpenses array for current cashup session
+    // Remove any existing wage expense for this staff member first (prevent duplicates)
+    tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== currentUser.id);
+    tillExpenses.push(tillExp);
+    showToast('Shift logged — '+hoursRounded+'hrs — wage R'+wage+' added to till expenses','success',5000);
     renderCashup();
   }catch(e){ showToast('Error logging shift','error'); }
 }
