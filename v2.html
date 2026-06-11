@@ -556,11 +556,46 @@ function renderTillExpenses(){
 }
 
 function addTillExpense(){
-  const desc=prompt('Expense description (e.g. Jordan wages):');
-  if(!desc||!desc.trim())return;
-  const amount=parseFloat(prompt('Amount (R):')||'0');
-  if(!amount)return;
-  tillExpenses.push({id:uid(),desc:desc.trim(),amount,category:'Till expense'});
+  // Show a quick modal for till expense
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay';
+  overlay.innerHTML=`<div class="modal">
+    <div class="modal-title">Add Till Expense</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      ${['Wages','Airtime','Phone data','Consumables','Transport','Tokens','Other'].map(q=>
+        `<button class="btn btn-secondary" style="font-size:12px;padding:8px" onclick="document.getElementById('te-desc').value='${q}'">${q}</button>`
+      ).join('')}
+    </div>
+    <label>Description *</label>
+    <input type="text" class="input" id="te-desc" placeholder="e.g. Jordan wages">
+    <label>Amount (R) *</label>
+    <input type="number" class="input" id="te-amount" placeholder="0.00" inputmode="decimal">
+    <label>Category</label>
+    <select class="input" id="te-cat" style="margin-top:4px">
+      <option>Salaries</option>
+      <option>Office & Admin</option>
+      <option>Cleaning</option>
+      <option>Transport & Travel</option>
+      <option>Stock purchase</option>
+      <option>Other</option>
+    </select>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="commitTillExpense(this)">Add</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(()=>document.getElementById('te-desc').focus(),100);
+}
+
+function commitTillExpense(btn){
+  const desc=(document.getElementById('te-desc').value||'').trim();
+  const amount=parseFloat(document.getElementById('te-amount').value)||0;
+  const category=document.getElementById('te-cat').value;
+  if(!desc){showToast('Enter a description','error');return;}
+  if(!amount){showToast('Enter an amount','error');return;}
+  tillExpenses.push({id:uid(),desc,amount,category});
+  btn.closest('.modal-overlay').remove();
   renderCashup();
 }
 
