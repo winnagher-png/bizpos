@@ -1122,49 +1122,93 @@ function openPODetail(id){
   overlay.className = 'modal-overlay';
   overlay.id = 'modal-po-detail';
   const isStock = po.poType !== 'expense';
-  const canGRV = isStock && po.status === 'confirmed';
+
+  // Status steps
+  // Stock PO:    draft → ordered → paid → received (GRV)
+  // Expense PO:  draft → ordered → paid
+  const steps = isStock
+    ? ['draft','ordered','paid','received']
+    : ['draft','ordered','paid'];
+  const stepLabels = {draft:'Draft',ordered:'Ordered',paid:'Paid',received:'Stock Received'};
+  const stepIcons  = {draft:'📝',ordered:'📬',paid:'💰',received:'📦'};
+  const curIdx = steps.indexOf(po.status||'draft');
+
+  const stepsHTML = steps.map((s,i) => {
+    const done = i <= curIdx;
+    const current = i === curIdx;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;${i<steps.length-1?'border-bottom:1px solid var(--border)':''}">
+      <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;background:${done?'var(--accent)':'var(--bg3)'};color:${done?'#fff':'var(--text3)'};">${done?'✓':stepIcons[s]}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:${current?'800':'600'};color:${current?'var(--accent)':'var(--text)'}">${stepLabels[s]}</div>
+        ${s==='ordered'&&po.orderedAt?`<div style="font-size:11px;color:var(--text3)">${po.orderedAt.slice(0,10)} by ${po.orderedBy||'—'}</div>`:''}
+        ${s==='paid'&&po.paidAt?`<div style="font-size:11px;color:var(--text3)">${po.paidAt.slice(0,10)}</div>`:''}
+        ${s==='received'&&po.receivedAt?`<div style="font-size:11px;color:var(--text3)">${po.receivedAt.slice(0,10)} by ${po.receivedBy||'—'}</div>`:''}
+      </div>
+      ${current&&s!=='received'?`<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#DBEAFE;color:#1E40AF">CURRENT</span>`:''}
+    </div>`;
+  }).join('');
+
   const linesHTML = (po.lines||[]).map(l => isStock
     ? `<div class="totals-row"><span style="font-size:13px">${l.productName||'—'} × ${l.qty}</span><span style="font-weight:700">${fmt((l.qty||1)*(l.unitCost||0))}</span></div>`
     : `<div class="totals-row"><span style="font-size:13px">${l.desc||'—'} (${l.category})</span><span style="font-weight:700">${fmt(l.amount||0)}</span></div>`
   ).join('');
 
+  // Action button based on current status
+  let actionBtn = '';
+  if(po.status==='draft'||!po.status){
+    actionBtn = `<button class="btn btn-primary btn-full" onclick="advancePO('${po.id}','ordered')">📬 Mark as Ordered</button>`;
+  } else if(po.status==='ordered'){
+    actionBtn = `<button class="btn btn-primary btn-full" onclick="advancePO('${po.id}','paid')">💰 Mark as Paid</button>`;
+  } else if(po.status==='paid' && isStock){
+    actionBtn = `<button class="btn btn-success btn-full" onclick="openGRV('${po.id}')">📦 Receive Stock into System</button>`;
+  }
+
   overlay.innerHTML = `<div class="modal" style="max-width:480px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <div class="modal-title" style="margin:0">${po.poNumber}</div>
-      <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${po.status==='received'?'#DCFCE7':po.status==='confirmed'?'#DBEAFE':'#F3F4F6'};color:${po.status==='received'?'#166534':po.status==='confirmed'?'#1E40AF':'#374151'};text-transform:capitalize">${po.status}</span>
+      <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${po.status==='received'?'#DCFCE7':po.status==='paid'?'#FEF3C7':po.status==='ordered'?'#DBEAFE':'#F3F4F6'};color:${po.status==='received'?'#166534':po.status==='paid'?'#92400E':po.status==='ordered'?'#1E40AF':'#374151'};text-transform:capitalize">${po.status||'draft'}</span>
     </div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${po.poType==='expense'?'🧾 Expense PO':'📦 Stock PO'} · ${po.supplierName} · ${po.date||''}</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${isStock?'📦 Stock PO':'🧾 Expense PO'} · ${po.supplierName} · ${po.date||''}</div>
+
+    <div class="section-title">Status</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:4px 12px;margin-bottom:16px">${stepsHTML}</div>
+
+    <div class="section-title">Items</div>
     <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
       ${linesHTML}
       <div class="totals-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
         <span style="font-weight:700">Total</span><span style="font-weight:800;color:var(--accent)">${fmt(po.total||0)}</span>
       </div>
     </div>
-    ${po.notes?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Notes: ${po.notes}</div>`:''}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button class="btn btn-secondary" onclick="document.getElementById('modal-po-detail').remove()">Close</button>
-      ${po.status==='draft'?`<button class="btn btn-primary" onclick="confirmPO('${po.id}')">Confirm PO</button>`:''}
-      ${canGRV?`<button class="btn btn-success" onclick="openGRV('${po.id}')">📥 Receive (GRV)</button>`:''}
-      ${po.status==='confirmed'&&po.poType==='expense'?`<button class="btn btn-success" onclick="markPOPaid('${po.id}')">✓ Mark Paid</button>`:''}
-    </div>
+    ${po.notes?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">📝 ${po.notes}</div>`:''}
+
+    ${actionBtn?`<div style="margin-bottom:8px">${actionBtn}</div>`:''}
+    <button class="btn btn-secondary btn-full" onclick="document.getElementById('modal-po-detail').remove()">Close</button>
   </div>`;
   document.body.appendChild(overlay);
 }
 
-async function confirmPO(id){
+async function advancePO(id, newStatus){
+  const updates = {};
+  updates['bizpos/purchaseOrders/'+id+'/status'] = newStatus;
+  if(newStatus==='ordered'){
+    updates['bizpos/purchaseOrders/'+id+'/orderedAt'] = new Date().toISOString();
+    updates['bizpos/purchaseOrders/'+id+'/orderedBy'] = currentUser.name;
+  }
+  if(newStatus==='paid'){
+    updates['bizpos/purchaseOrders/'+id+'/paidAt'] = new Date().toISOString();
+    updates['bizpos/purchaseOrders/'+id+'/paidBy'] = currentUser.name;
+  }
   try{
-    await db.ref('bizpos/purchaseOrders/'+id+'/status').set('confirmed');
+    await db.ref().update(updates);
     document.getElementById('modal-po-detail').remove();
-    showToast('PO confirmed','success');
+    const labels = {ordered:'Marked as ordered',paid:'Marked as paid'};
+    showToast(labels[newStatus]||'Updated','success');
   }catch(e){ showToast('Error','error'); }
 }
 
 async function markPOPaid(id){
-  try{
-    await db.ref('bizpos/purchaseOrders/'+id+'/status').set('received');
-    document.getElementById('modal-po-detail').remove();
-    showToast('PO marked as paid','success');
-  }catch(e){ showToast('Error','error'); }
+  advancePO(id,'paid');
 }
 
 function openGRV(poId){
@@ -1198,11 +1242,14 @@ function openGRV(poId){
 
   overlay.innerHTML = `<div class="modal" style="max-width:480px">
     <div class="modal-title">Receive Stock — ${po.poNumber}</div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${po.supplierName}</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:8px">${po.supplierName}</div>
+    <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:12px;font-weight:600;color:#92400E">
+      ⚠️ Stock only enters your inventory when you tap <strong>Confirm Receipt</strong> below. Choose the correct location for each item.
+    </div>
     ${linesHTML}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
       <button class="btn btn-secondary" onclick="document.getElementById('modal-grv').remove()">Cancel</button>
-      <button class="btn btn-success" onclick="commitGRV('${po.id}')">✓ Receive All</button>
+      <button class="btn btn-success" onclick="commitGRV('${po.id}')">✓ Confirm Receipt</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
