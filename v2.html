@@ -80,6 +80,10 @@
     #loading.hidden{display:none}
     .spinner{width:40px;height:40px;border:4px solid #E5E5E5;border-top-color:#1A1A1A;border-radius:50%;animation:spin .8s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes pulse-glow{
+      0%,100%{transform:scale(1);box-shadow:0 0 20px rgba(57,255,20,.6),0 4px 12px rgba(0,0,0,.3)}
+      50%{transform:scale(1.02);box-shadow:0 0 30px rgba(57,255,20,.9),0 4px 16px rgba(0,0,0,.4)}
+    }
     .section-title{font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px}
     .list-item{display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg2);border-radius:12px;border:1px solid var(--border);margin-bottom:8px;cursor:pointer}
     .list-item-body{flex:1}
@@ -454,17 +458,17 @@ function showClockInPrompt(staff){
   overlay.className = 'modal-overlay';
   overlay.id = 'modal-clockin-prompt';
   overlay.style.zIndex = '9998';
-  overlay.innerHTML = `<div class="modal" style="max-width:340px;text-align:center">
-    <div style="font-size:48px;margin-bottom:8px">⏱️</div>
-    <div style="font-size:22px;font-weight:800;margin-bottom:4px">Good ${getGreeting()}, ${staff.name.split(' ')[0]}!</div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:24px">What time did your shift start?</div>
-    <input type="time" class="input" id="login-clock-time" value="${now}"
-      style="font-size:28px;font-weight:800;text-align:center;padding:16px;margin-bottom:8px;border-color:#C9A84C">
-    <div style="font-size:11px;color:var(--text3);margin-bottom:20px">${payNote}</div>
-    <button class="btn btn-primary btn-full" style="padding:16px;font-size:16px" onclick="commitLoginClockIn('${staff.id}')">
+  overlay.innerHTML = `<div style="background:linear-gradient(160deg,#0066FF,#00CFFF);border-radius:20px;padding:28px 24px;text-align:center;box-shadow:0 0 30px rgba(0,102,255,.5),0 8px 24px rgba(0,0,0,.3)">
+    <div style="font-size:52px;margin-bottom:8px">⏱️</div>
+    <div style="font-size:24px;font-weight:900;color:#fff;margin-bottom:4px">Good ${getGreeting()}, ${staff.name.split(' ')[0]}!</div>
+    <div style="font-size:13px;color:rgba(255,255,255,.8);margin-bottom:24px">What time did your shift start?</div>
+    <input type="time" id="login-clock-time" value="${now}"
+      style="font-size:28px;font-weight:800;text-align:center;padding:16px;margin-bottom:8px;border:none;border-radius:12px;background:rgba(255,255,255,.9);color:#1A1A1A;width:100%;box-sizing:border-box">
+    <div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:20px">${payNote}</div>
+    <button style="background:#fff;color:#0066FF;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:900;width:100%;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2)" onclick="commitLoginClockIn('${staff.id}')">
       ✓ Start Shift
     </button>
-    <button onclick="document.getElementById('modal-clockin-prompt').remove()" style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:12px;cursor:pointer;display:block;width:100%">
+    <button onclick="document.getElementById('modal-clockin-prompt').remove()" style="background:none;border:none;color:rgba(255,255,255,.6);font-size:12px;margin-top:12px;cursor:pointer;display:block;width:100%">
       Skip (already clocked in elsewhere)
     </button>
   </div>`;
@@ -512,13 +516,13 @@ function showBirthdayBanner(names, count){
   const banner = document.createElement('div');
   banner.id = 'birthday-banner';
   banner.style.cssText = 'position:fixed;top:60px;left:0;right:0;z-index:500;padding:0 12px';
-  banner.innerHTML = `<div style="background:#1A1A1A;color:#C9A84C;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2)">
-    <span style="font-size:24px">🎂</span>
+  banner.innerHTML = `<div style="background:linear-gradient(135deg,#FF1493,#FF69B4);color:#fff;border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 0 20px rgba(255,20,147,.5),0 4px 12px rgba(0,0,0,.3);animation:pulse-glow 2s infinite">
+    <span style="font-size:28px">🎂</span>
     <div style="flex:1">
-      <div style="font-size:13px;font-weight:800">Birthday${count>1?'s':''} Today!</div>
-      <div style="font-size:12px;opacity:.8">${names}</div>
+      <div style="font-size:14px;font-weight:900">BIRTHDAY${count>1?'S':''} TODAY! 🎉</div>
+      <div style="font-size:12px;font-weight:700;opacity:.9">${names}</div>
     </div>
-    <button onclick="document.getElementById('birthday-banner').remove()" style="background:none;border:none;color:#C9A84C;font-size:18px;cursor:pointer">×</button>
+    <button onclick="document.getElementById('birthday-banner').remove()" style="background:rgba(255,255,255,.3);border:none;color:#fff;font-size:16px;font-weight:800;cursor:pointer;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center">×</button>
   </div>`;
   document.body.appendChild(banner);
 }
@@ -3230,13 +3234,13 @@ function checkPendingRollTasks(){
       const b = document.createElement('div');
       b.id = 'roll-task-banner';
       b.style.cssText = 'position:fixed;top:60px;left:0;right:0;z-index:499;padding:0 12px';
-      b.innerHTML = `<div style="background:#C9A84C;color:#1A1A1A;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.2);cursor:pointer" onclick="openPendingRollTasks()">
-        <span style="font-size:24px">🚬</span>
+      b.innerHTML = `<div style="background:linear-gradient(135deg,#39FF14,#00FFFF);color:#1A1A1A;border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 0 20px rgba(57,255,20,.6),0 4px 12px rgba(0,0,0,.3);cursor:pointer;animation:pulse-glow 1.5s infinite" onclick="openPendingRollTasks()">
+        <span style="font-size:28px">🚬</span>
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:800">${pending.length} Rolling Task${pending.length>1?'s':''} Pending!</div>
-          <div style="font-size:11px;opacity:.8">Tap to view and complete</div>
+          <div style="font-size:14px;font-weight:900;letter-spacing:.5px">${pending.length} ROLLING TASK${pending.length>1?'S':''} PENDING!</div>
+          <div style="font-size:11px;font-weight:700;opacity:.8">Tap to view and complete now</div>
         </div>
-        <span style="font-size:18px">›</span>
+        <span style="font-size:22px;font-weight:900">›</span>
       </div>`;
       document.body.appendChild(b);
     }
@@ -3509,16 +3513,16 @@ async function commitRollTask(taskId){
 function showMilestoneAlert(memberName, totalPoints, creditEarned){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal" style="text-align:center;max-width:320px">
-    <div style="font-size:48px;margin-bottom:8px">⭐</div>
-    <div style="font-size:20px;font-weight:800;margin-bottom:4px">Points Milestone!</div>
-    <div style="font-size:15px;color:var(--text3);margin-bottom:16px">${memberName}</div>
-    <div style="background:#FEF3C7;border-radius:12px;padding:16px;margin-bottom:16px">
-      <div style="font-size:28px;font-weight:800;color:#92400E">${totalPoints} pts</div>
-      <div style="font-size:13px;color:#92400E;margin-top:4px">R${creditEarned} store credit available to redeem!</div>
+  overlay.innerHTML = `<div style="background:linear-gradient(135deg,#FF6B00,#FFD700);border-radius:20px;padding:28px 24px;text-align:center;box-shadow:0 0 30px rgba(255,107,0,.5),0 8px 24px rgba(0,0,0,.3)">
+    <div style="font-size:52px;margin-bottom:8px">⭐</div>
+    <div style="font-size:22px;font-weight:900;color:#fff;margin-bottom:4px">POINTS MILESTONE!</div>
+    <div style="font-size:16px;font-weight:700;color:rgba(255,255,255,.9);margin-bottom:16px">${memberName}</div>
+    <div style="background:rgba(255,255,255,.25);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div style="font-size:32px;font-weight:900;color:#fff">${totalPoints} pts</div>
+      <div style="font-size:14px;font-weight:700;color:#fff;margin-top:4px">R${creditEarned} store credit to redeem! 🎉</div>
     </div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">Go to Members to redeem their points for store credit</div>
-    <button class="btn btn-primary btn-full" onclick="this.closest('.modal-overlay').remove()">Got it! 🎉</button>
+    <div style="font-size:12px;color:rgba(255,255,255,.8);margin-bottom:16px">Go to Members → redeem points for store credit</div>
+    <button style="background:#fff;color:#FF6B00;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:900;width:100%;cursor:pointer" onclick="this.closest('.modal-overlay').remove()">Got it! 🎉</button>
   </div>`;
   document.body.appendChild(overlay);
 }
