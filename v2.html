@@ -234,13 +234,18 @@
     <div id="members-list"></div>
   </div>
 
+  <div id="tab-staff" class="tab">
+    <div style="font-size:18px;font-weight:800;margin-bottom:16px">Staff</div>
+    <div id="staff-content"></div>
+  </div>
+
   <div id="tab-more" class="tab">
     <div style="font-size:18px;font-weight:800;margin-bottom:16px">More</div>
     <div class="list-item" onclick="switchTab('expenses')"><div style="font-size:24px">💸</div><div class="list-item-body"><div class="list-item-title">Expenses</div><div class="list-item-sub">Log and track expenses</div></div><div>›</div></div>
     <div class="list-item"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Coming soon</div></div></div>
     <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
     <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
-    <div class="list-item"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Coming soon</div></div></div>
+    <div class="list-item" onclick="switchTab('staff')"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Clock in/out & shift management</div></div><div>›</div></div>
     <div style="margin-top:24px">
       <button onclick="lockApp()" class="btn btn-secondary btn-full">🔒 Lock / Switch User</button>
     </div>
@@ -500,6 +505,7 @@ function switchTab(tab){
   if(tab==='po')renderPOList();
   if(tab==='stocktake')renderStocktakeContent();
   if(tab==='members')renderMembersList();
+  if(tab==='staff')renderStaffTab();
 }
 
 // ── POS ──
@@ -2441,6 +2447,231 @@ function clearPosMember(){
   selectedMember = null;
   const badge = document.getElementById('pos-member-badge');
   if(badge){ badge.style.display='none'; badge.textContent=''; }
+}
+
+
+// ── STAFF CLOCK IN/OUT ──
+
+function renderStaffTab(){
+  const el = document.getElementById('staff-content');
+  if(!el) return;
+  const today = new Date().toISOString().slice(0,10);
+
+  const staffHTML = STAFF_PINS.map(s => {
+    // Get live clock state from Firebase staff data
+    const liveStaff = STATE.staff.find(x=>x.id===s.id) || {};
+    const clockedIn  = liveStaff.clockedIn || false;
+    const clockedAt  = liveStaff.clockedInAt || null;
+    const todayShift = liveStaff.todayShift || null;
+    const shiftStart = clockedAt ? new Date(clockedAt).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false}) : null;
+
+    // Calculate hours if clocked in
+    let hoursOnShift = '';
+    if(clockedIn && clockedAt){
+      const mins = Math.floor((Date.now() - new Date(clockedAt).getTime()) / 60000);
+      hoursOnShift = Math.floor(mins/60)+'h '+( mins%60)+'m';
+    }
+
+    return `<div class="list-item" style="padding:12px">
+      <div style="width:42px;height:42px;border-radius:50%;background:${clockedIn?'#16A34A':'#E5E5E5'};color:${clockedIn?'#fff':'#666'};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;flex-shrink:0">
+        ${s.name.slice(0,2).toUpperCase()}
+      </div>
+      <div class="list-item-body">
+        <div class="list-item-title">${s.name} <span style="font-size:11px;font-weight:400;color:var(--text3)">${s.role}</span></div>
+        <div style="font-size:11px;color:${clockedIn?'#16A34A':'var(--text3)'};font-weight:600">
+          ${clockedIn
+            ? '● On shift since '+shiftStart+' · '+hoursOnShift
+            : todayShift
+              ? '✓ Shift completed · '+todayShift.start+' – '+todayShift.end+' ('+todayShift.hours+'hrs)'
+              : '○ Not clocked in'
+          }
+        </div>
+        ${todayShift&&!clockedIn?`<div style="font-size:11px;color:var(--text3)">Wage: R${todayShift.wage||0}</div>`:''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        ${clockedIn
+          ? `<button onclick="clockOut('${s.id}')" class="btn btn-danger" style="font-size:11px;padding:6px 10px">Clock Out</button>`
+          : `<button onclick="clockIn('${s.id}')" class="btn btn-success" style="font-size:11px;padding:6px 10px">Clock In</button>`
+        }
+      </div>
+    </div>`;
+  }).join('');
+
+  // Today's shift summary
+  const shiftsToday = STAFF_PINS.map(s => {
+    const liveStaff = STATE.staff.find(x=>x.id===s.id)||{};
+    return liveStaff.todayShift ? {...liveStaff.todayShift, name:s.name} : null;
+  }).filter(Boolean);
+
+  const totalWages = shiftsToday.reduce((a,s)=>a+(s.wage||0),0);
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="section-title">Today — ${today}</div>
+      <div class="totals-row"><span style="color:var(--text3)">Shifts completed</span><span style="font-weight:700">${shiftsToday.length} / ${STAFF_PINS.length}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Total wages today</span><span style="font-weight:700;color:var(--red)">R${totalWages.toFixed(2)}</span></div>
+    </div>
+    <div class="section-title">Staff on shift</div>
+    ${staffHTML}`;
+}
+
+function clockIn(staffId){
+  const s = STAFF_PINS.find(x=>x.id===staffId);
+  if(!s) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const now = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
+  overlay.innerHTML = `<div class="modal" style="max-width:320px">
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:36px">⏱️</div>
+      <div style="font-size:18px;font-weight:800">Clock In — ${s.name}</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:2px">${s.role}</div>
+    </div>
+    <label>Start time</label>
+    <input type="time" class="input" id="ci-time" value="${now}" style="font-size:24px;font-weight:800;text-align:center;padding:14px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-success" onclick="commitClockIn('${staffId}',this)">✓ Clock In</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function commitClockIn(staffId, btn){
+  const timeVal = (document.getElementById('ci-time').value||'').trim();
+  if(!timeVal){ showToast('Enter start time','error'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  const clockInISO = today + 'T' + timeVal + ':00';
+  const s = STAFF_PINS.find(x=>x.id===staffId);
+  const liveStaff = STATE.staff.find(x=>x.id===staffId) || {id:staffId,name:s?s.name:staffId};
+
+  try{
+    await db.ref('bizpos/staff/'+staffId).update({
+      id: staffId,
+      name: s ? s.name : staffId,
+      role: s ? s.role : 'cashier',
+      clockedIn: true,
+      clockedInAt: clockInISO,
+      updatedAt: new Date().toISOString()
+    });
+    btn.closest('.modal-overlay').remove();
+    showToast((s?s.name:staffId)+' clocked in at '+timeVal,'success');
+    renderStaffTab();
+  }catch(e){ showToast('Error','error'); }
+}
+
+function clockOut(staffId){
+  const s = STAFF_PINS.find(x=>x.id===staffId);
+  const liveStaff = STATE.staff.find(x=>x.id===staffId)||{};
+  const clockedAt = liveStaff.clockedInAt||'';
+  const startTime = clockedAt ? new Date(clockedAt).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false}) : '09:00';
+  const now = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:340px">
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:36px">🏁</div>
+      <div style="font-size:18px;font-weight:800">Clock Out — ${s?s.name:staffId}</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:2px">${s?s.role:''}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div>
+        <label>Start time</label>
+        <input type="time" class="input" id="co-start" value="${startTime}" oninput="calcClockOutWageDisplay()" style="font-size:18px;font-weight:800;text-align:center;padding:10px">
+      </div>
+      <div>
+        <label>End time</label>
+        <input type="time" class="input" id="co-end" value="${now}" oninput="calcClockOutWageDisplay()" style="font-size:18px;font-weight:800;text-align:center;padding:10px">
+      </div>
+    </div>
+    <div id="co-wage-display" style="background:var(--bg3);border-radius:10px;padding:12px;text-align:center;margin-bottom:16px">
+      <div style="font-size:11px;color:var(--text3)">Calculated wage</div>
+      <div id="co-wage-amount" style="font-size:24px;font-weight:800;color:#1A1A1A">—</div>
+      <div id="co-hours-display" style="font-size:11px;color:var(--text3)"></div>
+    </div>
+    <div style="background:#FEF3C7;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400E;margin-bottom:16px">
+      💡 Wage will be added as a till expense on today's cashup
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-danger" onclick="commitClockOut('${staffId}',this)">✓ Clock Out</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  // Trigger initial calculation
+  setTimeout(calcClockOutWageDisplay, 100);
+}
+
+function calcClockOutWageDisplay(){
+  const start = document.getElementById('co-start');
+  const end   = document.getElementById('co-end');
+  const wageEl  = document.getElementById('co-wage-amount');
+  const hoursEl = document.getElementById('co-hours-display');
+  if(!start||!end||!wageEl) return;
+
+  const [sh,sm] = (start.value||'').split(':').map(Number);
+  const [eh,em] = (end.value||'').split(':').map(Number);
+  if(isNaN(sh)||isNaN(eh)) return;
+
+  const mins = Math.max(0,(eh*60+em)-(sh*60+sm));
+  const hours = mins/60;
+
+  // Find the staff being clocked out — stored in button's closest modal
+  const modal = start.closest('.modal');
+  const staffName = modal ? modal.querySelector('[style*="font-size:18px"]').textContent.replace('Clock Out — ','').trim() : '';
+  const s = STAFF_PINS.find(x=>x.name===staffName);
+  let wage = 0;
+  if(s){
+    wage = s.payType==='hourly' ? Math.round(hours*s.rate*100)/100 : s.rate;
+  }
+  wageEl.textContent = 'R'+wage.toFixed(2);
+  hoursEl.textContent = Math.floor(hours)+'h '+(mins%60)+'m worked';
+}
+
+async function commitClockOut(staffId, btn){
+  const startVal = (document.getElementById('co-start').value||'').trim();
+  const endVal   = (document.getElementById('co-end').value||'').trim();
+  if(!startVal||!endVal){ showToast('Enter start and end time','error'); return; }
+
+  const [sh,sm] = startVal.split(':').map(Number);
+  const [eh,em] = endVal.split(':').map(Number);
+  const mins  = Math.max(0,(eh*60+em)-(sh*60+sm));
+  const hours = Math.round(mins/60*100)/100;
+
+  const s = STAFF_PINS.find(x=>x.id===staffId);
+  let wage = 0;
+  if(s) wage = s.payType==='hourly' ? Math.round(hours*s.rate*100)/100 : s.rate;
+
+  const today = new Date().toISOString().slice(0,10);
+  const shift = { start:startVal, end:endVal, hours, wage, date:today, staffId, staffName:s?s.name:staffId };
+
+  try{
+    await db.ref('bizpos/staff/'+staffId).update({
+      clockedIn: false,
+      clockedInAt: null,
+      todayShift: shift,
+      updatedAt: new Date().toISOString()
+    });
+
+    // Add wage as till expense (remove duplicate if exists)
+    tillExpenses = tillExpenses.filter(e => !e.addedFromShift || e.staffId !== staffId);
+    if(wage > 0){
+      tillExpenses.push({
+        id: uid(),
+        desc: (s?s.name:staffId)+' wages ('+hours+'hrs)',
+        amount: wage,
+        category: 'Salaries',
+        addedFromShift: true,
+        staffId
+      });
+    }
+
+    btn.closest('.modal-overlay').remove();
+    showToast((s?s.name:staffId)+' clocked out · R'+wage.toFixed(2)+' wage added','success',4000);
+    renderStaffTab();
+  }catch(e){ showToast('Error','error'); }
 }
 
 // ── NOTIFICATIONS ──
