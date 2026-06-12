@@ -305,16 +305,31 @@
     <div class="modal-title">Complete Sale</div>
     <div id="payment-total" style="font-size:28px;font-weight:800;color:var(--accent);text-align:center;margin-bottom:20px"></div>
     <div class="section-title">Payment Method</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
       <button class="btn btn-secondary" id="pay-cash" onclick="selectPayment('cash')">💵 Cash</button>
       <button class="btn btn-secondary" id="pay-card" onclick="selectPayment('card')">💳 Card</button>
       <button class="btn btn-secondary" id="pay-eft" onclick="selectPayment('eft')">🏦 EFT</button>
-      <button class="btn btn-secondary" id="pay-credit" onclick="selectPayment('store_credit')">⭐ Store Credit</button>
+      <button class="btn btn-secondary" id="pay-credit" onclick="selectPayment('store_credit')">⭐ Credit</button>
     </div>
+    <button class="btn btn-secondary btn-full" id="pay-split" onclick="toggleSplitPayment()" style="margin-bottom:12px;font-size:13px">✂️ Split Payment</button>
     <div id="cash-tendered-wrap" style="display:none">
       <label>Cash tendered</label>
       <input type="number" class="input" id="cash-tendered" placeholder="0.00" oninput="calcChange()">
       <div id="change-display" style="font-size:16px;font-weight:700;color:var(--green);text-align:center;margin-top:8px"></div>
+    </div>
+    <div id="split-pay-wrap" style="display:none;background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div id="split-pay-lines"></div>
+      <div style="display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;margin-top:8px">
+        <select id="split-method" class="input" style="font-size:12px">
+          <option value="cash">💵 Cash</option>
+          <option value="card">💳 Card</option>
+          <option value="eft">🏦 EFT</option>
+          <option value="store_credit">⭐ Credit</option>
+        </select>
+        <input type="number" id="split-amount" class="input" placeholder="Amount" inputmode="decimal" style="font-size:12px">
+        <button onclick="addSplitLine()" class="btn btn-primary" style="font-size:12px;padding:8px 12px">+</button>
+      </div>
+      <div id="split-remaining" style="font-size:13px;font-weight:700;margin-top:8px;text-align:right"></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
       <button class="btn btn-secondary" onclick="closeModal('modal-payment')">Cancel</button>
@@ -746,6 +761,61 @@ function selectPayment(method){
   document.getElementById('cash-tendered-wrap').style.display=method==='cash'?'block':'none';
   document.getElementById('btn-complete-sale').disabled=method==='cash';
 }
+let splitLines = []; // [{method, amount}]
+let splitMode = false;
+
+function toggleSplitPayment(){
+  splitMode = !splitMode;
+  splitLines = [];
+  selectedPayMethod = null;
+  ['cash','card','eft','credit'].forEach(m=>{
+    const el = document.getElementById('pay-'+m);
+    if(el) el.className='btn btn-secondary';
+  });
+  const splitBtn = document.getElementById('pay-split');
+  if(splitBtn) splitBtn.className = 'btn btn-'+(splitMode?'primary':'secondary')+' btn-full';
+  document.getElementById('cash-tendered-wrap').style.display='none';
+  document.getElementById('split-pay-wrap').style.display=splitMode?'':'none';
+  document.getElementById('btn-complete-sale').disabled=true;
+  renderSplitLines();
+}
+
+function addSplitLine(){
+  const method = document.getElementById('split-method').value;
+  const amount = parseFloat(document.getElementById('split-amount').value)||0;
+  if(amount<=0){ showToast('Enter an amount','error'); return; }
+  splitLines.push({method, amount});
+  document.getElementById('split-amount').value='';
+  renderSplitLines();
+}
+
+function removeSplitLine(i){
+  splitLines.splice(i,1);
+  renderSplitLines();
+}
+
+function renderSplitLines(){
+  const total = cart.reduce((a,x)=>a+x.lineTotal,0);
+  const paid  = splitLines.reduce((a,x)=>a+x.amount,0);
+  const remaining = Math.max(0, parseFloat((total-paid).toFixed(2)));
+  const icons = {cash:'💵',card:'💳',eft:'🏦',store_credit:'⭐'};
+  document.getElementById('split-pay-lines').innerHTML = splitLines.map((l,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;font-size:13px">${icons[l.method]||''} ${l.method}</span>
+      <span style="font-weight:700">${fmt(l.amount)}</span>
+      <button onclick="removeSplitLine(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;padding:0 4px">×</button>
+    </div>`).join('');
+  const remEl = document.getElementById('split-remaining');
+  if(remEl) remEl.innerHTML = remaining>0
+    ? `<span style="color:var(--red)">Still needed: ${fmt(remaining)}</span>`
+    : `<span style="color:#16A34A">✓ Fully paid</span>`;
+  // Pre-fill remaining amount
+  const amtInput = document.getElementById('split-amount');
+  if(amtInput && remaining>0 && !amtInput.value) amtInput.value = remaining.toFixed(2);
+  // Enable complete button when fully paid
+  document.getElementById('btn-complete-sale').disabled = remaining>0 || splitLines.length===0;
+}
+
 function calcChange(){
   const total=cart.reduce((a,x)=>a+x.lineTotal,0);
   const tendered=parseFloat(document.getElementById('cash-tendered').value)||0;
@@ -754,10 +824,18 @@ function calcChange(){
   document.getElementById('btn-complete-sale').disabled=tendered<total;
 }
 async function completeSale(){
-  if(!cart.length||!selectedPayMethod)return;
+  if(!cart.length) return;
+  if(splitMode){
+    const total = cart.reduce((a,x)=>a+x.lineTotal,0);
+    const paid  = splitLines.reduce((a,x)=>a+x.amount,0);
+    if(splitLines.length===0){ showToast('Add at least one payment','error'); return; }
+    if(paid < total-0.01){ showToast('Payments don't cover the total','error'); return; }
+    selectedPayMethod = splitLines.map(l=>l.method).join('+');
+  }
+  if(!selectedPayMethod) return;
   const total=cart.reduce((a,x)=>a+x.lineTotal,0);
   const saleId=uid();
-  const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,voided:false};
+  const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,splitPayments:splitMode?[...splitLines]:null,voided:false};
   const updates={};
   updates['bizpos/sales/'+saleId]=sale;
   cart.forEach(item=>{
@@ -1327,6 +1405,7 @@ function renderReports(){
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('month',this)">30 Days</button>
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('cashups',this)">Cashups</button>
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('staff',this)">Staff Hours</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 14px;white-space:nowrap" onclick="setReportPeriod('products',this)">📦 Products</button>
     </div>
     <div id="report-body">
       ${renderTodayReport(today,ts,tot,cash,card,eft,topProds)}
@@ -1418,7 +1497,68 @@ function setReportPeriod(period, btn){
 
   } else if(period==='staff'){
     renderStaffHoursReport(el);
+  } else if(period==='products'){
+    renderProductPerformanceReport(el);
   }
+}
+
+function renderProductPerformanceReport(el){
+  const days = 30;
+  const cutoff = new Date(Date.now() - days*86400000);
+  const sales = STATE.sales.filter(s=>!s.voided && new Date(s.date)>=cutoff);
+  const prodMap = {};
+  sales.forEach(s=>{
+    (s.items||[]).forEach(item=>{
+      const key = item.productId || item.name;
+      if(!prodMap[key]){
+        prodMap[key] = {name:item.name, qty:0, revenue:0, transactions:0};
+      }
+      prodMap[key].qty += (item.qty||1);
+      prodMap[key].revenue += (item.price||0)*(item.qty||1);
+      prodMap[key].transactions++;
+    });
+  });
+  const prods = Object.values(prodMap).sort((a,b)=>b.revenue-a.revenue);
+  const totalRev = prods.reduce((s,p)=>s+p.revenue,0);
+  const top = prods.slice(0,20);
+  const slow = [...prods].sort((a,b)=>a.revenue-b.revenue).slice(0,10);
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="section-title">📦 Product Performance — Last 30 Days</div>
+      <div class="totals-row"><span style="color:var(--text3)">Total Revenue</span><span style="font-weight:800">${fmt(totalRev)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Products Sold</span><span style="font-weight:700">${prods.length}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Units Sold</span><span style="font-weight:700">${prods.reduce((s,p)=>s+p.qty,0)}</span></div>
+    </div>
+    <div class="card">
+      <div class="section-title">🏆 Top 20 by Revenue</div>
+      ${top.map((p,i)=>{
+        const pct = totalRev>0?Math.round(p.revenue/totalRev*100):0;
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-size:13px;font-weight:600">${i+1}. ${p.name}</span>
+            <span style="font-weight:700">${fmt(p.revenue)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;height:4px;background:var(--bg3);border-radius:2px">
+              <div style="height:4px;background:#2D9E35;border-radius:2px;width:${pct}%"></div>
+            </div>
+            <span style="font-size:11px;color:var(--text3);white-space:nowrap">${p.qty} sold · ${pct}%</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="card">
+      <div class="section-title">⚠️ 10 Slowest Movers</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Consider reviewing stock or pricing</div>
+      ${slow.map((p,i)=>`<div class="totals-row" style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px">${p.name}</span>
+        <div style="text-align:right">
+          <div style="font-size:12px;font-weight:700">${fmt(p.revenue)}</div>
+          <div style="font-size:11px;color:var(--text3)">${p.qty} units</div>
+        </div>
+      </div>`).join('')}
+    </div>`;
 }
 
 function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
@@ -2330,7 +2470,9 @@ async function savePO(status){
     ? currentPOLines.reduce((a,l) => a+(l.qty||1)*(l.unitCost||0), 0)
     : currentPOLines.reduce((a,l) => a+(l.amount||0), 0);
   const pos = STATE.purchaseOrders||[];
-  const poNum = 'PO-' + String(pos.length+1).padStart(4,'0');
+  const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const supplierSlug = (supplierName||'UNKNOWN').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,10);
+  const poNum = 'PO-'+dateStr+'-'+supplierSlug;
   const po = {
     id: uid(),
     poNumber: poNum,
@@ -2419,6 +2561,7 @@ function openPODetail(id){
     ${po.notes?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">📝 ${po.notes}</div>`:''}
 
     ${actionBtn?`<div style="margin-bottom:8px">${actionBtn}</div>`:''}
+    <button class="btn btn-secondary btn-full" style="margin-bottom:8px;font-size:12px" onclick="printPO('${po.id}')">🖨️ Print / Download PO</button>
     <button class="btn btn-secondary btn-full" onclick="document.getElementById('modal-po-detail').remove()">Close</button>
   </div>`;
   document.body.appendChild(overlay);
@@ -2631,6 +2774,63 @@ function selectPOProduct(lineIdx, name, cost){
   updatePOTotal();
 }
 
+
+function printPO(poId){
+  const po = STATE.purchaseOrders.find(x=>x.id===poId);
+  if(!po) return;
+  const lines = (po.lines||[]).map(l=>`
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #eee">${l.productName||'—'}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">${l.qty||0}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">R${(l.unitCost||0).toFixed(2)}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">R${((l.qty||0)*(l.unitCost||0)).toFixed(2)}</td>
+    </tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><title>${po.poNumber}</title>
+  <style>body{font-family:Arial,sans-serif;padding:32px;color:#111;max-width:700px;margin:0 auto}
+  h1{font-size:22px;margin:0}h2{font-size:16px;color:#666;margin:4px 0 24px}
+  table{width:100%;border-collapse:collapse;margin-top:16px}
+  th{background:#111;color:#fff;padding:10px 8px;text-align:left;font-size:13px}
+  td{font-size:13px}
+  .total{font-size:18px;font-weight:bold;text-align:right;margin-top:16px;padding-top:12px;border-top:2px solid #111}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:24px;background:#f5f5f5;padding:16px;border-radius:8px}
+  .meta-item{font-size:13px}.meta-label{font-size:11px;color:#666;text-transform:uppercase}
+  @media print{button{display:none}}
+  </style></head><body>
+  <h1>Jack &amp; Jill's Adventure Club</h1>
+  <h2>Purchase Order</h2>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+    <div><div style="font-size:24px;font-weight:800">${po.poNumber}</div>
+    <div style="font-size:13px;color:#666">${po.poType==='expense'?'Expense PO':'Stock PO'}</div></div>
+    <div style="text-align:right;font-size:13px">
+      <div style="font-size:16px;font-weight:700;text-transform:capitalize;background:${po.status==='received'?'#dcfce7':po.status==='paid'?'#dbeafe':po.status==='ordered'?'#fef9c3':'#f5f5f5'};padding:4px 12px;border-radius:20px;display:inline-block">${po.status||'draft'}</div>
+    </div>
+  </div>
+  <div class="meta">
+    <div class="meta-item"><div class="meta-label">Supplier</div><strong>${po.supplierName||'—'}</strong></div>
+    <div class="meta-item"><div class="meta-label">Date Created</div>${(po.createdAt||'').slice(0,10)}</div>
+    <div class="meta-item"><div class="meta-label">Created By</div>${po.staffName||'—'}</div>
+    <div class="meta-item"><div class="meta-label">Notes</div>${po.notes||'—'}</div>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Product / Description</th>
+      <th style="text-align:center">Qty</th>
+      <th style="text-align:right">Unit Cost</th>
+      <th style="text-align:right">Total</th>
+    </tr></thead>
+    <tbody>${lines}</tbody>
+  </table>
+  <div class="total">Total: R${(po.total||0).toFixed(2)}</div>
+  <div style="margin-top:32px;font-size:11px;color:#999;border-top:1px solid #eee;padding-top:12px">
+    Generated by BizPOS — Jack &amp; Jill's Adventure Club
+  </div>
+  <button onclick="window.print()" style="margin-top:16px;padding:10px 24px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">🖨️ Print</button>
+  </body></html>`;
+  const win = window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(()=>win.print(), 500);
+}
 
 // ── STOCKTAKE ──
 let stocktakeSession = null; // {location, counts: {productId: qty}}
