@@ -468,11 +468,19 @@ function loginSuccess(staff){
 }
 
 function showClockInPrompt(staff){
-  // Check if already clocked in today
-  const liveStaff = STATE.staff.find(x=>x.id===staff.id)||{};
-  if(liveStaff.clockedIn) return; // already clocked in
-  const todayShift = liveStaff.todayShift;
-  if(todayShift && todayShift.date === new Date().toISOString().slice(0,10)) return; // already worked today
+  // Check Firebase directly to avoid timing issues with STATE not yet loaded
+  db.ref('bizpos/staff/'+staff.id).once('value').then(snap=>{
+    const live = snap.val()||{};
+    if(live.clockedIn) return; // already clocked in
+    const todayShift = live.todayShift;
+    const today = new Date().toISOString().slice(0,10);
+    if(todayShift && todayShift.date === today) return; // already worked today
+    _showClockInModal(staff);
+  }).catch(()=>{ _showClockInModal(staff); });
+}
+
+function _showClockInPrompt_disabled(){} // placeholder
+function _showClockInModal(staff){
 
 
   const now = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
