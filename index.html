@@ -2499,7 +2499,7 @@ function openPODetail(id){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'modal-po-detail';
-  const isStock = po.poType !== 'expense';
+  const isStock = po.poType !== 'expense' && po.poType !== 'Expense';
 
   // Status steps
   // Stock PO:    draft → ordered → paid → received (GRV)
@@ -2509,7 +2509,7 @@ function openPODetail(id){
     : ['draft','ordered','paid'];
   const stepLabels = {draft:'Draft',ordered:'Ordered',paid:'Paid',received:'Stock Received'};
   const stepIcons  = {draft:'📝',ordered:'📬',paid:'💰',received:'📦'};
-  const curIdx = steps.indexOf(po.status||'draft');
+  const curIdx = steps.indexOf(po.status||'draft') >= 0 ? steps.indexOf(po.status||'draft') : 0;
 
   const stepsHTML = steps.map((s,i) => {
     const done = i <= curIdx;
@@ -2526,7 +2526,8 @@ function openPODetail(id){
     </div>`;
   }).join('');
 
-  const linesHTML = (po.lines||[]).map(l => isStock
+  const poLines = po.lines||po.items||[];
+  const linesHTML = poLines.map(l => isStock
     ? `<div class="totals-row"><span style="font-size:13px">${l.productName||'—'} × ${l.qty}</span><span style="font-weight:700">${fmt((l.qty||1)*(l.unitCost||0))}</span></div>`
     : `<div class="totals-row"><span style="font-size:13px">${l.desc||'—'} (${l.category})</span><span style="font-weight:700">${fmt(l.amount||0)}</span></div>`
   ).join('');
@@ -2648,7 +2649,7 @@ async function commitGRV(poId){
   const po = (STATE.purchaseOrders||[]).find(p=>p.id===poId);
   if(!po) return;
   const updates = {};
-  const lines = po.lines||[];
+  const lines = po.lines||po.items||[];
   lines.forEach((l,i) => {
     const receivedQty = parseInt(document.getElementById('grv-qty-'+i).value)||0;
     if(receivedQty <= 0) return;
