@@ -618,10 +618,17 @@ function renderCategoryTabs(){
   const el = document.getElementById('pos-category-tabs');
   if(!el) return;
   const cats = ['All', ...new Set(STATE.products.filter(p=>p.active!==false&&p.category).map(p=>p.category).sort())];
-  el.innerHTML = cats.map(cat=>`
-    <button onclick="setPosCategory('${cat}')" style="flex-shrink:0;padding:6px 14px;border-radius:20px;border:1.5px solid ${posCategory===cat?'#1A1A1A':'var(--border)'};background:${posCategory===cat?'#1A1A1A':'var(--bg2)'};color:${posCategory===cat?'#fff':'var(--text)'};font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">
+  const TAB_COLORS = {"OD Flower": {"bg": "#4A5E4A", "text": "#fff"}, "GH Flower": {"bg": "#1A5C1A", "text": "#fff"}, "GD Flower": {"bg": "#2E7D32", "text": "#fff"}, "ID Flower": {"bg": "#76C442", "text": "#fff"}, "OD Prerolls": {"bg": "#4A0A0A", "text": "#fff"}, "GH Prerolls": {"bg": "#8B0000", "text": "#fff"}, "Gh Prerolls": {"bg": "#8B0000", "text": "#fff"}, "GD Prerolls": {"bg": "#E53935", "text": "#fff"}, "Gd Prerolls": {"bg": "#E53935", "text": "#fff"}, "ID Prerolls": {"bg": "#FF5722", "text": "#fff"}, "GD prerolls": {"bg": "#E53935", "text": "#fff"}, "Lifted Edibles": {"bg": "#DC143C", "text": "#fff"}, "Goblin Treatz Edibles": {"bg": "#FFB6C1", "text": "#1A1A1A"}, "Goblin Treatz": {"bg": "#FFB6C1", "text": "#1A1A1A"}, "Natures Treatz Edibles": {"bg": "#C8A2C8", "text": "#1A1A1A"}, "ZG Edibles": {"bg": "#4B0082", "text": "#fff"}, "Greent Giant Edibles": {"bg": "#FF69B4", "text": "#fff"}, "SGB Edibles": {"bg": "#DA70D6", "text": "#fff"}, "Edibles": {"bg": "#C71585", "text": "#fff"}, "Oils & Concentrates": {"bg": "#F9A825", "text": "#1A1A1A"}, "Vapes and Accessories": {"bg": "#1565C0", "text": "#fff"}, "Smoking Paraphenalia": {"bg": "#A1887F", "text": "#fff"}, "Merch": {"bg": "#C8860A", "text": "#fff"}, "MISC": {"bg": "#4E342E", "text": "#fff"}, "Uncategorised": {"bg": "#4E342E", "text": "#fff"}};
+  el.innerHTML = cats.map(cat=>{
+    const tc = TAB_COLORS[cat]||{bg:'#1A1A1A',text:'#fff'};
+    const isActive = posCategory===cat;
+    const bg = cat==='All'?(isActive?'#1A1A1A':'var(--bg2)'):( isActive?tc.bg:'var(--bg2)');
+    const color = cat==='All'?(isActive?'#fff':'var(--text)'):(isActive?tc.text:'var(--text)');
+    const border = cat==='All'?(isActive?'#1A1A1A':'var(--border)'):(isActive?tc.bg:tc.bg);
+    return `<button onclick="setPosCategory('${cat}')" style="flex-shrink:0;padding:6px 14px;border-radius:20px;border:2px solid ${border};background:${bg};color:${color};font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">
       ${cat}
-    </button>`).join('');
+    </button>`;
+  }).join('');
 }
 
 function setPosCategory(cat){
@@ -636,18 +643,25 @@ function renderProductGrid(filter){
   renderCategoryTabs();
   let prods=STATE.products.filter(p=>p.active!==false);
   if(posCategory!=='All') prods=prods.filter(p=>p.category===posCategory);
+  // Hide Sodaze from POS
+  if(posCategory==='All') prods=prods.filter(p=>p.category!=='Sodaze');
   if(filter)prods=prods.filter(p=>(p.name||'').toLowerCase().includes(filter.toLowerCase()));
   prods.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   if(!prods.length){
     grid.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center;padding:16px;grid-column:1/-1">No products in this category</div>';
     return;
   }
-  grid.innerHTML=prods.map(p=>`
-    <div class="product-tile${(p.qty||0)<=0?' out':''}" onclick="addToCart('${p.id}')">
-      <div class="product-tile-name">${p.name}</div>
-      <div class="product-tile-price">${fmt(p.price)}</div>
-      <div class="product-tile-qty">${p.qty||0} in stock</div>
-    </div>`).join('');
+  const CAT_COLORS = {"OD Flower": {"bg": "#4A5E4A", "text": "#fff"}, "GH Flower": {"bg": "#1A5C1A", "text": "#fff"}, "GD Flower": {"bg": "#2E7D32", "text": "#fff"}, "ID Flower": {"bg": "#76C442", "text": "#fff"}, "OD Prerolls": {"bg": "#4A0A0A", "text": "#fff"}, "GH Prerolls": {"bg": "#8B0000", "text": "#fff"}, "Gh Prerolls": {"bg": "#8B0000", "text": "#fff"}, "GD Prerolls": {"bg": "#E53935", "text": "#fff"}, "Gd Prerolls": {"bg": "#E53935", "text": "#fff"}, "ID Prerolls": {"bg": "#FF5722", "text": "#fff"}, "GD prerolls": {"bg": "#E53935", "text": "#fff"}, "Lifted Edibles": {"bg": "#DC143C", "text": "#fff"}, "Goblin Treatz Edibles": {"bg": "#FFB6C1", "text": "#1A1A1A"}, "Goblin Treatz": {"bg": "#FFB6C1", "text": "#1A1A1A"}, "Natures Treatz Edibles": {"bg": "#C8A2C8", "text": "#1A1A1A"}, "ZG Edibles": {"bg": "#4B0082", "text": "#fff"}, "Greent Giant Edibles": {"bg": "#FF69B4", "text": "#fff"}, "SGB Edibles": {"bg": "#DA70D6", "text": "#fff"}, "Edibles": {"bg": "#C71585", "text": "#fff"}, "Oils & Concentrates": {"bg": "#F9A825", "text": "#1A1A1A"}, "Vapes and Accessories": {"bg": "#1565C0", "text": "#fff"}, "Smoking Paraphenalia": {"bg": "#A1887F", "text": "#fff"}, "Merch": {"bg": "#C8860A", "text": "#fff"}, "MISC": {"bg": "#4E342E", "text": "#fff"}, "Uncategorised": {"bg": "#4E342E", "text": "#fff"}};
+  grid.innerHTML=prods.map(p=>{
+    const cc = CAT_COLORS[p.category]||{bg:'#E5E5E5',text:'#1A1A1A'};
+    const isOut = (p.qty||0)<=0;
+    return `<div class="product-tile${isOut?' out':''}" onclick="addToCart('${p.id}')"
+      style="background:${cc.bg};border-color:${cc.bg};opacity:${isOut?'.45':'1'}">
+      <div class="product-tile-name" style="color:${cc.text}">${p.name}</div>
+      <div class="product-tile-price" style="color:${cc.text};opacity:.9">${fmt(p.price)}</div>
+      <div class="product-tile-qty" style="color:${cc.text};opacity:.7">${p.qty||0} in stock</div>
+    </div>`;
+  }).join('');
 }
 function filterProducts(v){renderProductGrid(v)}
 function addToCart(id){
