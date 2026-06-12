@@ -2504,12 +2504,14 @@ function openPODetail(id){
   // Status steps
   // Stock PO:    draft → ordered → paid → received (GRV)
   // Expense PO:  draft → ordered → paid
+  // Normalise status — old app used 'confirmed', new uses 'ordered'
+  const normStatus = (po.status||'draft') === 'confirmed' ? 'ordered' : (po.status||'draft');
   const steps = isStock
     ? ['draft','ordered','paid','received']
     : ['draft','ordered','paid'];
   const stepLabels = {draft:'Draft',ordered:'Ordered',paid:'Paid',received:'Stock Received'};
   const stepIcons  = {draft:'📝',ordered:'📬',paid:'💰',received:'📦'};
-  const curIdx = steps.indexOf(po.status||'draft') >= 0 ? steps.indexOf(po.status||'draft') : 0;
+  const curIdx = steps.indexOf(normStatus) >= 0 ? steps.indexOf(normStatus) : 0;
 
   const stepsHTML = steps.map((s,i) => {
     const done = i <= curIdx;
@@ -2534,11 +2536,11 @@ function openPODetail(id){
 
   // Action button based on current status
   let actionBtn = '';
-  if(po.status==='draft'||!po.status){
+  if(normStatus==='draft'){
     actionBtn = `<button class="btn btn-primary btn-full" onclick="advancePO('${po.id}','ordered')">📬 Mark as Ordered</button>`;
-  } else if(po.status==='ordered'){
+  } else if(normStatus==='ordered'){
     actionBtn = `<button class="btn btn-primary btn-full" onclick="advancePO('${po.id}','paid')">💰 Mark as Paid</button>`;
-  } else if(po.status==='paid' && isStock){
+  } else if(normStatus==='paid' && isStock){
     actionBtn = `<button class="btn btn-success btn-full" onclick="openGRV('${po.id}')">📦 Receive Stock into System</button>`;
   }
 
@@ -2547,7 +2549,7 @@ function openPODetail(id){
   overlay.innerHTML = `<div class="modal" style="max-width:480px;max-height:90vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <div class="modal-title" style="margin:0">${po.poNumber}</div>
-      <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${po.status==='received'?'#DCFCE7':po.status==='paid'?'#FEF3C7':po.status==='ordered'?'#DBEAFE':'#F3F4F6'};color:${po.status==='received'?'#166534':po.status==='paid'?'#92400E':po.status==='ordered'?'#1E40AF':'#374151'};text-transform:capitalize">${po.status||'draft'}</span>
+      <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${normStatus==='received'?'#DCFCE7':normStatus==='paid'?'#FEF3C7':normStatus==='ordered'?'#DBEAFE':'#F3F4F6'};color:${normStatus==='received'?'#166534':normStatus==='paid'?'#92400E':normStatus==='ordered'?'#1E40AF':'#374151'};text-transform:capitalize">${normStatus}</span>
     </div>
     <div style="font-size:13px;color:var(--text3);margin-bottom:16px">${isStock?'📦 Stock PO':'🧾 Expense PO'} · ${po.supplierName} · ${po.date||''}</div>
 
@@ -2564,7 +2566,6 @@ function openPODetail(id){
     ${po.notes?`<div style="font-size:12px;color:var(--text3);margin-bottom:12px">📝 ${po.notes}</div>`:''}
 
     ${actionBtn?`<div style="margin-bottom:8px">${actionBtn}</div>`:''}
-    <button class="btn btn-secondary btn-full" style="margin-bottom:8px;font-size:12px" onclick="printPO('${po.id}')">🖨️ Print / Download PO</button>
     <button class="btn btn-secondary btn-full" style="margin-bottom:8px;font-size:12px" onclick="printPO('${po.id}')">🖨️ Print / Download PO</button>
     <button class="btn btn-secondary btn-full" onclick="document.getElementById('modal-po-detail').remove()">Close</button>
   </div>`;
