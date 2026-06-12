@@ -2746,10 +2746,10 @@ async function addNewSupplier(name){
 function filterPOProductDrop(lineIdx, val){
   const dd = document.getElementById('po-prod-drop-'+lineIdx);
   if(!dd) return;
-  if(!val || val.length < 2){ dd.style.display='none'; return; }
+  const q = (val||'').toLowerCase().trim();
   const matches = STATE.products.filter(p =>
-    p.active !== false && p.name.toLowerCase().includes(val.toLowerCase())
-  ).slice(0,8);
+    p.active !== false && (!q || p.name.toLowerCase().includes(q))
+  ).slice(0,10);
   const exact = STATE.products.find(p => p.name.toLowerCase() === val.toLowerCase());
   const items = matches.map(p =>
     `<div onclick="selectPOProduct(${lineIdx},'${p.name}',${p.cost||p.price||0})" style="padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)">
