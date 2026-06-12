@@ -135,6 +135,7 @@
       <span class="search-icon">🔍</span>
       <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
     </div>
+    <div id="pos-category-tabs" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none"></div>
     <div id="product-grid"></div>
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
       <div style="flex:1;position:relative">
@@ -611,12 +612,36 @@ function switchTab(tab){
 }
 
 // ── POS ──
+let posCategory = 'All';
+
+function renderCategoryTabs(){
+  const el = document.getElementById('pos-category-tabs');
+  if(!el) return;
+  const cats = ['All', ...new Set(STATE.products.filter(p=>p.active!==false&&p.category).map(p=>p.category).sort())];
+  el.innerHTML = cats.map(cat=>`
+    <button onclick="setPosCategory('${cat}')" style="flex-shrink:0;padding:6px 14px;border-radius:20px;border:1.5px solid ${posCategory===cat?'#1A1A1A':'var(--border)'};background:${posCategory===cat?'#1A1A1A':'var(--bg2)'};color:${posCategory===cat?'#fff':'var(--text)'};font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">
+      ${cat}
+    </button>`).join('');
+}
+
+function setPosCategory(cat){
+  posCategory = cat;
+  renderCategoryTabs();
+  renderProductGrid(document.getElementById('pos-search').value||'');
+}
+
 function renderProductGrid(filter){
   const grid=document.getElementById('product-grid');
   if(!grid)return;
+  renderCategoryTabs();
   let prods=STATE.products.filter(p=>p.active!==false);
-  if(filter)prods=prods.filter(p=>p.name.toLowerCase().includes(filter.toLowerCase()));
+  if(posCategory!=='All') prods=prods.filter(p=>p.category===posCategory);
+  if(filter)prods=prods.filter(p=>(p.name||'').toLowerCase().includes(filter.toLowerCase()));
   prods.sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  if(!prods.length){
+    grid.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center;padding:16px;grid-column:1/-1">No products in this category</div>';
+    return;
+  }
   grid.innerHTML=prods.map(p=>`
     <div class="product-tile${(p.qty||0)<=0?' out':''}" onclick="addToCart('${p.id}')">
       <div class="product-tile-name">${p.name}</div>
