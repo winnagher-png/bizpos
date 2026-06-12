@@ -823,11 +823,60 @@ function renderStockList(filter){
 }
 function filterStock(v){renderStockList(v)}
 function openAddProduct(){
-  const name=prompt('Product name:');if(!name||!name.trim())return;
-  const price=parseFloat(prompt('Selling price (R):')||'0');
-  const qty=parseInt(prompt('Opening stock:')||'0');
-  const prod={id:uid(),name:name.trim(),price,cost:0,qty,qtyWh:0,category:'UNCATEGORISED',active:true,reorderAt:5,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
-  db.ref('bizpos/products/'+prod.id).set(prod).then(()=>showToast(name+' added','success'));
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  const cats = ['GH FLOWER','GD FLOWER','ID FLOWER','OD FLOWER','GH PREROLLS','GD PREROLLS','ID PREROLLS','OD PREROLLS','LIFTED EDIBLES','GOBLIN TREATZ EDIBLES','GOBLIN TREATZ','NATURES TREATZ EDIBLES','ZG EDIBLES','GREENT GIANT EDIBLES','SGB EDIBLES','EDIBLES','OILS & CONCENTRATES','VAPES AND ACCESSORIES','SMOKING PARAPHENALIA','MERCH','MISC','UNCATEGORISED'];
+  overlay.innerHTML = `<div class="modal" style="max-width:400px">
+    <div class="modal-title">Add New Product</div>
+    <label>Product Name *</label>
+    <input type="text" class="input" id="ap-name" placeholder="e.g. OG Cheese GH Preroll">
+    <label>Selling Price (R) *</label>
+    <input type="number" class="input" id="ap-price" placeholder="0.00" inputmode="decimal">
+    <label>Cost Price (R)</label>
+    <input type="number" class="input" id="ap-cost" placeholder="0.00" inputmode="decimal">
+    <label>Category</label>
+    <select class="input" id="ap-cat" style="margin-top:4px">
+      ${cats.map(c=>`<option>${c}</option>`).join('')}
+    </select>
+    <label>Opening Stock (Shop Floor)</label>
+    <input type="number" class="input" id="ap-qty" placeholder="0" inputmode="numeric">
+    <label>Opening Stock (Warehouse)</label>
+    <input type="number" class="input" id="ap-qtywh" placeholder="0" inputmode="numeric">
+    <label>Reorder Alert (qty)</label>
+    <input type="number" class="input" id="ap-reorder" placeholder="0" inputmode="numeric">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
+      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewProduct(this)">Add Product</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(()=>document.getElementById('ap-name').focus(),100);
+}
+
+async function saveNewProduct(btn){
+  const name    = (document.getElementById('ap-name').value||'').trim();
+  const price   = parseFloat(document.getElementById('ap-price').value)||0;
+  const cost    = parseFloat(document.getElementById('ap-cost').value)||0;
+  const cat     = document.getElementById('ap-cat').value;
+  const qty     = parseInt(document.getElementById('ap-qty').value)||0;
+  const qtyWh   = parseInt(document.getElementById('ap-qtywh').value)||0;
+  const reorder = parseInt(document.getElementById('ap-reorder').value)||0;
+  if(!name){ showToast('Enter a product name','error'); return; }
+  if(!price){ showToast('Enter a selling price','error'); return; }
+  const prod = {
+    id:uid(), name, price, cost, qty, qtyWh,
+    category: cat.toUpperCase(),
+    active:true, reorderAt:reorder,
+    createdAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString()
+  };
+  try{
+    await db.ref('bizpos/products/'+prod.id).set(prod);
+    btn.closest('.modal-overlay').remove();
+    showToast(name+' added','success');
+  }catch(e){ showToast('Error saving product','error'); }
 }
 function openEditProduct(id){
   const p=STATE.products.find(x=>x.id===id);if(!p)return;
