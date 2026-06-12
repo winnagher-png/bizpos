@@ -2541,7 +2541,9 @@ function openPODetail(id){
     actionBtn = `<button class="btn btn-success btn-full" onclick="openGRV('${po.id}')">📦 Receive Stock into System</button>`;
   }
 
-  overlay.innerHTML = `<div class="modal" style="max-width:480px">
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.innerHTML = `<div class="modal" style="max-width:480px;max-height:90vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <div class="modal-title" style="margin:0">${po.poNumber}</div>
       <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;background:${po.status==='received'?'#DCFCE7':po.status==='paid'?'#FEF3C7':po.status==='ordered'?'#DBEAFE':'#F3F4F6'};color:${po.status==='received'?'#166534':po.status==='paid'?'#92400E':po.status==='ordered'?'#1E40AF':'#374151'};text-transform:capitalize">${po.status||'draft'}</span>
