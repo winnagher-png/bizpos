@@ -829,7 +829,7 @@ async function completeSale(){
     const total = cart.reduce((a,x)=>a+x.lineTotal,0);
     const paid  = splitLines.reduce((a,x)=>a+x.amount,0);
     if(splitLines.length===0){ showToast('Add at least one payment','error'); return; }
-    if(paid < total-0.01){ showToast('Payments don't cover the total','error'); return; }
+    if(paid < total-0.01){ showToast('Payments do not cover the total','error'); return; }
     selectedPayMethod = splitLines.map(l=>l.method).join('+');
   }
   if(!selectedPayMethod) return;
