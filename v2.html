@@ -255,13 +255,24 @@
 
   <div id="tab-more" class="tab">
     <div style="font-size:18px;font-weight:800;margin-bottom:16px">More</div>
-    <div class="list-item" onclick="switchTab('expenses')"><div style="font-size:24px">💸</div><div class="list-item-body"><div class="list-item-title">Expenses</div><div class="list-item-sub">Log and track expenses</div></div><div>›</div></div>
-    <div class="list-item"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Coming soon</div></div></div>
-    <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
+
+    <!-- Everyone gets stocktake -->
     <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
-    <div class="list-item" onclick="openNewRollTask()"><div style="font-size:24px">🚬</div><div class="list-item-body"><div class="list-item-title">Roll Joints</div><div class="list-item-sub">Create a rolling task for staff</div></div><div>›</div></div>
-    <div class="list-item" onclick="openWhatsAppExport()"><div style="font-size:24px">📱</div><div class="list-item-body"><div class="list-item-title">WhatsApp Broadcast</div><div class="list-item-sub">Export opted-in member contacts</div></div><div>›</div></div>
-    <div class="list-item" onclick="switchTab('staff')"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Clock in/out & shift management</div></div><div>›</div></div>
+
+    <!-- Managers & supervisors only -->
+    <div id="more-mgr-items" style="display:none">
+      <div class="list-item" onclick="switchTab('expenses')"><div style="font-size:24px">💸</div><div class="list-item-body"><div class="list-item-title">Expenses</div><div class="list-item-sub">Log and track expenses</div></div><div>›</div></div>
+      <div class="list-item" onclick="switchTab('members')"><div style="font-size:24px">👥</div><div class="list-item-body"><div class="list-item-title">Members</div><div class="list-item-sub">Member loyalty & profiles</div></div><div>›</div></div>
+      <div class="list-item" onclick="switchTab('po')"><div style="font-size:24px">📦</div><div class="list-item-body"><div class="list-item-title">Purchase Orders</div><div class="list-item-sub">Order & receive stock</div></div><div>›</div></div>
+      <div class="list-item" onclick="switchTab('staff')"><div style="font-size:24px">👤</div><div class="list-item-body"><div class="list-item-title">Staff</div><div class="list-item-sub">Clock in/out & shift management</div></div><div>›</div></div>
+    </div>
+
+    <!-- Managers only -->
+    <div id="more-manager-items" style="display:none">
+      <div class="list-item" onclick="openNewRollTask()"><div style="font-size:24px">🚬</div><div class="list-item-body"><div class="list-item-title">Roll Joints</div><div class="list-item-sub">Create a rolling task for staff</div></div><div>›</div></div>
+      <div class="list-item" onclick="openWhatsAppExport()"><div style="font-size:24px">📱</div><div class="list-item-body"><div class="list-item-title">WhatsApp Broadcast</div><div class="list-item-sub">Export opted-in member contacts</div></div><div>›</div></div>
+    </div>
+
     <div style="margin-top:24px">
       <button onclick="lockApp()" class="btn btn-secondary btn-full">🔒 Lock / Switch User</button>
     </div>
@@ -564,6 +575,11 @@ function applyRolePermissions(role){
   const isManager    = role === 'manager';
   const isSupervisor = role === 'supervisor';
   const isCashier    = role === 'cashier';
+  // More tab items by role
+  const mgrItems = document.getElementById('more-mgr-items');
+  const mgrOnlyItems = document.getElementById('more-manager-items');
+  if(mgrItems) mgrItems.style.display = (isManager||isSupervisor) ? '' : 'none';
+  if(mgrOnlyItems) mgrOnlyItems.style.display = isManager ? '' : 'none';
 
   // Everyone gets POS
   // Cashiers + supervisors get cashup (limited)
@@ -580,8 +596,8 @@ function applyRolePermissions(role){
   if(navReports) navReports.style.display = isManager ? '' : 'none';
   // Stock — everyone can view (cashiers read-only, no editing)
   if(navStock)   navStock.style.display = '';
-  // More (expenses, POs, members, staff) — managers only
-  if(navMore)    navMore.style.display = isManager ? '' : 'none';
+  // More tab — everyone gets it (cashiers see stocktake only, managers see everything)
+  if(navMore)    navMore.style.display = '';
 }
 function lockApp(){
   currentUser=null; cart=[]; selectedPayMethod=null;
