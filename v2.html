@@ -473,6 +473,9 @@ function showClockInPrompt(staff){
   if(liveStaff.clockedIn) return; // already clocked in
   const todayShift = liveStaff.todayShift;
   if(todayShift && todayShift.date === new Date().toISOString().slice(0,10)) return; // already worked today
+  // Don't show if we already showed it this session
+  if(window._clockInShownFor === staff.id) return;
+  window._clockInShownFor = staff.id;
 
   const now = new Date().toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
   const isCashPaid = staff.role==='cashier'; // cashiers paid from till, managers/supervisors via EFT
@@ -601,6 +604,7 @@ function applyRolePermissions(role){
 }
 function lockApp(){
   currentUser=null; cart=[]; selectedPayMethod=null;
+  window._clockInShownFor = null;
   ['top-bar','main','bottom-nav'].forEach(id=>document.getElementById(id).classList.add('hidden'));
   document.getElementById('pin-screen').classList.remove('hidden');
   document.getElementById('pin-input').value='';
