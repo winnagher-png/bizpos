@@ -1,46 +1,57 @@
-// BizPos Service Worker
-// Caches the app shell for offline use — data always comes from Firebase
+// BizPOS Service Worker — Jack & Jill's Adventure Club
+// Version is updated on every deploy to force refresh
 
-const CACHE = 'bizpos-v1';
-const SHELL = ['/bizpos/', '/bizpos/index.html'];
+const VERSION = 'bizpos-v2-20260612134012';
+const CACHE = 'bizpos-' + VERSION;
 
-self.addEventListener('install', function(e) {
+// On install — cache the app shell
+self.addEventListener('install', e => {
+  self.skipWaiting(); // activate immediately
   e.waitUntil(
-    caches.open(CACHE).then(function(cache) {
-      return cache.addAll(SHELL);
-    })
+    caches.open(CACHE).then(cache => {
+      return cache.addAll(['/', '/index.html']);
+    }).catch(() => {}) // don't fail install if cache fails
   );
-  self.skipWaiting();
 });
 
-self.addEventListener('activate', function(e) {
+// On activate — delete old caches
+self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(function(keys) {
-      return Promise.all(keys.filter(function(k){ return k !== CACHE; }).map(function(k){ return caches.delete(k); }));
-    })
+    caches.keys().then(keys =>
+      Promise.all(
+        keys.filter(k => k !== CACHE).map(k => caches.delete(k))
+      )
+    ).then(() => self.clients.claim()) // take control immediately
   );
-  self.clients.claim();
 });
 
-self.addEventListener('fetch', function(e) {
-  // Firebase requests — always go to network
-  if (e.request.url.includes('firebaseio.com') || 
-      e.request.url.includes('firebase') ||
-      e.request.url.includes('googleapis')) {
-    return;
-  }
-  
-  // App shell — cache first, network fallback
+// On fetch — network first, fall back to cache
+// This means updates always come through when online
+self.addEventListener('fetch', e => {
+  // Only handle GET requests for our own origin
+  if (e.request.method !== 'GET') return;
+  if (!e.request.url.startsWith(self.location.origin)) return;
+
   e.respondWith(
-    caches.match(e.request).then(function(cached) {
-      var networkFetch = fetch(e.request).then(function(response) {
+    fetch(e.request)
+      .then(response => {
+        // Cache a copy of the fresh response
         if (response.ok) {
-          var clone = response.clone();
-          caches.open(CACHE).then(function(cache) { cache.put(e.request, clone); });
+          const clone = response.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, clone));
         }
         return response;
-      });
-      return cached || networkFetch;
-    })
+      })
+      .catch(() => {
+        // Offline — serve from cache
+        return caches.match(e.request).then(cached => {
+          return cached || caches.match('/index.html');
+        });
+      })
   );
+});
+
+// Listen for SKIP_WAITING message from the page
+self.addEventListener('message', e => {
+  if (e.data === 'SKIP_WAITING') self.skipWaiting();
 });
