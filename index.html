@@ -2471,7 +2471,7 @@ async function savePO(status){
     : currentPOLines.reduce((a,l) => a+(l.amount||0), 0);
   const pos = STATE.purchaseOrders||[];
   const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const supplierSlug = (supplierName||'UNKNOWN').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,10);
+  const supplierSlug = (supplier||'UNKNOWN').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,10);
   const poNum = 'PO-'+dateStr+'-'+supplierSlug;
   const po = {
     id: uid(),
