@@ -4178,7 +4178,8 @@ function openEditProductFull(id){
   overlay.className = 'modal-overlay';
   overlay.style.alignItems = 'flex-start';
   overlay.style.paddingTop = '16px';
-  const cats = ['Flower','Prerolls','Edibles','Vapes','Concentrates','Accessories','Clothing','Other'];
+  const cats = ['GH FLOWER','GD FLOWER','ID FLOWER','OD FLOWER','GH PREROLLS','GD PREROLLS','ID PREROLLS','OD PREROLLS','LIFTED EDIBLES','GOBLIN TREATZ EDIBLES','GOBLIN TREATZ','NATURES TREATZ EDIBLES','ZG EDIBLES','GREENT GIANT EDIBLES','SGB EDIBLES','EDIBLES','OILS & CONCENTRATES','VAPES AND ACCESSORIES','SMOKING PARAPHENALIA','MERCH','MISC','UNCATEGORISED'];
+  const pCat = (p.category||'UNCATEGORISED').toUpperCase();
   overlay.innerHTML = `<div class="modal" style="max-width:400px">
     <div class="modal-title">Edit Product</div>
     <label>Name</label>
@@ -4189,17 +4190,15 @@ function openEditProductFull(id){
     <input type="number" class="input" id="ep-cost" value="${p.cost||0}" step="0.01" inputmode="decimal">
     <label>Category</label>
     <select class="input" id="ep-cat" style="margin-top:4px">
-      ${cats.map(c=>`<option${p.category===c?' selected':''}>${c}</option>`).join('')}
-      <option${!cats.includes(p.category)?' selected':''}>${p.category||'Other'}</option>
+      ${cats.map(c=>`<option${pCat===c?' selected':''}>${c}</option>`).join('')}
+      ${!cats.includes(pCat)?`<option selected>${pCat}</option>`:''}
     </select>
     <label>Reorder Alert (qty)</label>
     <input type="number" class="input" id="ep-reorder" value="${p.reorderAt||5}" inputmode="numeric">
-    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-top:12px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:8px">Current Stock</div>
-      <div class="totals-row"><span style="font-size:13px">🏪 Shop Floor</span><span style="font-weight:700">${p.qty||0}</span></div>
-      <div class="totals-row"><span style="font-size:13px">🏭 Warehouse</span><span style="font-weight:700">${p.qtyWh||0}</span></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Use Transfer or Write-Off to adjust quantities</div>
-    </div>
+    <label>Stock — Shop Floor</label>
+    <input type="number" class="input" id="ep-qty" value="${p.qty||0}" inputmode="numeric">
+    <label>Stock — Warehouse</label>
+    <input type="number" class="input" id="ep-qtywh" value="${p.qtyWh||0}" inputmode="numeric">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
       <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
       <button class="btn btn-primary" onclick="saveEditProduct('${p.id}',this)">Save</button>
@@ -4220,11 +4219,13 @@ async function saveEditProduct(id, btn){
   const cat     = document.getElementById('ep-cat').value;
   const reorder = parseInt(document.getElementById('ep-reorder').value)||5;
   if(!name){ showToast('Enter product name','error'); return; }
+  const qty    = parseInt(document.getElementById('ep-qty').value)||0;
+  const qtyWh  = parseInt(document.getElementById('ep-qtywh').value)||0;
   try{
-    await db.ref('bizpos/products/'+id).update({name,price,cost,category:cat,reorderAt:reorder,updatedAt:new Date().toISOString()});
+    await db.ref('bizpos/products/'+id).update({name,price,cost,category:cat.toUpperCase(),reorderAt:reorder,qty,qtyWh,updatedAt:new Date().toISOString()});
     btn.closest('.modal-overlay').remove();
     showToast('Product updated','success');
-  }catch(e){ showToast('Error','error'); }
+  }catch(e){ showToast('Error saving: '+e.message,'error'); }
 }
 
 async function archiveProduct(id, btn){
