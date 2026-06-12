@@ -3125,11 +3125,12 @@ function renderActiveStocktake(){
           : hasCounted ? '<span style="color:#16A34A;font-weight:600">✓ Counted</span>' : 'Enter count'
         }</div>
       </div>
-      <input type="number" inputmode="numeric"
+      <input type="tel"
         id="st-count-${p.id}"
         value="${countedVal}"
         placeholder="—"
         oninput="updateSTCount('${p.id}',this.value)"
+        onclick="this.select()"
         style="width:64px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:18px;font-weight:800;text-align:center;background:var(--bg)">
     </div>`;
   }
