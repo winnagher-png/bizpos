@@ -2825,25 +2825,40 @@ async function addNewSupplier(name){
 }
 
 function filterPOProductDrop(lineIdx, val){
-  const dd = document.getElementById('po-prod-drop-'+lineIdx);
-  if(!dd) return;
+  // Remove any existing global dropdown
+  const existing = document.getElementById('po-global-drop');
+  if(existing) existing.remove();
+
+  const input = document.getElementById('po-line-prod-'+lineIdx);
+  if(!input) return;
+
   const q = (val||'').toLowerCase().trim();
   const matches = STATE.products.filter(p =>
     p.active !== false && (!q || p.name.toLowerCase().includes(q))
-  ).slice(0,10);
-  const exact = STATE.products.find(p => p.name.toLowerCase() === val.toLowerCase());
+  ).slice(0,12);
+  const exact = STATE.products.find(p => p.name.toLowerCase() === (val||'').toLowerCase());
+
   const items = matches.map(p =>
-    `<div onclick="selectPOProduct(${lineIdx},'${p.name}',${p.cost||p.price||0})" style="padding:8px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)">
-      <span style="font-weight:600">${p.name}</span>
-      <span style="color:var(--text3);font-size:11px"> · ${p.qty||0} in stock · cost ${fmt(p.cost||0)}</span>
+    `<div onmousedown="event.preventDefault();selectPOProduct(${lineIdx},'${p.name.replace(/'/g,"\'")}',${p.cost||p.price||0})" style="padding:10px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);background:var(--bg2)">
+      <div style="font-weight:600">${p.name}</div>
+      <div style="color:var(--text3);font-size:11px">${p.qty||0} in stock · cost ${fmt(p.cost||0)}</div>
     </div>`
   );
-  if(!exact && val){
-    items.push(`<div onclick="selectPOProduct(${lineIdx},'${val}',0)" style="padding:8px 10px;cursor:pointer;font-size:12px;color:var(--accent);font-weight:700">+ New product: "${val}"</div>`);
+  if(!exact && val && val.length>1){
+    items.push(`<div onmousedown="event.preventDefault();selectPOProduct(${lineIdx},'${val.replace(/'/g,"\'")}',0)" style="padding:10px 12px;cursor:pointer;font-size:13px;color:var(--accent);font-weight:700;background:var(--bg2)">+ Add as new: "${val}"</div>`);
   }
-  if(!items.length){ dd.style.display='none'; return; }
+  if(!items.length) return;
+
+  // Create a fixed-position dropdown attached to body
+  const rect = input.getBoundingClientRect();
+  const dd = document.createElement('div');
+  dd.id = 'po-global-drop';
+  dd.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.bottom+2}px;width:${rect.width}px;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;z-index:99999;max-height:220px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.2)`;
   dd.innerHTML = items.join('');
-  dd.style.display = 'block';
+  document.body.appendChild(dd);
+
+  // Close on blur
+  input.addEventListener('blur', ()=>{ setTimeout(()=>{ const d=document.getElementById('po-global-drop'); if(d)d.remove(); },200); }, {once:true});
 }
 
 function selectPOProduct(lineIdx, name, cost){
@@ -2851,9 +2866,8 @@ function selectPOProduct(lineIdx, name, cost){
   currentPOLines[lineIdx].unitCost = cost;
   const inp = document.getElementById('po-line-prod-'+lineIdx);
   if(inp) inp.value = name;
-  const dd = document.getElementById('po-prod-drop-'+lineIdx);
-  if(dd) dd.style.display = 'none';
-  // Update cost field
+  const dd = document.getElementById('po-global-drop');
+  if(dd) dd.remove();
   renderPOLines();
   updatePOTotal();
 }
