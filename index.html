@@ -3073,56 +3073,96 @@ function renderActiveStocktake(){
   const el = document.getElementById('stocktake-content');
   if(!el || !stocktakeSession) return;
   const loc = stocktakeSession.location;
-  const prods = STATE.products.filter(p => p.active!==false).sort((a,b) => a.name.localeCompare(b.name));
-  const counted = Object.keys(stocktakeSession.counts).length;
+  const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+  const allProds = STATE.products.filter(p => p.active!==false);
+  const totalCounted = Object.keys(stocktakeSession.counts).length;
+
+  // Category order matches POS
+  const CAT_ORDER = ['OD FLOWER','GH FLOWER','GD FLOWER','ID FLOWER','OD PREROLLS','GH PREROLLS','GD PREROLLS','ID PREROLLS','LIFTED EDIBLES','GOBLIN TREATZ EDIBLES','GOBLIN TREATZ','NATURES TREATZ EDIBLES','ZG EDIBLES','GREENT GIANT EDIBLES','SGB EDIBLES','EDIBLES','OILS & CONCENTRATES','VAPES AND ACCESSORIES','SMOKING PARAPHENALIA','MERCH','MISC','UNCATEGORISED'];
+
+  // Group products by category
+  const grouped = {};
+  allProds.forEach(p => {
+    const cat = (p.category||'UNCATEGORISED').toUpperCase();
+    if(!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(p);
+  });
+
+  // Sort each category alphabetically
+  Object.values(grouped).forEach(arr => arr.sort((a,b)=>a.name.localeCompare(b.name)));
+
+  // Build category sections in order, then any uncategorised at end
+  const orderedCats = CAT_ORDER.filter(c => grouped[c] && grouped[c].length);
+  const extraCats = Object.keys(grouped).filter(c => !CAT_ORDER.includes(c) && grouped[c].length);
+
+  function renderProduct(p){
+    const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+    const countedVal = stocktakeSession.counts[p.id] !== undefined ? stocktakeSession.counts[p.id] : '';
+    const hasCounted = stocktakeSession.counts[p.id] !== undefined;
+    const diff = hasCounted ? (Number(stocktakeSession.counts[p.id]) - expected) : null;
+    const diffColor = diff===null?'var(--text3)':diff>0?'#16A34A':diff<0?'var(--red)':'#16A34A';
+    return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-left:3px solid var(--accent);':''}">
+      <div class="list-item-body">
+        <div style="font-size:13px;font-weight:600">${p.name}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${isManager
+          ? `Expected: ${expected}${diff!==null?' · <span style="color:'+diffColor+';font-weight:700">'+(diff>0?'+':'')+(diff===0?'✓':diff)+'</span>':''}`
+          : hasCounted ? '<span style="color:#16A34A;font-weight:600">✓ Counted</span>' : 'Enter count'
+        }</div>
+      </div>
+      <input type="number" inputmode="numeric"
+        id="st-count-${p.id}"
+        value="${countedVal}"
+        placeholder="—"
+        oninput="updateSTCount('${p.id}',this.value)"
+        style="width:64px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:18px;font-weight:800;text-align:center;background:var(--bg)">
+    </div>`;
+  }
+
+  function renderCategorySection(cat){
+    const prods = grouped[cat]||[];
+    if(!prods.length) return '';
+    const cc = CAT_COLORS[cat]||{bg:'#666',text:'#fff'};
+    const catCounted = prods.filter(p=>stocktakeSession.counts[p.id]!==undefined).length;
+    return `<div style="margin-bottom:16px">
+      <div style="background:${cc.bg};color:${cc.text};border-radius:10px 10px 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;font-weight:800">${cat}</span>
+        <span style="font-size:11px;opacity:.85">${catCounted}/${prods.length}</span>
+      </div>
+      <div style="border:1.5px solid ${cc.bg};border-top:none;border-radius:0 0 10px 10px;overflow:hidden">
+        ${prods.map(renderProduct).join('')}
+      </div>
+    </div>`;
+  }
 
   el.innerHTML = `
     <div style="background:var(--accent);color:#fff;border-radius:14px;padding:14px;margin-bottom:12px">
       <div style="font-size:13px;font-weight:700;opacity:.8">${loc==='warehouse'?'🏭 Warehouse Stocktake':'🏪 Shop Floor Stocktake'}</div>
-      <div style="font-size:22px;font-weight:800;margin-top:2px">${counted} / ${prods.length} counted</div>
+      <div style="font-size:22px;font-weight:800;margin-top:2px">${totalCounted} / ${allProds.length} counted</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-      <button class="btn btn-secondary" onclick="cancelStocktake()" style="font-size:12px">Cancel</button>
+      <button class="btn btn-secondary" onclick="cancelStocktake()" style="font-size:12px">✕ Cancel</button>
       <button class="btn btn-success" onclick="commitStocktake()" style="font-size:12px">✓ Commit Count</button>
     </div>
-    <div class="search-wrap">
-      <span class="search-icon">🔍</span>
-      <input type="text" class="input" placeholder="Search products..." oninput="filterSTProducts(this.value)" style="padding-left:36px">
-    </div>
     <div id="st-product-list">
-      ${prods.map(p => {
-        const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
-        const counted  = stocktakeSession.counts[p.id] !== undefined ? stocktakeSession.counts[p.id] : '';
-        const hasCounted = stocktakeSession.counts[p.id] !== undefined;
-        const diff = hasCounted ? (stocktakeSession.counts[p.id] - expected) : null;
-        const diffColor = diff===null?'var(--text3)':diff>0?'var(--green)':diff<0?'var(--red)':'var(--green)';
-        const isManager = currentUser && currentUser.role === 'manager';
-        return `<div class="list-item" style="padding:10px 12px;${hasCounted?'border-color:var(--accent)':''}">
-          <div class="list-item-body">
-            <div class="list-item-title" style="font-size:13px">${p.name}</div>
-            <div style="font-size:11px;color:var(--text3)">${isManager
-              ? `Expected: ${expected} ${diff!==null?`· <span style="color:${diffColor};font-weight:700">${diff>0?'+':''}${diff===0?'✓':diff}</span>`:''}`
-              : hasCounted ? `<span style="color:var(--text3)">Counted ✓</span>` : 'Enter physical count'
-            }</div>
-          </div>
-          <input type="number" inputmode="numeric"
-            id="st-count-${p.id}"
-            value="${counted}"
-            placeholder="Count"
-            oninput="updateSTCount('${p.id}',this.value)"
-            style="width:70px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:16px;font-weight:700;text-align:center;background:var(--bg)">
-        </div>`;
-      }).join('')}
+      ${[...orderedCats,...extraCats].map(renderCategorySection).join('')}
     </div>`;
 }
 
 function filterSTProducts(val){
   const el = document.getElementById('st-product-list');
   if(!el || !stocktakeSession) return;
-  const loc = stocktakeSession.location;
-  let prods = STATE.products.filter(p => p.active!==false);
-  if(val) prods = prods.filter(p => p.name.toLowerCase().includes(val.toLowerCase()));
-  prods.sort((a,b) => a.name.localeCompare(b.name));
+  // Just re-render — the search box is separate in new layout
+  renderActiveStocktake();
+  // If there's a filter value, highlight matches
+  if(val){
+    const q = val.toLowerCase();
+    el.querySelectorAll('.list-item').forEach(item=>{
+      const name = (item.querySelector('[style*="font-size:13px"]')||{}).textContent||'';
+      item.style.display = name.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+  // suppress old code below
+  if(false){
   el.innerHTML = prods.map(p => {
     const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
     const countedVal = stocktakeSession.counts[p.id] !== undefined ? stocktakeSession.counts[p.id] : '';
@@ -3146,6 +3186,7 @@ function filterSTProducts(val){
         style="width:70px;padding:8px;border:1.5px solid ${hasCounted?'var(--accent)':'var(--border)'};border-radius:8px;font-size:16px;font-weight:700;text-align:center;background:var(--bg)">
     </div>`;
   }).join('');
+  } // end if(false)
 }
 
 function updateSTCount(productId, val){
