@@ -293,9 +293,34 @@
   <button class="nav-btn" id="nav-reports" onclick="switchTab('reports')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>Reports
   </button>
+  <button class="nav-btn" id="nav-sales" onclick="switchTab('sales')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>Sales
+  </button>
   <button class="nav-btn" id="nav-more" onclick="switchTab('more')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>More
   </button>
+</div>
+
+<div id="tab-sales" class="tab">
+  <div style="font-size:18px;font-weight:800;margin-bottom:12px">Sales</div>
+
+  <!-- Date picker + summary -->
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+    <input type="date" id="sales-date-filter" class="input" style="flex:1;font-size:13px" oninput="renderSalesTab()">
+    <button class="btn btn-secondary" style="font-size:12px;padding:8px 12px;flex-shrink:0" onclick="document.getElementById('sales-date-filter').value=localDateStr();renderSalesTab()">Today</button>
+  </div>
+
+  <!-- Totals summary bar -->
+  <div id="sales-summary-bar" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px"></div>
+
+  <!-- Search -->
+  <div class="search-wrap" style="margin-bottom:12px">
+    <span class="search-icon">🔍</span>
+    <input type="text" class="input" id="sales-search" placeholder="Search member, staff, product..." oninput="renderSalesTab()" style="padding-left:36px">
+  </div>
+
+  <!-- Sales list -->
+  <div id="sales-tab-list"></div>
 </div>
 
 <div id="toast"></div>
@@ -645,6 +670,7 @@ function switchTab(tab){
   if(tab==='cashup')renderCashup();
   if(tab==='reports')renderReports();
   if(tab==='stock')renderStockList();
+  if(tab==='sales')renderSalesTab();
   if(tab==='expenses'){renderExpenses();renderPettyCash();}
   if(tab==='po')renderPOList();
   if(tab==='stocktake')renderStocktakeContent();
@@ -2835,6 +2861,85 @@ function printPO(poId){
   win.document.write(html);
   win.document.close();
   setTimeout(()=>win.print(), 500);
+}
+
+// ── SALES TAB ──
+function renderSalesTab(){
+  const dateEl = document.getElementById('sales-date-filter');
+  const searchEl = document.getElementById('sales-search');
+  const listEl = document.getElementById('sales-tab-list');
+  const summaryEl = document.getElementById('sales-summary-bar');
+  if(!listEl) return;
+
+  // Default to today
+  if(!dateEl.value) dateEl.value = localDateStr();
+  const date = dateEl.value;
+  const q = (searchEl ? searchEl.value : '').toLowerCase().trim();
+
+  // Filter sales
+  let sales = STATE.sales.filter(s => localDateStr(s.date) === date);
+  if(q){
+    sales = sales.filter(s =>
+      (s.memberName||'').toLowerCase().includes(q) ||
+      (s.staffName||'').toLowerCase().includes(q) ||
+      (s.items||[]).some(i=>(i.name||'').toLowerCase().includes(q)) ||
+      (s.paymentMethod||'').toLowerCase().includes(q)
+    );
+  }
+  sales = [...sales].sort((a,b)=>b.date>a.date?1:-1);
+
+  // Summary bar
+  const active = sales.filter(s=>!s.voided);
+  const total = active.reduce((a,s)=>a+s.total,0);
+  const cash  = active.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
+  const card  = active.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
+  const eft   = active.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
+  const other = total - cash - card - eft;
+  summaryEl.innerHTML = `
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">TOTAL</div>
+      <div style="font-size:16px;font-weight:800;color:var(--accent)">${fmt(total)}</div>
+      <div style="font-size:10px;color:var(--text3)">${active.length} sales</div>
+    </div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">💵 CASH</div>
+      <div style="font-size:15px;font-weight:700">${fmt(cash)}</div>
+    </div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">💳 CARD</div>
+      <div style="font-size:15px;font-weight:700">${fmt(card)}</div>
+    </div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:11px;color:var(--text3)">🏦 EFT</div>
+      <div style="font-size:15px;font-weight:700">${fmt(eft)}</div>
+    </div>`;
+
+  // Sales list
+  if(!sales.length){
+    listEl.innerHTML='<div style="text-align:center;color:var(--text3);padding:40px">No sales for this date</div>';
+    return;
+  }
+
+  const payIcons = {cash:'💵',card:'💳',eft:'🏦',store_credit:'⭐'};
+  listEl.innerHTML = sales.map(s=>{
+    const voided = s.voided;
+    const time = new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit',hour12:false});
+    const method = s.paymentMethod||'';
+    const icon = payIcons[method] || (method.includes('+') ? '✂️' : '💰');
+    const itemsSummary = (s.items||[]).slice(0,3).map(i=>i.name+(i.qty>1?' ×'+i.qty:'')).join(', ')
+      + ((s.items||[]).length>3 ? ' +'+((s.items||[]).length-3)+' more' : '');
+    return `<div class="list-item" style="cursor:pointer;${voided?'opacity:.5;':''}" onclick="openSaleDetail('${s.id}')">
+      <div style="font-size:20px">${icon}</div>
+      <div class="list-item-body">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:13px;font-weight:700">${s.staffName||'—'}${s.memberName?' · '+s.memberName:''}</div>
+          <div style="font-weight:800;font-size:15px;color:${voided?'var(--red)':'var(--text)'};${voided?'text-decoration:line-through':''}">${fmt(s.total)}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${time} · ${method}${voided?' · <span style="color:var(--red);font-weight:700">VOIDED</span>':''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${itemsSummary}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── STOCKTAKE ──
