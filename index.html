@@ -3010,6 +3010,62 @@ function renderSalesTab(){
   }).join('');
 }
 
+function renderStocktakeInline(){
+  const el = document.getElementById('stocktake-inline');
+  if(!el) return;
+
+  const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+
+  if(stocktakeSession){
+    // Active session — render count UI
+    el.innerHTML = '<div id="stocktake-content"></div>';
+    renderActiveStocktake();
+    return;
+  }
+
+  // No active session — show start button + history
+  const reports = [...(STATE.stocktakeReports||[])].sort((a,b)=>b.committedAt>a.committedAt?1:-1);
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700">Stocktake</div>
+      ${isManager ? '<button class="btn btn-primary" onclick="startStocktakeInline()" style="padding:8px 14px;font-size:12px">+ New Count</button>' : ''}
+    </div>
+    ${!reports.length
+      ? '<div style="color:var(--text3);text-align:center;padding:40px">No stocktakes yet</div>'
+      : reports.map(r=>{
+          const gains  = (r.variances||[]).filter(v=>v.diff>0).length;
+          const losses = (r.variances||[]).filter(v=>v.diff<0).length;
+          return `<div class="list-item" onclick="openStocktakeReport('${r.id}')">
+            <div style="font-size:24px">📋</div>
+            <div class="list-item-body">
+              <div class="list-item-title">${(r.location||'shop').toUpperCase()} Count</div>
+              <div class="list-item-sub">${(r.committedAt||'').slice(0,10)} · +${gains} gains · -${losses} losses</div>
+            </div><div>›</div>
+          </div>`;
+        }).join('')
+    }`;
+}
+
+function startStocktakeInline(){
+  // Show location picker
+  const el = document.getElementById('stocktake-inline');
+  if(!el) return;
+  el.innerHTML = `
+    <div style="font-size:16px;font-weight:700;margin-bottom:16px">Choose Location</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="beginStocktakeInline('shop')" style="padding:20px;font-size:14px">🏪<br>Shop Floor</button>
+      <button class="btn btn-secondary" onclick="beginStocktakeInline('warehouse')" style="padding:20px;font-size:14px">🏭<br>Warehouse</button>
+    </div>
+    <button class="btn btn-secondary btn-full" onclick="renderStocktakeInline()">Cancel</button>`;
+}
+
+function beginStocktakeInline(loc){
+  stocktakeSession = { location: loc, counts: {}, startedAt: new Date().toISOString() };
+  const el = document.getElementById('stocktake-inline');
+  if(el) el.innerHTML = '<div id="stocktake-content"></div>';
+  renderActiveStocktake();
+}
+
 // ── STOCKTAKE ──
 let stocktakeSession = null; // {location, counts: {productId: qty}}
 
@@ -3094,6 +3150,7 @@ function beginStocktake(overlay){
 function renderActiveStocktake(){
   const el = document.getElementById('stocktake-content');
   if(!el || !stocktakeSession) return;
+  // Ensure commit/cancel buttons use inline versions if inside stock tab
   const loc = stocktakeSession.location;
   const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
   const allProds = STATE.products.filter(p => p.active!==false);
@@ -3163,7 +3220,7 @@ function renderActiveStocktake(){
       <div style="font-size:22px;font-weight:800;margin-top:2px">${totalCounted} / ${allProds.length} counted</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
-      <button class="btn btn-secondary" onclick="cancelStocktake()" style="font-size:12px">✕ Cancel</button>
+      <button class="btn btn-secondary" onclick="cancelStocktakeInline()" style="font-size:12px">✕ Cancel</button>
       <button class="btn btn-success" onclick="commitStocktake()" style="font-size:12px">✓ Commit Count</button>
     </div>
     <div id="st-product-list">
@@ -3247,8 +3304,11 @@ function updateSTCount(productId, val){
 function cancelStocktake(){
   if(!confirm('Cancel this stocktake? Your counts will be lost.')) return;
   stocktakeSession = null;
-  document.getElementById('btn-start-stocktake').style.display = '';
-  renderStocktakeContent();
+  renderStocktakeInline();
+}
+
+function cancelStocktakeInline(){
+  cancelStocktake();
 }
 
 async function commitStocktake(){
@@ -4403,13 +4463,8 @@ function setStockView(view, btn){
     if(searchBox) searchBox.style.display='none';
     if(addBtn) addBtn.style.display='none';
     if(summaryEl) summaryEl.innerHTML='';
-    if(listEl) listEl.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-size:16px;font-weight:800">Stocktake</div>
-        <button class="btn btn-primary" onclick="startStocktake()" id="btn-start-stocktake" style="padding:8px 14px;font-size:12px">+ New Count</button>
-      </div>
-      <div id="stocktake-content"></div>`;
-    renderStocktakeContent();
+    if(listEl) listEl.innerHTML = '<div id="stocktake-inline"></div>';
+    renderStocktakeInline();
     return;
   }
 
