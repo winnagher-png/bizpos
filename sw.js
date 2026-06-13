@@ -1,7 +1,7 @@
 // BizPOS Service Worker — Jack & Jill's Adventure Club
 // Version is updated on every deploy to force refresh
 
-const VERSION = 'bizpos-v2-20260612134012';
+const VERSION = 'bizpos-v2-20260613145456';
 const CACHE = 'bizpos-' + VERSION;
 
 // On install — cache the app shell
