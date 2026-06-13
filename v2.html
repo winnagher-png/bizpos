@@ -168,7 +168,7 @@
   <div id="tab-stock" class="tab">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <div style="font-size:18px;font-weight:800">Inventory</div>
-      <button class="btn btn-primary" onclick="openAddProduct()" style="padding:8px 14px;font-size:12px">+ Add</button>
+      <button class="btn btn-primary" id="btn-add-product" onclick="openAddProduct()" style="padding:8px 14px;font-size:12px">+ Add</button>
     </div>
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px">
       <button class="btn btn-primary" id="st-filter-all" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('all',this)">All Stock</button>
@@ -176,6 +176,7 @@
       <button class="btn btn-secondary" id="st-filter-out" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('out',this)">🔴 Out of Stock</button>
       <button class="btn btn-secondary" id="st-filter-wh" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('warehouse',this)">🏭 Warehouse</button>
       <button class="btn btn-secondary" id="st-filter-transfer" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('transfer',this)">🔄 Transfer</button>
+      <button class="btn btn-secondary" id="st-filter-stocktake" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('stocktake',this)">📋 Stocktake</button>
     </div>
     <div class="search-wrap">
       <span class="search-icon">🔍</span>
@@ -264,7 +265,7 @@
     <div style="font-size:18px;font-weight:800;margin-bottom:16px">More</div>
 
     <!-- Everyone gets stocktake -->
-    <div class="list-item" onclick="switchTab('stocktake')"><div style="font-size:24px">📋</div><div class="list-item-body"><div class="list-item-title">Stocktake</div><div class="list-item-sub">Count and verify stock</div></div><div>›</div></div>
+
 
     <!-- Managers & supervisors only -->
     <div id="more-mgr-items" style="display:none">
@@ -4392,6 +4393,28 @@ function setStockView(view, btn){
   if(btn) btn.className='btn btn-primary';
   document.getElementById('stock-search').value='';
   stockSearchVal='';
+
+  const addBtn = document.getElementById('btn-add-product');
+  const searchBox = document.getElementById('stock-search');
+  const summaryEl = document.getElementById('stock-summary');
+  const listEl = document.getElementById('stock-list');
+
+  if(view==='stocktake'){
+    if(searchBox) searchBox.style.display='none';
+    if(addBtn) addBtn.style.display='none';
+    if(summaryEl) summaryEl.innerHTML='';
+    if(listEl) listEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-size:16px;font-weight:800">Stocktake</div>
+        <button class="btn btn-primary" onclick="startStocktake()" id="btn-start-stocktake" style="padding:8px 14px;font-size:12px">+ New Count</button>
+      </div>
+      <div id="stocktake-content"></div>`;
+    renderStocktakeContent();
+    return;
+  }
+
+  if(searchBox) searchBox.style.display='';
+  if(addBtn) addBtn.style.display='';
   renderStockList();
 }
 
