@@ -3063,7 +3063,8 @@ function beginStocktakeInline(loc){
   stocktakeSession = { location: loc, counts: {}, startedAt: new Date().toISOString() };
   const el = document.getElementById('stocktake-inline');
   if(el) el.innerHTML = '<div id="stocktake-content"></div>';
-  renderActiveStocktake();
+  // Small delay to ensure DOM is ready
+  setTimeout(renderActiveStocktake, 50);
 }
 
 // ── STOCKTAKE ──
@@ -3148,9 +3149,13 @@ function beginStocktake(overlay){
 }
 
 function renderActiveStocktake(){
-  const el = document.getElementById('stocktake-content');
+  let el = document.getElementById('stocktake-content');
+  // If not found, create it inside stocktake-inline
+  if(!el){
+    const parent = document.getElementById('stocktake-inline');
+    if(parent){ parent.innerHTML = '<div id="stocktake-content"></div>'; el = document.getElementById('stocktake-content'); }
+  }
   if(!el || !stocktakeSession) return;
-  // Ensure commit/cancel buttons use inline versions if inside stock tab
   const loc = stocktakeSession.location;
   const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
   const allProds = STATE.products.filter(p => p.active!==false);
