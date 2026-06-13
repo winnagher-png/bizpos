@@ -3156,6 +3156,8 @@ function renderActiveStocktake(){
     if(parent){ parent.innerHTML = '<div id="stocktake-content"></div>'; el = document.getElementById('stocktake-content'); }
   }
   if(!el || !stocktakeSession) return;
+  // Local color map in case global COLORS not yet available
+  const COLORS = (typeof COLORS !== 'undefined') ? COLORS : {"OD FLOWER":{"bg":"#4A5E4A","text":"#fff"},"GH FLOWER":{"bg":"#1A5C1A","text":"#fff"},"GD FLOWER":{"bg":"#2E7D32","text":"#fff"},"ID FLOWER":{"bg":"#76C442","text":"#fff"},"OD PREROLLS":{"bg":"#4A0A0A","text":"#fff"},"GH PREROLLS":{"bg":"#8B0000","text":"#fff"},"GD PREROLLS":{"bg":"#E53935","text":"#fff"},"ID PREROLLS":{"bg":"#FF5722","text":"#fff"},"LIFTED EDIBLES":{"bg":"#DC143C","text":"#fff"},"GOBLIN TREATZ EDIBLES":{"bg":"#FFB6C1","text":"#1A1A1A"},"GOBLIN TREATZ":{"bg":"#FFB6C1","text":"#1A1A1A"},"NATURES TREATZ EDIBLES":{"bg":"#C8A2C8","text":"#1A1A1A"},"ZG EDIBLES":{"bg":"#4B0082","text":"#fff"},"GREENT GIANT EDIBLES":{"bg":"#FF69B4","text":"#fff"},"SGB EDIBLES":{"bg":"#DA70D6","text":"#fff"},"FRIDGE EDIBLES":{"bg":"#0288D1","text":"#fff"},"EDIBLES":{"bg":"#C71585","text":"#fff"},"OILS & CONCENTRATES":{"bg":"#F9A825","text":"#1A1A1A"},"VAPES AND ACCESSORIES":{"bg":"#1565C0","text":"#fff"},"SODAZE":{"bg":"#00897B","text":"#fff"},"SMOKING PARAPHENALIA":{"bg":"#A1887F","text":"#fff"},"MERCH":{"bg":"#C8860A","text":"#fff"},"MISC":{"bg":"#4E342E","text":"#fff"},"UNCATEGORISED":{"bg":"#4E342E","text":"#fff"}};
   const loc = stocktakeSession.location;
   const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
   const allProds = STATE.products.filter(p => p.active!==false);
@@ -3206,7 +3208,7 @@ function renderActiveStocktake(){
   function renderCategorySection(cat){
     const prods = grouped[cat]||[];
     if(!prods.length) return '';
-    const cc = CAT_COLORS[cat]||{bg:'#666',text:'#fff'};
+    const cc = COLORS[cat]||{bg:'#666',text:'#fff'};
     const catCounted = prods.filter(p=>stocktakeSession.counts[p.id]!==undefined).length;
     return `<div style="margin-bottom:16px">
       <div style="background:${cc.bg};color:${cc.text};border-radius:10px 10px 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
