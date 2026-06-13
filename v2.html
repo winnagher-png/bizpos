@@ -3016,6 +3016,11 @@ function renderStocktakeContent(){
   const el = document.getElementById('stocktake-content');
   if(!el) return;
 
+  // Always show/hide button based on role and session state
+  const btn = document.getElementById('btn-start-stocktake');
+  const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+  if(btn) btn.style.display = (isManager && !stocktakeSession) ? '' : 'none';
+
   if(stocktakeSession){
     renderActiveStocktake();
     return;
@@ -4798,7 +4803,7 @@ function showReorderAlert(lowItems){
 
   const banner = document.createElement('div');
   banner.id = 'reorder-banner';
-  banner.style.cssText = 'position:fixed;bottom:72px;left:0;right:0;z-index:498;padding:0 12px';
+  banner.style.cssText = 'position:fixed;bottom:90px;left:0;right:0;z-index:498;padding:0 12px';
   banner.innerHTML = `<div style="background:linear-gradient(135deg,#FF4500,#FF8C00);color:#fff;border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 0 20px rgba(255,69,0,.4),0 4px 12px rgba(0,0,0,.3);cursor:pointer;animation:pulse-glow 2s infinite" onclick="openReorderDetail()">
     <span style="font-size:24px">⚠️</span>
     <div style="flex:1">
