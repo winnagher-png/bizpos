@@ -142,7 +142,7 @@
       <span class="search-icon">🔍</span>
       <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
     </div>
-    <div id="pos-category-tabs" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action:pan-x;overscroll-behavior-x:contain"></div>
+    <div id="pos-category-tabs" style="display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding-bottom:8px;margin-bottom:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action:pan-x;overscroll-behavior-x:contain;cursor:grab;user-select:none"></div>
     <div id="product-grid"></div>
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
       <div style="flex:1;position:relative">
@@ -154,7 +154,7 @@
     <div id="pos-clockout-bar" style="display:none;margin-bottom:8px"></div>
     <div class="card">
       <div class="section-title">Current Sale</div>
-      <div id="pos-items"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
+      <div id="pos-items" style="max-height:35vh;overflow-y:auto;"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
       <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
         <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total</span><span class="totals-total" id="pos-total">R0.00</span></div>
       </div>
