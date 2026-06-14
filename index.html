@@ -940,7 +940,7 @@ async function completeSale(){
   if(!selectedPayMethod) return;
   const total=cart.reduce((a,x)=>a+x.lineTotal,0);
   const saleId=uid();
-  const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,splitPayments:splitMode?[...splitLines]:null,voided:false};
+  const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,splitPayments:splitMode?[...splitLines]:null,voided:false,memberId:selectedMember?selectedMember.id:null,memberName:selectedMember?selectedMember.name:null};
   const updates={};
   updates['bizpos/sales/'+saleId]=sale;
   cart.forEach(item=>{
@@ -950,11 +950,7 @@ async function completeSale(){
       updates['bizpos/products/'+item.productId+'/updatedAt']=new Date().toISOString();
     }
   });
-  // Add member info to sale
-  if(selectedMember){
-    updates['bizpos/sales/'+saleId+'/memberId'] = selectedMember.id;
-    updates['bizpos/sales/'+saleId+'/memberName'] = selectedMember.name;
-  }
+  // Member info already merged into sale object above
 
   try{
     await db.ref().update(updates);
