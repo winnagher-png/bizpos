@@ -758,6 +758,19 @@ function setPosCategory(cat){
   renderProductGrid(document.getElementById('pos-search').value||'');
 }
 
+// Add drag-to-scroll on category tabs for PC
+(function(){
+  const el = document.getElementById('pos-category-tabs');
+  if(!el) return;
+  let isDown=false, startX, scrollLeft;
+  el.addEventListener('mousedown', e=>{isDown=true;el.classList.add('active');startX=e.pageX-el.offsetLeft;scrollLeft=el.scrollLeft;});
+  el.addEventListener('mouseleave',()=>{isDown=false;});
+  el.addEventListener('mouseup',()=>{isDown=false;});
+  el.addEventListener('mousemove',e=>{if(!isDown)return;e.preventDefault();const x=e.pageX-el.offsetLeft;const walk=(x-startX)*2;el.scrollLeft=scrollLeft-walk;});
+  // Also scroll with mouse wheel
+  el.addEventListener('wheel',e=>{e.preventDefault();el.scrollLeft+=e.deltaY;},{passive:false});
+})();
+
 function renderProductGrid(filter){
   const grid=document.getElementById('product-grid');
   if(!grid)return;
