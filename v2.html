@@ -137,42 +137,30 @@
 
 <div id="main" class="hidden">
 
-  <div id="tab-pos" class="tab active" style="display:flex;flex-direction:column;height:calc(100vh - 130px);padding-bottom:0;overflow:hidden">
-    <!-- Search + Categories -->
-    <div style="flex-shrink:0">
-      <div class="search-wrap">
-        <span class="search-icon">🔍</span>
-        <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
-      </div>
-      <div id="pos-category-tabs" style="display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding-bottom:8px;margin-bottom:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action:pan-x;overscroll-behavior-x:contain"></div>
+  <div id="tab-pos" class="tab active" style="padding-bottom:80px">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="input" id="pos-search" placeholder="Search products..." oninput="filterProducts(this.value)" style="padding-left:36px">
     </div>
-    <!-- Two column layout -->
-    <div style="display:grid;grid-template-columns:1fr 320px;gap:12px;flex:1;min-height:0;overflow:hidden">
-      <!-- Left: Product grid -->
-      <div style="overflow-y:auto;overflow-x:hidden;padding-right:4px">
-        <div id="product-grid"></div>
+    <div id="pos-category-tabs" style="display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding-bottom:8px;margin-bottom:8px;-webkit-overflow-scrolling:touch;scrollbar-width:none;touch-action:pan-x;overscroll-behavior-x:contain"></div>
+    <div id="product-grid"></div>
+    <div id="pos-clockout-bar" style="display:none;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+      <div style="flex:1;position:relative">
+        <input type="text" class="input" id="pos-member-search" placeholder="👤 Search member..." oninput="searchPosMember(this.value)" autocomplete="off" style="font-size:13px">
+        <div id="pos-member-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;z-index:999;max-height:160px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
       </div>
-      <!-- Right: Cart always visible -->
-      <div style="display:flex;flex-direction:column;overflow:hidden">
-        <div id="pos-clockout-bar" style="display:none;margin-bottom:8px;flex-shrink:0"></div>
-        <div style="flex-shrink:0;margin-bottom:8px">
-          <div style="position:relative">
-            <input type="text" class="input" id="pos-member-search" placeholder="👤 Search member..." oninput="searchPosMember(this.value)" autocomplete="off" style="font-size:13px">
-            <div id="pos-member-drop" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;z-index:999;max-height:160px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
-          </div>
-          <div id="pos-member-badge" style="display:none;background:#FEF3C7;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;color:#92400E;white-space:nowrap;cursor:pointer;margin-top:6px" onclick="clearPosMember()">✕</div>
-        </div>
-        <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden">
-          <div class="section-title" style="flex-shrink:0">Current Sale</div>
-          <div id="pos-items" style="flex:1;overflow-y:auto;min-height:0"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
-          <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;flex-shrink:0">
-            <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total</span><span class="totals-total" id="pos-total">R0.00</span></div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;flex-shrink:0">
-            <button class="btn btn-secondary" onclick="clearSale()">Clear</button>
-            <button class="btn btn-primary" onclick="openPayment()">Charge →</button>
-          </div>
-        </div>
+      <div id="pos-member-badge" style="display:none;background:#FEF3C7;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;color:#92400E;white-space:nowrap;cursor:pointer" onclick="clearPosMember()">✕</div>
+    </div>
+    <div class="card">
+      <div class="section-title">Current Sale</div>
+      <div id="pos-items"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
+      <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
+        <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total</span><span class="totals-total" id="pos-total">R0.00</span></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+        <button class="btn btn-secondary" onclick="clearSale()">Clear</button>
+        <button class="btn btn-primary" onclick="openPayment()">Charge →</button>
       </div>
     </div>
   </div>
