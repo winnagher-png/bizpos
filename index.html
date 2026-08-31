@@ -152,7 +152,7 @@
       <div id="pos-member-badge" style="display:none;background:#FEF3C7;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;color:#92400E;white-space:nowrap;cursor:pointer" onclick="clearPosMember()">✕</div>
     </div>
     <div class="card">
-      <div class="section-title">Current Sale</div>
+      <div class="section-title">Current Exchange</div>
       <div id="pos-items"><div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Tap a product to add</div></div>
       <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
         <div class="totals-row"><span style="color:var(--text3);font-size:13px">Total</span><span class="totals-total" id="pos-total">R0.00</span></div>
@@ -301,7 +301,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>Reports
   </button>
   <button class="nav-btn" id="nav-sales" onclick="switchTab('sales')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>Sales
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>Exchanges
   </button>
   <button class="nav-btn" id="nav-more" onclick="switchTab('more')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>More
@@ -309,7 +309,7 @@
 </div>
 
 <div id="tab-sales" class="tab">
-  <div style="font-size:18px;font-weight:800;margin-bottom:12px">Sales</div>
+  <div style="font-size:18px;font-weight:800;margin-bottom:12px">Token Exchanges</div>
 
   <!-- Date picker + summary -->
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
@@ -334,7 +334,7 @@
 
 <div id="modal-payment" class="modal-overlay hidden">
   <div class="modal">
-    <div class="modal-title">Complete Sale</div>
+    <div class="modal-title">Complete Token Exchange</div>
     <div id="payment-total" style="font-size:28px;font-weight:800;color:var(--accent);text-align:center;margin-bottom:20px"></div>
     <div class="section-title">Payment Method</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
@@ -342,6 +342,7 @@
       <button class="btn btn-secondary" id="pay-card" onclick="selectPayment('card')">💳 Card</button>
       <button class="btn btn-secondary" id="pay-eft" onclick="selectPayment('eft')">🏦 EFT</button>
       <button class="btn btn-secondary" id="pay-credit" onclick="selectPayment('store_credit')">⭐ Credit</button>
+      <button class="btn btn-secondary" id="pay-points" onclick="selectPayment('points')" style="grid-column:1/-1">🎯 Points</button>
     </div>
     <button class="btn btn-secondary btn-full" id="pay-split" onclick="toggleSplitPayment()" style="margin-bottom:12px;font-size:13px">✂️ Split Payment</button>
     <div id="cash-tendered-wrap" style="display:none">
@@ -357,6 +358,7 @@
           <option value="card">💳 Card</option>
           <option value="eft">🏦 EFT</option>
           <option value="store_credit">⭐ Credit</option>
+          <option value="points">🎯 Points</option>
         </select>
         <input type="number" id="split-amount" class="input" placeholder="Amount" inputmode="decimal" style="font-size:12px">
         <button onclick="addSplitLine()" class="btn btn-primary" style="font-size:12px;padding:8px 12px">+</button>
@@ -462,8 +464,60 @@ function showToast(msg,type,ms){
 function openModal(id){document.getElementById(id).classList.remove('hidden')}
 function closeModal(id){document.getElementById(id).classList.add('hidden')}
 function localDateStr(d){
+  // Always compute in Africa/Johannesburg (UTC+2, no DST) regardless of device/server timezone
   const dt=d?new Date(d):new Date();
-  return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  const trueUtcMs = dt.getTime() + dt.getTimezoneOffset()*60000;
+  const sast = new Date(trueUtcMs + 2*3600000);
+  return sast.getFullYear()+'-'+String(sast.getMonth()+1).padStart(2,'0')+'-'+String(sast.getDate()).padStart(2,'0');
+}
+
+// ── TOKEN ACCOUNTING HELPERS ──
+// 1 token = R1. Points/credit rate: 1 point per R10 exchanged, 1000 points auto-converts to R50 credit (20 pts = R1).
+const POINTS_PER_RAND = 0.1;      // 1 point per R10
+const POINTS_PER_CREDIT_RAND = 20; // 20 points redeemable per R1 credit
+const POINTS_MILESTONE = 1000;
+const CREDIT_PER_MILESTONE = 50;
+
+async function getNextReceiptNumber(dateStr){
+  const dateKey = dateStr.replace(/-/g,'');
+  const res = await db.ref('bizpos/receiptCounters/'+dateStr).transaction(cur=>(cur||0)+1);
+  const seq = res.snapshot.val();
+  return 'JJ-'+dateKey+'-'+String(seq).padStart(3,'0');
+}
+
+function txIncrement(ref, delta){
+  return ref.transaction(cur=>Math.round(((cur||0)+delta)*100)/100);
+}
+
+async function updateDailySummary(dateStr, d){
+  const base = 'bizpos/dailySummaries/'+dateStr+'/';
+  const ops = [];
+  if(d.totalTokens)      ops.push(txIncrement(db.ref(base+'totalTokens'), d.totalTokens));
+  if(d.transactionCount) ops.push(txIncrement(db.ref(base+'transactionCount'), d.transactionCount));
+  if(d.costOfGoods)      ops.push(txIncrement(db.ref(base+'costOfGoods'), d.costOfGoods));
+  if(d.grossMargin)      ops.push(txIncrement(db.ref(base+'grossMargin'), d.grossMargin));
+  if(d.cash)             ops.push(txIncrement(db.ref(base+'paymentSplit/cash'), d.cash));
+  if(d.card)             ops.push(txIncrement(db.ref(base+'paymentSplit/card'), d.card));
+  if(d.eft)              ops.push(txIncrement(db.ref(base+'paymentSplit/eft'), d.eft));
+  if(d.storeCredit)      ops.push(txIncrement(db.ref(base+'paymentSplit/storeCredit'), d.storeCredit));
+  if(d.points)           ops.push(txIncrement(db.ref(base+'paymentSplit/points'), d.points));
+  if(d.newMembers)       ops.push(txIncrement(db.ref(base+'newMemberCount'), d.newMembers));
+  if(d.returningMembers) ops.push(txIncrement(db.ref(base+'returningMemberCount'), d.returningMembers));
+  await Promise.all(ops);
+  await db.ref(base+'date').set(dateStr);
+}
+
+async function addMemberPointsHistory(memberId, type, points, note){
+  const id = uid();
+  await db.ref('bizpos/members/'+memberId+'/pointsHistory/'+id).set({
+    id, type, points, note: note||'', date: new Date().toISOString(), localDate: localDateStr()
+  });
+}
+async function addMemberCreditHistory(memberId, type, amount, source, balanceAfter, note){
+  const id = uid();
+  await db.ref('bizpos/members/'+memberId+'/creditHistory/'+id).set({
+    id, type, amount, source: source||'', balance_after: balanceAfter, note: note||'', date: new Date().toISOString(), localDate: localDateStr()
+  });
 }
 
 // ── FIREBASE LISTENERS ──
@@ -830,6 +884,13 @@ function renderCart(){
   tot.textContent=fmt(cart.reduce((a,x)=>a+x.lineTotal,0));
 }
 function clearSale(){cart=[];selectedPayMethod=null;renderCart();document.getElementById('pos-search').value='';renderProductGrid();}
+const PAY_METHOD_BTN_ID = {cash:'cash', card:'card', eft:'eft', store_credit:'credit', points:'points'};
+function resetPayButtons(){
+  Object.values(PAY_METHOD_BTN_ID).forEach(id=>{
+    const el = document.getElementById('pay-'+id);
+    if(el) el.className='btn btn-secondary';
+  });
+}
 function openPayment(){
   if(!cart.length){showToast('Add items first','error');return;}
   document.getElementById('payment-total').textContent=fmt(cart.reduce((a,x)=>a+x.lineTotal,0));
@@ -837,19 +898,28 @@ function openPayment(){
   document.getElementById('change-display').textContent='';
   document.getElementById('cash-tendered').value='';
   selectedPayMethod=null;
-  ['cash','card','eft','credit'].forEach(m=>{document.getElementById('pay-'+m).className='btn btn-secondary';});
+  resetPayButtons();
   document.getElementById('btn-complete-sale').disabled=true;
   openModal('modal-payment');
 }
 function selectPayment(method){
+  const total = cart.reduce((a,x)=>a+x.lineTotal,0);
   // Check store credit availability
   if(method==='store_credit'){
     if(!selectedMember){ showToast('Select a member first to use store credit','error'); return; }
-    if((selectedMember.storeCredit||0)<=0){ showToast(selectedMember.name+' has no store credit','error'); return; }
+    if((selectedMember.storeCredit||0) < total - 0.01){ showToast(selectedMember.name+' has insufficient store credit','error'); return; }
+  }
+  // Check points availability
+  if(method==='points'){
+    if(!selectedMember){ showToast('Select a member first to redeem points','error'); return; }
+    const needed = Math.round(total*POINTS_PER_CREDIT_RAND);
+    if((selectedMember.points||0) < needed){ showToast(selectedMember.name+' has insufficient points','error'); return; }
   }
   selectedPayMethod=method;
-  ['cash','card','eft','credit'].forEach(m=>{document.getElementById('pay-'+m).className='btn btn-secondary';});
-  document.getElementById('pay-'+method).className='btn btn-primary';
+  resetPayButtons();
+  const btnId = PAY_METHOD_BTN_ID[method]||method;
+  const btn = document.getElementById('pay-'+btnId);
+  if(btn) btn.className='btn btn-primary';
   document.getElementById('cash-tendered-wrap').style.display=method==='cash'?'block':'none';
   document.getElementById('btn-complete-sale').disabled=method==='cash';
 }
@@ -860,10 +930,7 @@ function toggleSplitPayment(){
   splitMode = !splitMode;
   splitLines = [];
   selectedPayMethod = null;
-  ['cash','card','eft','credit'].forEach(m=>{
-    const el = document.getElementById('pay-'+m);
-    if(el) el.className='btn btn-secondary';
-  });
+  resetPayButtons();
   const splitBtn = document.getElementById('pay-split');
   if(splitBtn) splitBtn.className = 'btn btn-'+(splitMode?'primary':'secondary')+' btn-full';
   document.getElementById('cash-tendered-wrap').style.display='none';
@@ -890,7 +957,7 @@ function renderSplitLines(){
   const total = cart.reduce((a,x)=>a+x.lineTotal,0);
   const paid  = splitLines.reduce((a,x)=>a+x.amount,0);
   const remaining = Math.max(0, parseFloat((total-paid).toFixed(2)));
-  const icons = {cash:'💵',card:'💳',eft:'🏦',store_credit:'⭐'};
+  const icons = {cash:'💵',card:'💳',eft:'🏦',store_credit:'⭐',points:'🎯'};
   document.getElementById('split-pay-lines').innerHTML = splitLines.map((l,i)=>`
     <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="flex:1;font-size:13px">${icons[l.method]||''} ${l.method}</span>
@@ -917,53 +984,140 @@ function calcChange(){
 }
 async function completeSale(){
   if(!cart.length) return;
+  const total = Math.round(cart.reduce((a,x)=>a+x.lineTotal,0)*100)/100;
+
+  let cashReceived=0, changeGiven=0, pointsRedeemed=0;
+  const breakdown={cash:0,card:0,eft:0,storeCredit:0,points:0};
+
   if(splitMode){
-    const total = cart.reduce((a,x)=>a+x.lineTotal,0);
-    const paid  = splitLines.reduce((a,x)=>a+x.amount,0);
     if(splitLines.length===0){ showToast('Add at least one payment','error'); return; }
-    if(paid < total-0.01){ showToast('Payments do not cover the total','error'); return; }
+    const cashLines = splitLines.filter(l=>l.method==='cash');
+    const nonCashLines = splitLines.filter(l=>l.method!=='cash');
+    const cashPaid = Math.round(cashLines.reduce((a,l)=>a+l.amount,0)*100)/100;
+    const nonCashPaid = Math.round(nonCashLines.reduce((a,l)=>a+l.amount,0)*100)/100;
+    if(nonCashPaid > total+0.01){ showToast('Non-cash payments exceed the total','error'); return; }
+    const requiredCash = Math.max(0, Math.round((total-nonCashPaid)*100)/100);
+    if(cashPaid < requiredCash-0.01){ showToast('Payments do not cover the total','error'); return; }
+    cashReceived = cashPaid;
+    changeGiven = Math.round((cashPaid-requiredCash)*100)/100;
+    breakdown.cash = requiredCash;
+    nonCashLines.forEach(l=>{
+      const key = l.method==='store_credit'?'storeCredit':l.method;
+      if(breakdown[key]===undefined){ showToast('Unknown payment method: '+l.method,'error'); return; }
+      breakdown[key]=Math.round((breakdown[key]+l.amount)*100)/100;
+    });
+    pointsRedeemed = Math.round(breakdown.points*POINTS_PER_CREDIT_RAND);
     selectedPayMethod = splitLines.map(l=>l.method).join('+');
-  }
-  if(!selectedPayMethod) return;
-  const total=cart.reduce((a,x)=>a+x.lineTotal,0);
-  const saleId=uid();
-  const sale={id:saleId,date:new Date().toISOString(),staff:currentUser.id,staffName:currentUser.name,items:cart.map(x=>({...x})),total,paymentMethod:selectedPayMethod,cashTendered:selectedPayMethod==='cash'?(parseFloat(document.getElementById('cash-tendered').value)||0):0,splitPayments:splitMode?[...splitLines]:null,voided:false,memberId:selectedMember?selectedMember.id:null,memberName:selectedMember?selectedMember.name:null};
-  const updates={};
-  updates['bizpos/sales/'+saleId]=sale;
-  cart.forEach(item=>{
-    const p=STATE.products.find(x=>x.id===item.productId);
-    if(p){
-      updates['bizpos/products/'+item.productId+'/qty']=Math.max(0,(p.qty||0)-item.qty);
-      updates['bizpos/products/'+item.productId+'/updatedAt']=new Date().toISOString();
+  } else {
+    if(!selectedPayMethod) return;
+    if(selectedPayMethod==='cash'){
+      cashReceived = parseFloat(document.getElementById('cash-tendered').value)||0;
+      if(cashReceived < total-0.01){ showToast('Insufficient cash tendered','error'); return; }
+      changeGiven = Math.round((cashReceived-total)*100)/100;
+      breakdown.cash = total;
+    } else if(selectedPayMethod==='store_credit'){
+      breakdown.storeCredit = total;
+    } else if(selectedPayMethod==='points'){
+      breakdown.points = total;
+      pointsRedeemed = Math.round(total*POINTS_PER_CREDIT_RAND);
+    } else if(breakdown[selectedPayMethod]!==undefined){
+      breakdown[selectedPayMethod] = total;
+    } else {
+      showToast('Select a payment method','error'); return;
     }
+  }
+
+  // Re-validate store credit / points balances against latest known state
+  if(breakdown.storeCredit>0){
+    if(!selectedMember){ showToast('Select a member to use store credit','error'); return; }
+    if((selectedMember.storeCredit||0) < breakdown.storeCredit-0.01){ showToast('Insufficient store credit','error'); return; }
+  }
+  if(breakdown.points>0){
+    if(!selectedMember){ showToast('Select a member to redeem points','error'); return; }
+    if((selectedMember.points||0) < pointsRedeemed){ showToast('Insufficient points','error'); return; }
+  }
+  const bdSum = Math.round((breakdown.cash+breakdown.card+breakdown.eft+breakdown.storeCredit+breakdown.points)*100)/100;
+  if(Math.abs(bdSum-total) > 0.02){ showToast('Payment breakdown does not match total tokens','error'); return; }
+
+  const saleId = uid();
+  const dateStr = localDateStr();
+  const items = cart.map(x=>{
+    const p = STATE.products.find(pp=>pp.id===x.productId);
+    const costPrice = p ? (p.cost||0) : 0;
+    return {...x, costPrice, lineCost: Math.round(costPrice*x.qty*100)/100};
   });
-  // Member info already merged into sale object above
+  const costOfGoods = Math.round(items.reduce((a,i)=>a+i.lineCost,0)*100)/100;
+  const grossMargin = Math.round((total-costOfGoods)*100)/100;
+  const isNewMember = selectedMember ? !((selectedMember.visitCount||0)>0) : false;
 
   try{
-    await db.ref().update(updates);
-    // Award loyalty points
+    const receiptNumber = await getNextReceiptNumber(dateStr);
+    const sale = {
+      id:saleId, saleType:'token_exchange', receiptNumber,
+      date:new Date().toISOString(), localDate:dateStr, timestamp:new Date().toISOString(),
+      staff:currentUser.id, staffName:currentUser.name, budtender:currentUser.name,
+      items, total, totalTokens:total, costOfGoods, grossMargin,
+      paymentMethod:selectedPayMethod, paymentBreakdown:breakdown,
+      cashReceived, changeGiven,
+      splitPayments:splitMode?[...splitLines]:null,
+      voided:false,
+      memberId:selectedMember?selectedMember.id:null, memberName:selectedMember?selectedMember.name:null,
+      isNewMember
+    };
+    await db.ref('bizpos/sales/'+saleId).set(sale);
+
+    // Stock — atomic per product so concurrent tills never clobber each other
+    await Promise.all(items.map(item=>
+      db.ref('bizpos/products/'+item.productId+'/qty').transaction(cur=>Math.max(0,(cur||0)-item.qty))
+    ));
+
+    let pointsEarned = 0;
     if(selectedMember){
-      const pts = Math.floor(total/100);
-      const pointsBefore = selectedMember.points||0;
-      const pointsAfter  = pointsBefore + pts;
-      if(pts>0){
-        await awardLoyaltyPoints(selectedMember.id, total);
-        showToast('Sale complete — '+fmt(total)+' · +'+pts+' pts for '+selectedMember.name,'success',4000);
-        // Check if crossed a 1000-point milestone
-        const milestonesBefore = Math.floor(pointsBefore/1000);
-        const milestonesAfter  = Math.floor(pointsAfter/1000);
-        if(milestonesAfter > milestonesBefore){
-          const creditEarned = (milestonesAfter - milestonesBefore) * 100;
-          setTimeout(()=>{
-            showMilestoneAlert(selectedMember.name, pointsAfter, creditEarned);
-          }, 1500);
-        }
-      } else {
-        showToast('Sale complete — '+fmt(total),'success');
+      if(breakdown.storeCredit>0){
+        const res = await db.ref('bizpos/members/'+selectedMember.id+'/storeCredit').transaction(cur=>Math.max(0,Math.round(((cur||0)-breakdown.storeCredit)*100)/100));
+        await addMemberCreditHistory(selectedMember.id,'spent',-breakdown.storeCredit,'token_exchange',res.snapshot.val(),receiptNumber);
       }
-    } else {
-      showToast('Sale complete — '+fmt(total),'success');
+      if(breakdown.points>0){
+        const ptRes = await db.ref('bizpos/members/'+selectedMember.id+'/points').transaction(cur=>Math.max(0,(cur||0)-pointsRedeemed));
+        await addMemberPointsHistory(selectedMember.id,'converted',-pointsRedeemed,'Redeemed at till — '+receiptNumber);
+        await addMemberCreditHistory(selectedMember.id,'spent',-breakdown.points,'points_redemption',ptRes.snapshot.val(),receiptNumber);
+      }
+      pointsEarned = Math.floor(total*POINTS_PER_RAND);
+      const memRes = await db.ref('bizpos/members/'+selectedMember.id).transaction(m=>{
+        if(!m) return m;
+        m.points = (m.points||0)+pointsEarned;
+        m.totalSpend = Math.round(((m.totalSpend||0)+total)*100)/100;
+        m.lifetimeTokens = m.totalSpend;
+        m.visitCount = (m.visitCount||0)+1;
+        m.updatedAt = new Date().toISOString();
+        return m;
+      });
+      if(pointsEarned>0) await addMemberPointsHistory(selectedMember.id,'earned',pointsEarned,'Token exchange — '+receiptNumber);
+
+      // Auto-convert every full 1000 points into R50 credit
+      const updatedMember = memRes.snapshot.val();
+      if(updatedMember){
+        const convertible = Math.floor((updatedMember.points||0)/POINTS_MILESTONE);
+        if(convertible>0){
+          const creditToAdd = convertible*CREDIT_PER_MILESTONE;
+          const ptRes2 = await db.ref('bizpos/members/'+selectedMember.id+'/points').transaction(cur=>(cur||0)-convertible*POINTS_MILESTONE);
+          const crRes  = await db.ref('bizpos/members/'+selectedMember.id+'/storeCredit').transaction(cur=>Math.round(((cur||0)+creditToAdd)*100)/100);
+          await addMemberPointsHistory(selectedMember.id,'converted',-(convertible*POINTS_MILESTONE),'Auto-converted to R'+creditToAdd+' credit');
+          await addMemberCreditHistory(selectedMember.id,'added',creditToAdd,'points_conversion',crRes.snapshot.val(),null);
+          const finalPoints = ptRes2.snapshot.val();
+          setTimeout(()=>{ showMilestoneAlert(selectedMember.name, finalPoints, creditToAdd); }, 1500);
+        }
+      }
     }
+
+    await updateDailySummary(dateStr, {
+      totalTokens: total, transactionCount: 1, costOfGoods, grossMargin,
+      cash:breakdown.cash, card:breakdown.card, eft:breakdown.eft,
+      storeCredit:breakdown.storeCredit, points:breakdown.points,
+      newMembers: isNewMember?1:0, returningMembers:(selectedMember&&!isNewMember)?1:0
+    });
+
+    showToast('Token exchange complete — '+fmt(total)+(selectedMember&&pointsEarned?' · +'+pointsEarned+' pts for '+selectedMember.name:''),'success',4000);
     clearPosMember();
     closeModal('modal-payment');
     clearSale();
@@ -1203,7 +1357,7 @@ function renderCashup(){
   el.innerHTML=`
     <div class="card">
       <div class="section-title">Today — ${today}</div>
-      <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;color:var(--accent)">${fmt(tot)}</span></div>
+      <div class="totals-row"><span style="font-weight:700">Total Tokens</span><span style="font-weight:800;color:var(--accent)">${fmt(tot)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">💵 Cash</span><span>${fmt(cash)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
@@ -1295,15 +1449,15 @@ function renderCashup(){
     </div>
 
     <div class="card">
-      <div class="section-title">Today's Sales (${ts.length})</div>
+      <div class="section-title">Today's Token Exchanges (${ts.length})</div>
       ${ts.length ? [...ts].reverse().map(s=>`
         <div class="totals-row" style="cursor:pointer;padding:8px 0;border-bottom:1px solid var(--border)" onclick="openSaleDetail('${s.id}')">
           <div>
-            <div style="font-size:13px;font-weight:600">${(s.items||[]).map(i=>i.name).join(', ').substring(0,40)||'Sale'}</div>
+            <div style="font-size:13px;font-weight:600">${(s.items||[]).map(i=>i.name).join(', ').substring(0,40)||'Token Exchange'}</div>
             <div style="font-size:11px;color:var(--text3)">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.staffName||'—'} · ${s.paymentMethod}${s.memberName?' · '+s.memberName:''}</div>
           </div>
           <span style="font-weight:700;color:${s.voided?'var(--red)':'#1A1A1A'};${s.voided?'text-decoration:line-through':''}">R${(s.total||0).toFixed(2)}</span>
-        </div>`).join('') : '<div style="color:var(--text3);font-size:12px;text-align:center;padding:12px">No sales today yet</div>'}
+        </div>`).join('') : '<div style="color:var(--text3);font-size:12px;text-align:center;padding:12px">No token exchanges today yet</div>'}
     </div>
 
     ${history.length?`<div class="card">
@@ -1311,7 +1465,7 @@ function renderCashup(){
       ${history.map(c=>`
         <div class="totals-row">
           <div><div style="font-size:13px;font-weight:700">${c.date?c.date.slice(0,10):''}</div><div style="font-size:11px;color:var(--text3)">${c.staffName||'—'}</div></div>
-          <div style="text-align:right"><div style="font-weight:700;color:var(--accent)">${fmt(c.toBank)} banked</div><div style="font-size:11px;color:var(--text3)">Sales: ${fmt(c.totalSales)}</div></div>
+          <div style="text-align:right"><div style="font-weight:700;color:var(--accent)">${fmt(c.toBank)} banked</div><div style="font-size:11px;color:var(--text3)">Tokens: ${fmt(c.totalSales)}</div></div>
         </div>`).join('<hr style="border:none;border-top:1px solid var(--border)">')}
     </div>`:''}`;
 }
@@ -1525,6 +1679,15 @@ function setReportPeriod(period, btn){
     const days = period==='week'?7:30;
     const sales=STATE.sales.filter(s=>!s.voided&&new Date(s.date)>=new Date(Date.now()-days*864e5));
     const tot=sales.reduce((a,s)=>a+s.total,0);
+    const cogs=sales.reduce((a,s)=>a+(s.costOfGoods||0),0);
+    const margin=sales.reduce((a,s)=>a+(s.grossMargin!=null?s.grossMargin:(s.total-(s.costOfGoods||0))),0);
+    const cash=sales.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.cash)||(s.paymentMethod==='cash'?s.total:0)),0);
+    const card=sales.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.card)||(s.paymentMethod==='card'?s.total:0)),0);
+    const eft=sales.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.eft)||(s.paymentMethod==='eft'?s.total:0)),0);
+    const credit=sales.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.storeCredit)||0),0);
+    const points=sales.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.points)||0),0);
+    const newMembers=sales.filter(s=>s.isNewMember).length;
+    const returningMembers=sales.filter(s=>s.memberId&&!s.isNewMember).length;
     // Group by day
     const byDay={};
     sales.forEach(s=>{
@@ -1541,16 +1704,27 @@ function setReportPeriod(period, btn){
     const topProds=Object.entries(prodTotals).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
     el.innerHTML = `
       <div class="card">
-        <div class="section-title">Last ${days} days</div>
-        <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;color:#1A1A1A">${fmt(tot)}</span></div>
+        <div class="section-title">Last ${days} days — Token Exchanges</div>
+        <div class="totals-row"><span style="font-weight:700">Total Tokens</span><span style="font-weight:800;color:#1A1A1A">${fmt(tot)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Cost of Goods</span><span>${fmt(cogs)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">Gross Margin</span><span style="font-weight:700;color:var(--green)">${fmt(margin)}</span></div>
         <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${sales.length}</span></div>
         <div class="totals-row"><span style="color:var(--text3)">Avg per day</span><span>${fmt(days_arr.length?tot/days_arr.length:0)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">New / Returning members</span><span>${newMembers} / ${returningMembers}</span></div>
+      </div>
+      <div class="card">
+        <div class="section-title">Payment Split</div>
+        <div class="totals-row"><span style="color:var(--text3)">💵 Cash</span><span>${fmt(cash)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">⭐ Store Credit</span><span>${fmt(credit)}</span></div>
+        <div class="totals-row"><span style="color:var(--text3)">🎯 Points</span><span>${fmt(points)}</span></div>
       </div>
       <div class="card">
         <div class="section-title">Daily Breakdown</div>
         ${days_arr.map(d=>`<div class="totals-row">
           <span style="font-size:12px">${d.date}</span>
-          <span style="font-size:12px;color:var(--text3)">${d.count} sales</span>
+          <span style="font-size:12px;color:var(--text3)">${d.count} exchanges</span>
           <span style="font-weight:700">${fmt(d.total)}</span>
         </div>`).join('')}
       </div>
@@ -1573,7 +1747,7 @@ function setReportPeriod(period, btn){
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div>
                 <div style="font-size:13px;font-weight:700">${c.date?c.date.slice(0,10):''}</div>
-                <div style="font-size:11px;color:var(--text3)">${c.staffName||'—'} · ${c.totalSales?fmt(c.totalSales)+' sales':''}</div>
+                <div style="font-size:11px;color:var(--text3)">${c.staffName||'—'} · ${c.totalSales?fmt(c.totalSales)+' tokens':''}</div>
               </div>
               <div style="text-align:right">
                 <div style="font-weight:800;color:#16A34A">${fmt(c.toBank||0)} banked</div>
@@ -1652,18 +1826,32 @@ function renderProductPerformanceReport(el){
 function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
   const allToday = STATE.sales.filter(s=>localDateStr(s.date)===today);
   const voids = allToday.filter(s=>s.voided);
+  const credit = ts.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.storeCredit)||0),0);
+  const points = ts.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.points)||0),0);
+  const cogs   = ts.reduce((a,s)=>a+(s.costOfGoods||0),0);
+  const margin = ts.reduce((a,s)=>a+(s.grossMargin!=null?s.grossMargin:(s.total-(s.costOfGoods||0))),0);
+  const newMembers = ts.filter(s=>s.isNewMember).length;
+  const returningMembers = ts.filter(s=>s.memberId&&!s.isNewMember).length;
   return `
     <div class="card">
-      <div class="section-title">Today — ${today}</div>
-      <div class="totals-row"><span style="font-weight:700">Total Sales</span><span style="font-weight:800;font-size:20px;color:#1A1A1A">${fmt(tot)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div class="section-title" style="margin:0">Today — ${today}</div>
+        <button onclick="printDailyTokenReport('${today}')" style="background:none;border:none;color:#2D9E35;font-size:11px;font-weight:700;cursor:pointer">🖨️ Print A4</button>
+      </div>
+      <div class="totals-row"><span style="font-weight:700">Total Tokens</span><span style="font-weight:800;font-size:20px;color:#1A1A1A">${fmt(tot)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">💵 Cash</span><span>${fmt(cash)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">💳 Card</span><span>${fmt(card)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">🏦 EFT</span><span>${fmt(eft)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">⭐ Store Credit</span><span>${fmt(credit)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">🎯 Points</span><span>${fmt(points)}</span></div>
+      <div class="totals-row"><span style="color:var(--text3)">Cost of Goods</span><span>${fmt(cogs)}</span></div>
+      <div class="totals-row"><span style="font-weight:700">Gross Margin</span><span style="font-weight:800;color:var(--green)">${fmt(margin)}</span></div>
       <div class="totals-row"><span style="color:var(--text3)">Transactions</span><span>${ts.length}</span></div>
-      ${voids.length?`<div class="totals-row"><span style="color:var(--red)">⚠️ Voided</span><span style="color:var(--red);font-weight:700">${voids.length} sales</span></div>`:''}
+      <div class="totals-row"><span style="color:var(--text3)">New / Returning members</span><span>${newMembers} / ${returningMembers}</span></div>
+      ${voids.length?`<div class="totals-row"><span style="color:var(--red)">⚠️ Voided</span><span style="color:var(--red);font-weight:700">${voids.length} exchanges</span></div>`:''}
     </div>
     ${topProds.length?`<div class="card">
-      <div class="section-title">Top Sellers Today</div>
+      <div class="section-title">Top 5 Products Today</div>
       ${topProds.map((p,i)=>`<div class="totals-row">
         <span style="font-size:13px">${i+1}. ${p[0]}</span>
         <span style="font-size:12px;color:var(--text3)">${p[1].qty} units</span>
@@ -1672,20 +1860,20 @@ function renderTodayReport(today,ts,tot,cash,card,eft,topProds){
     </div>`:''}
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <div class="section-title" style="margin:0">Recent Sales</div>
+        <div class="section-title" style="margin:0">Recent Token Exchanges</div>
         <button onclick="openSalesHistory()" style="background:none;border:none;color:#2D9E35;font-size:12px;font-weight:700;cursor:pointer">View All →</button>
       </div>
       ${[...ts].reverse().slice(0,10).map(s=>`
         <div class="totals-row" style="cursor:pointer" onclick="openSaleDetail('${s.id}')">
           <div>
-            <div style="font-size:12px;font-weight:600">${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}</div>
+            <div style="font-size:12px;font-weight:600">${s.receiptNumber||''} ${s.staffName||'—'} ${s.memberName?'· '+s.memberName:''}</div>
             <div style="font-size:11px;color:var(--text3)">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})} · ${s.paymentMethod}</div>
           </div>
           <span style="font-weight:700">${fmt(s.total)}</span>
         </div>`).join('')}
     </div>
     ${voids.length?`<div class="card" style="border-color:var(--red)">
-      <div class="section-title" style="color:var(--red)">⚠️ Voided Sales Today</div>
+      <div class="section-title" style="color:var(--red)">⚠️ Voided Token Exchanges Today</div>
       ${voids.map(s=>`<div class="totals-row">
         <div>
           <div style="font-size:12px;font-weight:600;color:var(--red)">${s.staffName||'—'}</div>
@@ -1704,7 +1892,7 @@ function openSalesHistory(){
   const sales = [...STATE.sales].sort((a,b)=>b.date>a.date?1:-1).slice(0,100);
   overlay.innerHTML = `<div class="modal" style="max-width:480px;max-height:92vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div class="modal-title" style="margin:0">Sales History</div>
+      <div class="modal-title" style="margin:0">Token Exchange History</div>
       <button onclick="this.closest('.modal-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">×</button>
     </div>
     ${sales.map(s=>`
@@ -1728,7 +1916,7 @@ function openSaleDetail(saleId){
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal" style="max-width:400px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div class="modal-title" style="margin:0">Sale Detail</div>
+      <div class="modal-title" style="margin:0">Token Exchange Detail</div>
       ${s.voided?'<span style="background:#FEE2E2;color:#991B1B;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px">VOIDED</span>':''}
     </div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
@@ -1752,7 +1940,7 @@ function openSaleDetail(saleId){
       <strong>Reason:</strong> ${s.voidReason||'No reason given'}
     </div>`:''}
     ${!s.voided?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-      <button class="btn btn-secondary" onclick="openEditSale('${s.id}',this)">✏️ Edit Sale</button>
+      <button class="btn btn-secondary" onclick="openEditSale('${s.id}',this)">✏️ Edit Exchange</button>
       ${isManager?`<button class="btn btn-danger" onclick="openVoidSale('${s.id}',this)">🚫 Void</button>`:'<div></div>'}
     </div>`:''}
     <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
@@ -1769,7 +1957,7 @@ function openEditSale(saleId, btn){
   const members = STATE.members.slice().sort((a,b)=>a.name.localeCompare(b.name));
   const staff = STAFF_PINS;
   overlay.innerHTML = `<div class="modal" style="max-width:400px">
-    <div class="modal-title">Edit Sale</div>
+    <div class="modal-title">Edit Token Exchange</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:16px">
       ⚡ Fix mistakes — change payment method, staff or member. Cannot change items or total.
     </div>
@@ -1819,8 +2007,8 @@ async function commitEditSale(saleId, btn){
   try{
     await db.ref().update(updates);
     btn.closest('.modal-overlay').remove();
-    showToast('Sale updated','success');
-  }catch(e){ showToast('Error updating sale','error'); }
+    showToast('Token exchange updated','success');
+  }catch(e){ showToast('Error updating token exchange','error'); }
 }
 
 function openVoidSale(saleId, btn){
@@ -1829,7 +2017,7 @@ function openVoidSale(saleId, btn){
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal" style="max-width:360px">
-    <div class="modal-title">Void Sale</div>
+    <div class="modal-title">Void Token Exchange</div>
     <div style="background:#FEE2E2;border-radius:10px;padding:12px;margin-bottom:16px;font-size:13px;color:#991B1B">
       ⚠️ This will void ${fmt(s.total)} and restore stock. This cannot be undone.
     </div>
@@ -1837,8 +2025,8 @@ function openVoidSale(saleId, btn){
     <select class="input" id="void-reason" style="margin-top:4px;margin-bottom:4px">
       <option value="">Select reason...</option>
       <option>Wrong item scanned</option>
-      <option>Customer changed mind</option>
-      <option>Duplicate sale</option>
+      <option>Member changed mind</option>
+      <option>Duplicate exchange</option>
       <option>Pricing error</option>
       <option>Test transaction</option>
       <option>Other</option>
@@ -1860,29 +2048,64 @@ async function commitVoidSale(saleId, btn){
   if(!reason){ showToast('Select a reason','error'); return; }
 
   const s = STATE.sales.find(x=>x.id===saleId);
-  if(!s || s.voided){ showToast('Sale already voided','error'); return; }
-
-  const updates = {};
-  updates['bizpos/sales/'+saleId+'/voided']      = true;
-  updates['bizpos/sales/'+saleId+'/voidedAt']    = new Date().toISOString();
-  updates['bizpos/sales/'+saleId+'/voidedBy']    = currentUser.name;
-  updates['bizpos/sales/'+saleId+'/voidReason']  = reason + (notes?' — '+notes:'');
-  updates['bizpos/sales/'+saleId+'/voidedOnDate']= localDateStr();
-
-  // Restore stock
-  (s.items||[]).forEach(item=>{
-    const p = STATE.products.find(x=>x.id===item.productId);
-    if(p){
-      updates['bizpos/products/'+item.productId+'/qty'] = (p.qty||0) + (item.qty||1);
-      updates['bizpos/products/'+item.productId+'/updatedAt'] = new Date().toISOString();
-    }
-  });
+  if(!s || s.voided){ showToast('Token exchange already voided','error'); return; }
 
   try{
+    // Restore stock — atomic per product
+    await Promise.all((s.items||[]).map(item=>
+      db.ref('bizpos/products/'+item.productId+'/qty').transaction(cur=>(cur||0)+(item.qty||1))
+    ));
+
+    // Reverse member effects using exactly what was recorded on the sale.
+    // Older pre-token-accounting sales have no paymentBreakdown/costOfGoods — their
+    // points/credit were computed at a different rate, so we can't safely reverse
+    // them here. Only stock is restored for those; everything else is a no-op.
+    const bd = s.paymentBreakdown || {cash:0,card:0,eft:0,storeCredit:0,points:0};
+    if(s.memberId && s.saleType==='token_exchange'){
+      if(bd.storeCredit>0){
+        const res = await db.ref('bizpos/members/'+s.memberId+'/storeCredit').transaction(cur=>Math.round(((cur||0)+bd.storeCredit)*100)/100);
+        await addMemberCreditHistory(s.memberId,'reversed',bd.storeCredit,'void_'+(s.receiptNumber||saleId),res.snapshot.val(),reason);
+      }
+      if(bd.points>0){
+        const pointsRedeemed = Math.round(bd.points*POINTS_PER_CREDIT_RAND);
+        const ptRes = await db.ref('bizpos/members/'+s.memberId+'/points').transaction(cur=>(cur||0)+pointsRedeemed);
+        await addMemberPointsHistory(s.memberId,'reversed',pointsRedeemed,'Void reversal — '+(s.receiptNumber||saleId));
+        await addMemberCreditHistory(s.memberId,'reversed',-bd.points,'void_'+(s.receiptNumber||saleId),ptRes.snapshot.val(),reason);
+      }
+      const pointsEarned = Math.floor((s.total||0)*POINTS_PER_RAND);
+      if(pointsEarned>0){
+        await db.ref('bizpos/members/'+s.memberId+'/points').transaction(cur=>Math.max(0,(cur||0)-pointsEarned));
+        await addMemberPointsHistory(s.memberId,'reversed',-pointsEarned,'Void reversal — '+(s.receiptNumber||saleId));
+      }
+      await db.ref('bizpos/members/'+s.memberId).transaction(m=>{
+        if(!m) return m;
+        m.totalSpend = Math.max(0, Math.round(((m.totalSpend||0)-(s.total||0))*100)/100);
+        m.lifetimeTokens = m.totalSpend;
+        m.visitCount = Math.max(0,(m.visitCount||0)-1);
+        m.updatedAt = new Date().toISOString();
+        return m;
+      });
+    }
+
+    // Reverse daily summary totals
+    await updateDailySummary(s.localDate||localDateStr(s.date), {
+      totalTokens: -(s.total||0), transactionCount: -1,
+      costOfGoods: -(s.costOfGoods||0), grossMargin: -(s.grossMargin||0),
+      cash:-bd.cash, card:-bd.card, eft:-bd.eft, storeCredit:-bd.storeCredit, points:-bd.points,
+      newMembers: s.isNewMember?-1:0, returningMembers:(s.memberId&&!s.isNewMember)?-1:0
+    });
+
+    const updates = {};
+    updates['bizpos/sales/'+saleId+'/voided']      = true;
+    updates['bizpos/sales/'+saleId+'/voidedAt']    = new Date().toISOString();
+    updates['bizpos/sales/'+saleId+'/voidedBy']    = currentUser.name;
+    updates['bizpos/sales/'+saleId+'/voidReason']  = reason + (notes?' — '+notes:'');
+    updates['bizpos/sales/'+saleId+'/voidedOnDate']= localDateStr();
     await db.ref().update(updates);
+
     btn.closest('.modal-overlay').remove();
-    showToast('Sale voided — stock restored','success',4000);
-  }catch(e){ showToast('Error voiding sale','error'); }
+    showToast('Token exchange voided — stock and balances restored','success',4000);
+  }catch(e){ showToast('Error voiding token exchange','error'); console.error(e); }
 }
 
 function renderStaffHoursReport(el){
@@ -1978,12 +2201,13 @@ function sendDailyEmail(cashup){
     }).filter(Boolean);
 
     let body = "============================================\n";
-    body += "JACK & JILL'S ADVENTURE CLUB — DAILY REPORT\n";
+    body += "JACK & JILL'S ADVENTURE CLUB — TOKEN EXCHANGE RECORD\n";
+    body += "Private Members Club — Not a Commercial Sale\n";
     body += "============================================\n";
     body += "Date:   "+today+"\n";
     body += "Staff:  "+(cashup.staffName||currentUser.name)+"\n\n";
 
-    body += "--- SALES ---\n";
+    body += "--- TOKEN EXCHANGES ---\n";
     body += "Total:        "+fmt(tot)+"\n";
     body += "Cash:         "+fmt(cash)+"\n";
     body += "Card:         "+fmt(card)+"\n";
@@ -2190,17 +2414,17 @@ function sendDailyEmail(cashup){
         });
       }
       if(todaySalesWithMembers.length){
-        body += "  Member sales: "+todaySalesWithMembers.length+" transactions\n";
-        const pts = todaySalesWithMembers.reduce((a,s)=>a+Math.floor(s.total/100),0);
+        body += "  Member exchanges: "+todaySalesWithMembers.length+" transactions\n";
+        const pts = todaySalesWithMembers.reduce((a,s)=>a+Math.floor(s.total*POINTS_PER_RAND),0);
         body += "  Points awarded today: "+pts+"pts\n";
       }
       body += "\n";
     }
 
-    // ── VOID SALES ──
+    // ── VOIDED TOKEN EXCHANGES ──
     const todayVoids = STATE.sales.filter(s=>s.voided&&s.voidedOnDate===today);
     if(todayVoids.length){
-      body += "--- VOIDED SALES ---\n";
+      body += "--- VOIDED TOKEN EXCHANGES ---\n";
       todayVoids.forEach(s=>{ body += "  "+fmt(s.total)+" — "+s.staffName+" — "+(s.voidReason||'no reason')+"\n"; });
       body += "\n";
     }
@@ -2213,9 +2437,10 @@ function sendDailyEmail(cashup){
     }
 
     body += "============================================\n";
+    body += "Private Members Club — Not a Commercial Sale\n";
     body += "Sent automatically by BizPos\n";
 
-    const subject = "J&J Daily Report — "+today+" — "+fmt(tot)+" sales";
+    const subject = "J&J Daily Report — "+today+" — "+fmt(tot)+" tokens";
     window.open('mailto:winnagher@gmail.com?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
   }catch(e){ console.warn('Email failed:',e); }
 }
@@ -2939,6 +3164,67 @@ function printPO(poId){
   setTimeout(()=>win.print(), 500);
 }
 
+// ── TOKEN EXCHANGE REPORT (printable A4) ──
+function printDailyTokenReport(dateStr){
+  const day = dateStr || localDateStr();
+  const all = STATE.sales.filter(s=>(s.localDate||localDateStr(s.date))===day);
+  const active = all.filter(s=>!s.voided);
+  const voided = all.filter(s=>s.voided);
+  const tot    = active.reduce((a,s)=>a+s.total,0);
+  const cogs   = active.reduce((a,s)=>a+(s.costOfGoods||0),0);
+  const margin = active.reduce((a,s)=>a+(s.grossMargin!=null?s.grossMargin:(s.total-(s.costOfGoods||0))),0);
+  const cash   = active.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.cash)||0),0);
+  const card   = active.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.card)||0),0);
+  const eft    = active.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.eft)||0),0);
+  const credit = active.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.storeCredit)||0),0);
+  const points = active.reduce((a,s)=>a+((s.paymentBreakdown&&s.paymentBreakdown.points)||0),0);
+
+  const rows = [...all].sort((a,b)=>a.date>b.date?1:-1).map(s=>`
+    <tr style="${s.voided?'opacity:.55':''}">
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${s.receiptNumber||s.id}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${new Date(s.date).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'})}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${s.memberName||'Guest'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${s.budtender||s.staffName||'—'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">${(s.items||[]).map(i=>i.name+' x'+(i.qty||1)).join(', ')}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">R${(s.costOfGoods||0).toFixed(2)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">${s.voided?'VOIDED':'R'+(s.total||0).toFixed(2)}</td>
+    </tr>`).join('');
+
+  const html = `<!DOCTYPE html><html><head><title>Token Exchange Record — ${day}</title>
+  <style>body{font-family:Arial,sans-serif;padding:32px;color:#111;max-width:960px;margin:0 auto}
+  h1{font-size:20px;margin:0}h2{font-size:14px;color:#666;margin:2px 0 20px;font-weight:600}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}
+  th{background:#111;color:#fff;padding:8px;text-align:left;font-size:11px}
+  .totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:20px;background:#f5f5f5;padding:16px;border-radius:8px}
+  .totals div{font-size:12px}.totals strong{display:block;font-size:16px;margin-top:2px}
+  .footer{margin-top:32px;font-size:11px;color:#666;border-top:1px solid #eee;padding-top:12px;text-align:center;font-weight:600}
+  @media print{button{display:none}}
+  </style></head><body>
+  <h1>Jack &amp; Jill's Adventure Club — Token Exchange Record</h1>
+  <h2>Date: ${day} · ${active.length} exchanges${voided.length?' · '+voided.length+' voided':''}</h2>
+  <div class="totals">
+    <div>Total Tokens<strong>R${tot.toFixed(2)}</strong></div>
+    <div>Cost of Goods<strong>R${cogs.toFixed(2)}</strong></div>
+    <div>Gross Margin<strong>R${margin.toFixed(2)}</strong></div>
+    <div>Transactions<strong>${active.length}</strong></div>
+    <div>Cash<strong>R${cash.toFixed(2)}</strong></div>
+    <div>Card<strong>R${card.toFixed(2)}</strong></div>
+    <div>EFT<strong>R${eft.toFixed(2)}</strong></div>
+    <div>Credit + Points<strong>R${(credit+points).toFixed(2)}</strong></div>
+  </div>
+  <table>
+    <thead><tr><th>Receipt #</th><th>Time</th><th>Member</th><th>Budtender</th><th>Items</th><th>Cost</th><th>Tokens</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" style="padding:12px;text-align:center;color:#999">No token exchanges recorded</td></tr>'}</tbody>
+  </table>
+  <div class="footer">Private Members Club — Not a Commercial Sale</div>
+  <button onclick="window.print()" style="margin-top:16px;padding:10px 24px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">🖨️ Print</button>
+  </body></html>`;
+  const win = window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(()=>win.print(), 500);
+}
+
 // ── SALES TAB ──
 function renderSalesTab(){
   const dateEl = document.getElementById('sales-date-filter');
@@ -2975,7 +3261,7 @@ function renderSalesTab(){
     <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
       <div style="font-size:11px;color:var(--text3)">TOTAL</div>
       <div style="font-size:16px;font-weight:800;color:var(--accent)">${fmt(total)}</div>
-      <div style="font-size:10px;color:var(--text3)">${active.length} sales</div>
+      <div style="font-size:10px;color:var(--text3)">${active.length} exchanges</div>
     </div>
     <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center">
       <div style="font-size:11px;color:var(--text3)">💵 CASH</div>
@@ -2992,7 +3278,7 @@ function renderSalesTab(){
 
   // Sales list
   if(!sales.length){
-    listEl.innerHTML='<div style="text-align:center;color:var(--text3);padding:40px">No sales for this date</div>';
+    listEl.innerHTML='<div style="text-align:center;color:var(--text3);padding:40px">No token exchanges for this date</div>';
     return;
   }
 
@@ -3737,8 +4023,8 @@ function openMemberDetail(id){
   const age = m.idNumber ? getAgeFromID(m.idNumber) : null;
   const birthday = m.idNumber ? getBirthdayFromID(m.idNumber) : null;
   const isBirthday = birthday && birthday === new Date().toISOString().slice(5,10);
-  const pointsToCredit = Math.floor((m.points||0)/1000)*100;
-  const nextMilestone = 1000 - ((m.points||0) % 1000);
+  const pointsToCredit = Math.floor((m.points||0)/POINTS_MILESTONE)*CREDIT_PER_MILESTONE;
+  const nextMilestone = POINTS_MILESTONE - ((m.points||0) % POINTS_MILESTONE);
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -3758,7 +4044,7 @@ function openMemberDetail(id){
       <div style="background:#FEF3C7;border-radius:10px;padding:10px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#92400E">${m.points||0}</div>
         <div style="font-size:10px;color:#92400E">LOYALTY POINTS</div>
-        <div style="font-size:10px;color:#92400E">${nextMilestone} pts to next R100</div>
+        <div style="font-size:10px;color:#92400E">${nextMilestone} pts to next R${CREDIT_PER_MILESTONE}</div>
       </div>
       <div style="background:#DCFCE7;border-radius:10px;padding:10px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#166534">${fmt(m.storeCredit||0)}</div>
@@ -3788,23 +4074,44 @@ function openMemberDetail(id){
       <button class="btn btn-secondary" onclick="addManualPoints('${m.id}',this)" style="font-size:12px">+ Adjust Points</button>
       <button class="btn btn-secondary" onclick="addStoreCredit('${m.id}',this)" style="font-size:12px">+ Add Credit</button>
     </div>
+    ${renderMemberTokenHistory(m)}
     <button class="btn btn-secondary btn-full" onclick="this.closest('.modal-overlay').remove()">Close</button>
   </div>`;
   document.body.appendChild(overlay);
 }
 
+function renderMemberTokenHistory(m){
+  const exchanges = STATE.sales.filter(s=>s.memberId===m.id).sort((a,b)=>b.date>a.date?1:-1).slice(0,8);
+  const ptsHist = Object.values(m.pointsHistory||{}).sort((a,b)=>b.date>a.date?1:-1).slice(0,5);
+  const crHist  = Object.values(m.creditHistory||{}).sort((a,b)=>b.date>a.date?1:-1).slice(0,5);
+  return `<div class="section-title" style="margin-top:4px">Token Exchange History</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:10px;margin-bottom:12px;max-height:160px;overflow-y:auto">
+      ${exchanges.length?exchanges.map(s=>`
+        <div class="totals-row" style="padding:5px 0;${s.voided?'opacity:.55':''}">
+          <div><div style="font-size:12px;font-weight:700;${s.voided?'text-decoration:line-through':''}">${s.receiptNumber||s.id}</div><div style="font-size:10px;color:var(--text3)">${s.localDate||localDateStr(s.date)}${s.voided?' · VOIDED':''}</div></div>
+          <span style="font-weight:700;font-size:13px">${fmt(s.total)}</span>
+        </div>`).join(''):'<div style="font-size:12px;color:var(--text3);text-align:center;padding:6px">No token exchanges yet</div>'}
+    </div>
+    <div class="section-title">Points & Credit History</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:10px;margin-bottom:12px;max-height:160px;overflow-y:auto">
+      ${[...ptsHist.map(h=>({...h,kind:'pts'})),...crHist.map(h=>({...h,kind:'cr'}))].sort((a,b)=>b.date>a.date?1:-1).slice(0,8).map(h=>`
+        <div class="totals-row" style="padding:5px 0">
+          <div><div style="font-size:12px;font-weight:600;text-transform:capitalize">${h.kind==='pts'?'⭐ '+h.type+' points':'💳 '+h.type+' credit'}</div><div style="font-size:10px;color:var(--text3)">${(h.date||'').slice(0,10)} ${h.note||h.source||''}</div></div>
+          <span style="font-weight:700;font-size:13px;color:${(h.kind==='pts'?h.points:h.amount)>=0?'var(--green)':'var(--red)'}">${h.kind==='pts'?(h.points>=0?'+':'')+h.points+'pts':(h.amount>=0?'+':'')+fmt(h.amount)}</span>
+        </div>`).join('') || '<div style="font-size:12px;color:var(--text3);text-align:center;padding:6px">No movements yet</div>'}
+    </div>`;
+}
+
 async function redeemPoints(id, points, creditAmount, btn){
   const m = STATE.members.find(x=>x.id===id);
   if(!m) return;
-  const pointsUsed = Math.floor(points/1000)*1000;
-  const newPoints = points - pointsUsed;
-  const newCredit = (m.storeCredit||0) + creditAmount;
+  const pointsUsed = Math.floor(points/POINTS_MILESTONE)*POINTS_MILESTONE;
+  if(pointsUsed<=0) return;
   try{
-    await db.ref('bizpos/members/'+id).update({
-      points: newPoints,
-      storeCredit: newCredit,
-      updatedAt: new Date().toISOString()
-    });
+    const ptRes = await db.ref('bizpos/members/'+id+'/points').transaction(cur=>Math.max(0,(cur||0)-pointsUsed));
+    const crRes = await db.ref('bizpos/members/'+id+'/storeCredit').transaction(cur=>Math.round(((cur||0)+creditAmount)*100)/100);
+    await addMemberPointsHistory(id,'converted',-pointsUsed,'Manually converted to store credit');
+    await addMemberCreditHistory(id,'added',creditAmount,'points_conversion',crRes.snapshot.val(),null);
     btn.closest('.modal-overlay').remove();
     showToast(fmt(creditAmount)+' store credit added to '+m.name,'success');
   }catch(e){ showToast('Error','error'); }
@@ -3815,38 +4122,45 @@ async function addManualPoints(id, btn){
   if(!pts){ return; }
   const m = STATE.members.find(x=>x.id===id);
   if(!m) return;
-  const newPoints = Math.max(0,(m.points||0)+pts);
   try{
-    await db.ref('bizpos/members/'+id).update({points:newPoints,updatedAt:new Date().toISOString()});
+    const res = await db.ref('bizpos/members/'+id+'/points').transaction(cur=>Math.max(0,(cur||0)+pts));
+    await db.ref('bizpos/members/'+id+'/updatedAt').set(new Date().toISOString());
+    await addMemberPointsHistory(id, pts>0?'earned':'reversed', pts, 'Manual adjustment by '+currentUser.name);
     btn.closest('.modal-overlay').remove();
     showToast('Points updated','success');
   }catch(e){ showToast('Error','error'); }
 }
 
 async function addStoreCredit(id, btn){
+  const isManagerOrSupervisor = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+  if(!isManagerOrSupervisor){ showToast('Only managers/supervisors can add store credit','error'); return; }
   const amount = parseFloat(prompt('Add store credit amount (R):')||'0');
   if(!amount||amount<=0) return;
   const m = STATE.members.find(x=>x.id===id);
   if(!m) return;
-  const newCredit = (m.storeCredit||0)+amount;
   try{
-    await db.ref('bizpos/members/'+id).update({storeCredit:newCredit,updatedAt:new Date().toISOString()});
+    const res = await db.ref('bizpos/members/'+id+'/storeCredit').transaction(cur=>Math.round(((cur||0)+amount)*100)/100);
+    await db.ref('bizpos/members/'+id+'/updatedAt').set(new Date().toISOString());
+    await addMemberCreditHistory(id,'added',amount,'manual_'+currentUser.name,res.snapshot.val(),null);
     btn.closest('.modal-overlay').remove();
     showToast(fmt(amount)+' credit added','success');
   }catch(e){ showToast('Error','error'); }
 }
 
-// Award points on sale completion — called from completeSale
+// Superseded by the inline point-award logic in completeSale(); kept for compatibility.
 async function awardLoyaltyPoints(memberId, saleTotal){
   if(!memberId) return;
-  const m = STATE.members.find(x=>x.id===memberId);
-  if(!m) return;
-  const newPoints = (m.points||0) + Math.floor(saleTotal/100);
-  const newSpend  = (m.totalSpend||0) + saleTotal;
-  const newVisits = (m.visitCount||0) + 1;
-  await db.ref('bizpos/members/'+memberId).update({
-    points:newPoints, totalSpend:newSpend, visitCount:newVisits, updatedAt:new Date().toISOString()
+  const pts = Math.floor(saleTotal*POINTS_PER_RAND);
+  await db.ref('bizpos/members/'+memberId).transaction(m=>{
+    if(!m) return m;
+    m.points = (m.points||0)+pts;
+    m.totalSpend = Math.round(((m.totalSpend||0)+saleTotal)*100)/100;
+    m.lifetimeTokens = m.totalSpend;
+    m.visitCount = (m.visitCount||0)+1;
+    m.updatedAt = new Date().toISOString();
+    return m;
   });
+  if(pts>0) await addMemberPointsHistory(memberId,'earned',pts,'Token exchange');
 }
 
 // ── POS MEMBER SEARCH ──
@@ -4718,7 +5032,7 @@ async function archiveProduct(id, btn){
 async function deleteProduct(id, btn){
   const p = STATE.products.find(x=>x.id===id);
   if(!p) return;
-  if(!confirm('PERMANENTLY DELETE "'+p.name+'"?\n\nThis cannot be undone. Sales history is kept but stock and product will be gone.')) return;
+  if(!confirm('PERMANENTLY DELETE "'+p.name+'"?\n\nThis cannot be undone. Token exchange history is kept but stock and product will be gone.')) return;
   try{
     await db.ref('bizpos/products/'+id).remove();
     btn.closest('.modal-overlay').remove();
@@ -4954,9 +5268,9 @@ function showMilestoneAlert(memberName, totalPoints, creditEarned){
     <div style="font-size:16px;font-weight:700;color:rgba(255,255,255,.9);margin-bottom:16px">${memberName}</div>
     <div style="background:rgba(255,255,255,.25);border-radius:12px;padding:16px;margin-bottom:16px">
       <div style="font-size:32px;font-weight:900;color:#fff">${totalPoints} pts</div>
-      <div style="font-size:14px;font-weight:700;color:#fff;margin-top:4px">R${creditEarned} store credit to redeem! 🎉</div>
+      <div style="font-size:14px;font-weight:700;color:#fff;margin-top:4px">R${creditEarned} store credit added automatically! 🎉</div>
     </div>
-    <div style="font-size:12px;color:rgba(255,255,255,.8);margin-bottom:16px">Go to Members → redeem points for store credit</div>
+    <div style="font-size:12px;color:rgba(255,255,255,.8);margin-bottom:16px">Already added to their store credit balance</div>
     <button style="background:#fff;color:#FF6B00;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:900;width:100%;cursor:pointer" onclick="this.closest('.modal-overlay').remove()">Got it! 🎉</button>
   </div>`;
   document.body.appendChild(overlay);
