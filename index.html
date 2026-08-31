@@ -472,11 +472,11 @@ function localDateStr(d){
 }
 
 // ── TOKEN ACCOUNTING HELPERS ──
-// 1 token = R1. Points/credit rate: 1 point per R10 exchanged, 1000 points auto-converts to R50 credit (20 pts = R1).
-const POINTS_PER_RAND = 0.1;      // 1 point per R10
-const POINTS_PER_CREDIT_RAND = 20; // 20 points redeemable per R1 credit
+// 1 token = R1. Points/credit rate: 1 point per R100 exchanged, 1000 points auto-converts to R100 credit (10 pts = R1).
+const POINTS_PER_RAND = 0.01;      // 1 point per R100
+const POINTS_PER_CREDIT_RAND = 10; // 10 points redeemable per R1 credit
 const POINTS_MILESTONE = 1000;
-const CREDIT_PER_MILESTONE = 50;
+const CREDIT_PER_MILESTONE = 100;
 
 async function getNextReceiptNumber(dateStr){
   const dateKey = dateStr.replace(/-/g,'');
