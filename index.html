@@ -167,7 +167,10 @@
   <div id="tab-stock" class="tab">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <div style="font-size:18px;font-weight:800">Inventory</div>
-      <button class="btn btn-primary" id="btn-add-product" onclick="openAddProduct()" style="padding:8px 14px;font-size:12px">+ Add</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="openTransferHistory()" style="padding:8px 14px;font-size:12px">🔄 Transfers</button>
+        <button class="btn btn-primary" id="btn-add-product" onclick="openAddProduct()" style="padding:8px 14px;font-size:12px">+ Add</button>
+      </div>
     </div>
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px">
       <button class="btn btn-primary" id="st-filter-all" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="setStockView('all',this)">All Stock</button>
@@ -436,7 +439,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], rollTasks:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], rollTasks:[], transfers:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -562,6 +565,9 @@ function startListeners(){
   });
   db.ref('bizpos/writeoffs').on('value',s=>{
     STATE.writeoffs=s.val()?Object.values(s.val()):[];
+  });
+  db.ref('bizpos/transfers').on('value',s=>{
+    STATE.transfers=s.val()?Object.values(s.val()):[];
   });
   db.ref('bizpos/stocktakeReports').on('value',s=>{
     STATE.stocktakeReports=s.val()?Object.values(s.val()):[];
@@ -5069,6 +5075,62 @@ async function commitTransfer(productId, btn){
     showToast(qty+' x '+p.name+' transferred to '+(dir==='s2w'?'warehouse':'shop floor'),'success',4000);
     renderStockList();
   }catch(e){ showToast('Error','error'); }
+}
+
+function openTransferHistory(){
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.paddingTop = '16px';
+  overlay.id = 'transfer-history-overlay';
+  const transfers = [...(STATE.transfers||[])].sort((a,b)=>b.createdAt>a.createdAt?1:-1).slice(0,50);
+  overlay.innerHTML = `<div class="modal" style="max-width:440px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div class="modal-title" style="margin:0">Transfer History</div>
+      <button onclick="this.closest('.modal-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">×</button>
+    </div>
+    ${transfers.length?transfers.map(t=>`
+      <div class="list-item" style="${t.undone?'opacity:.5':''}">
+        <div style="font-size:20px">${t.from==='shop'?'🏪→🏭':'🏭→🏪'}</div>
+        <div class="list-item-body">
+          <div class="list-item-title" style="font-size:13px;${t.undone?'text-decoration:line-through':''}">${t.qty} x ${t.productName||'—'}</div>
+          <div class="list-item-sub">${t.date||''} · ${t.createdBy||'—'}${t.undone?' · UNDONE by '+(t.undoneBy||'—'):''}</div>
+        </div>
+        ${!t.undone?`<button class="btn btn-danger" style="font-size:11px;padding:6px 10px;flex-shrink:0" onclick="undoTransfer('${t.id}')">Undo</button>`:''}
+      </div>`).join(''):'<div style="color:var(--text3);text-align:center;padding:30px">No transfers yet</div>'}
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function undoTransfer(transferId){
+  const t = STATE.transfers.find(x=>x.id===transferId);
+  if(!t || t.undone) return;
+  const p = STATE.products.find(x=>x.id===t.productId);
+  if(!p){ showToast('Product no longer exists','error'); return; }
+
+  // Reverse: move qty back from the 'to' location to the 'from' location
+  const toField   = t.to==='warehouse'   ? 'qtyWh' : 'qty';
+  const fromField = t.from==='warehouse' ? 'qtyWh' : 'qty';
+  const toQty = p[toField]||0;
+  if(t.qty > toQty){
+    showToast('Cannot undo — only '+toQty+' left in '+(t.to==='warehouse'?'warehouse':'shop floor')+' now','error');
+    return;
+  }
+
+  const updates = {};
+  updates['bizpos/products/'+t.productId+'/'+toField]   = toQty - t.qty;
+  updates['bizpos/products/'+t.productId+'/'+fromField] = (p[fromField]||0) + t.qty;
+  updates['bizpos/products/'+t.productId+'/updatedAt']  = new Date().toISOString();
+  updates['bizpos/transfers/'+transferId+'/undone']     = true;
+  updates['bizpos/transfers/'+transferId+'/undoneAt']   = new Date().toISOString();
+  updates['bizpos/transfers/'+transferId+'/undoneBy']   = currentUser.name;
+
+  try{
+    await db.ref().update(updates);
+    showToast('Transfer undone — '+t.qty+' x '+t.productName+' moved back','success',4000);
+    document.getElementById('transfer-history-overlay')?.remove();
+    openTransferHistory();
+  }catch(e){ showToast('Error undoing transfer','error'); }
 }
 
 function openEditProductFull(id){
