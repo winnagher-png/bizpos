@@ -612,6 +612,33 @@ function loginSuccess(staff){
   setTimeout(function(){ showClockInPrompt(staff); }, 500);
   setTimeout(checkReorderAlerts, 3000);
   setTimeout(checkMorningNotes, 4000);
+  setTimeout(checkMondayStocktakeReminder, 4300);
+}
+
+function checkMondayStocktakeReminder(){
+  if(window._stocktakeReminderShown) return;
+  const isManager = currentUser && (currentUser.role==='manager'||currentUser.role==='supervisor');
+  if(!isManager) return;
+  if(new Date().getDay() !== 1) return; // 1 = Monday
+  const todayStr = localDateStr();
+  const doneToday = (STATE.stocktakeReports||[]).some(r=>(r.committedAt||'').slice(0,10)===todayStr);
+  if(doneToday) return;
+  window._stocktakeReminderShown = true;
+
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:60px;left:0;right:0;z-index:498;padding:0 12px';
+  banner.innerHTML = `<div style="background:linear-gradient(135deg,#1A1A1A,#333);color:#fff;border-radius:12px;padding:14px 16px;box-shadow:0 4px 12px rgba(0,0,0,.3)">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:24px">📋</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:900;margin-bottom:2px">It's Monday — Stocktake Day</div>
+        <div style="font-size:11px;opacity:.85">Print a sheet or start counting in the Stock tab</div>
+      </div>
+      <button onclick="switchTab('stock');this.closest('div[style*=fixed]').remove()" style="background:#2D9E35;border:none;color:#fff;font-size:11px;font-weight:800;cursor:pointer;border-radius:8px;padding:8px 12px;flex-shrink:0;white-space:nowrap">Go →</button>
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="background:rgba(255,255,255,.15);border:none;color:#fff;font-size:14px;font-weight:800;cursor:pointer;border-radius:50%;width:24px;height:24px;flex-shrink:0">×</button>
+    </div>
+  </div>`;
+  document.body.appendChild(banner);
 }
 
 function showClockInPrompt(staff){
@@ -3320,9 +3347,13 @@ function renderStocktakeInline(){
   // No active session — show start button + history
   const reports = [...(STATE.stocktakeReports||[])].sort((a,b)=>b.committedAt>a.committedAt?1:-1);
   el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <div style="font-size:16px;font-weight:700">Stocktake</div>
       ${isManager ? '<button class="btn btn-primary" onclick="startStocktakeInline()" style="padding:8px 14px;font-size:12px">+ New Count</button>' : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <button class="btn btn-secondary" onclick="printStocktakeSheet('shop')" style="font-size:12px;padding:8px">🖨️ Shop Floor Sheet</button>
+      <button class="btn btn-secondary" onclick="printStocktakeSheet('warehouse')" style="font-size:12px;padding:8px">🖨️ Warehouse Sheet</button>
     </div>
     ${!reports.length
       ? '<div style="color:var(--text3);text-align:center;padding:40px">No stocktakes yet</div>'
@@ -3359,6 +3390,86 @@ function beginStocktakeInline(loc){
   if(el) el.innerHTML = '<div id="stocktake-content"></div>';
   // Small delay to ensure DOM is ready
   setTimeout(renderActiveStocktake, 50);
+}
+
+// ── PRINTABLE STOCKTAKE SHEET (blank sheet to write counts on, e.g. weekly on a tablet) ──
+function printStocktakeSheet(loc){
+  const location = loc==='warehouse' ? 'warehouse' : 'shop';
+  const locLabel = location==='warehouse' ? 'Warehouse' : 'Shop Floor';
+  const products = STATE.products.filter(p=>p.active!==false)
+    .sort((a,b)=>(a.category||'').localeCompare(b.category||'')||a.name.localeCompare(b.name));
+
+  const byCat = {};
+  products.forEach(p=>{
+    const cat = p.category||'UNCATEGORISED';
+    (byCat[cat]=byCat[cat]||[]).push(p);
+  });
+
+  const rows = Object.keys(byCat).sort().map(cat=>{
+    const items = byCat[cat].map(p=>{
+      const qty = location==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
+      return `<tr>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee">${p.name}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center">${qty}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center">${p.reorderAt||'—'}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center;width:70px"></td>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center;width:70px"></td>
+        <td style="padding:5px 6px;border-bottom:1px solid #eee;width:100px"></td>
+      </tr>`;
+    }).join('');
+    return `<tr><td colspan="6" style="background:#f0f0ec;font-weight:800;font-size:11px;padding:6px;text-transform:uppercase">${cat}</td></tr>${items}`;
+  }).join('');
+
+  // Live "already low" helper — cross-checks shop floor shortages against warehouse stock
+  const lowShop = STATE.products.filter(p=>p.active!==false && (p.reorderAt>0) && (p.qty||0)<=p.reorderAt);
+  const restockRows = lowShop.map(p=>{
+    const whQty = p.qtyWh||0;
+    const canTransfer = whQty>0;
+    return `<tr>
+      <td style="padding:5px 6px;border-bottom:1px solid #eee">${p.name}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center">${p.qty||0}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid #eee;text-align:center">${whQty}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid #eee;font-weight:700;color:${canTransfer?'#166534':'#991B1B'}">${canTransfer?'Top up from warehouse ('+whQty+' available)':'Order from supplier'}</td>
+    </tr>`;
+  }).join('');
+
+  const today = localDateStr();
+  const html = `<!DOCTYPE html><html><head><title>Stocktake Sheet — ${locLabel} — ${today}</title>
+  <style>
+    body{font-family:Arial,sans-serif;padding:24px;color:#111;max-width:900px;margin:0 auto}
+    h1{font-size:20px;margin:0}h2{font-size:13px;color:#666;margin:4px 0 16px;font-weight:700}
+    table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:24px}
+    th{background:#111;color:#fff;padding:7px 6px;text-align:left;font-size:10px;text-transform:uppercase}
+    .meta{display:flex;flex-wrap:wrap;gap:24px;margin-bottom:20px;font-size:12px}
+    .meta div{border-bottom:1.5px solid #111;padding:4px 0;min-width:150px}
+    .instructions{font-size:11px;color:#666;margin-top:4px;line-height:1.5}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h1>Jack &amp; Jill's Adventure Club</h1>
+  <h2>Weekly Stocktake Sheet — ${locLabel}</h2>
+  <div class="meta">
+    <div>Counted by: _______________</div>
+    <div>Date: ${today}</div>
+    <div>Start: _____ &nbsp; End: _____</div>
+  </div>
+  <table>
+    <thead><tr><th>Product</th><th style="text-align:center">System Qty</th><th style="text-align:center">Reorder At</th><th style="text-align:center">Counted</th><th style="text-align:center">Variance</th><th>Notes</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" style="padding:12px;text-align:center;color:#999">No active products</td></tr>'}</tbody>
+  </table>
+  ${restockRows?`<h2 style="margin-top:0">⚠️ Already Low — Restock Action Needed (live, at time of printing)</h2>
+  <table>
+    <thead><tr><th>Product</th><th style="text-align:center">Shop Floor</th><th style="text-align:center">Warehouse</th><th>Action</th></tr></thead>
+    <tbody>${restockRows}</tbody>
+  </table>`:''}
+  <div class="instructions">
+    Fill in <strong>Counted</strong> for every line and work out <strong>Variance</strong> (Counted − System Qty) by hand, or skip straight to typing counts into the app: <strong>Stock tab → Stocktake → ${locLabel}</strong> — it computes variances and gain/loss automatically and saves a report.
+  </div>
+  <button onclick="window.print()" style="margin-top:16px;padding:10px 24px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">🖨️ Print</button>
+  </body></html>`;
+  const win = window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(()=>win.print(), 500);
 }
 
 // ── STOCKTAKE ──
