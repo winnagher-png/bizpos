@@ -439,7 +439,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], writeoffs:[], rollTasks:[], transfers:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], stocktakeSessions:{}, writeoffs:[], rollTasks:[], transfers:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -572,6 +572,27 @@ function startListeners(){
   db.ref('bizpos/stocktakeReports').on('value',s=>{
     STATE.stocktakeReports=s.val()?Object.values(s.val()):[];
     if(currentTab==='stocktake')renderStocktakeContent();
+  });
+  // In-progress stocktake counts — shared across devices so a count survives closing the app
+  // and multiple staff can count the same location together.
+  db.ref('bizpos/stocktakeSession').on('value',s=>{
+    STATE.stocktakeSessions = s.val()||{};
+    if(stocktakeSession){
+      const fresh = STATE.stocktakeSessions[stocktakeSession.location];
+      if(fresh){
+        stocktakeSession.counts = fresh.counts||{};
+        const active = document.activeElement;
+        const isTypingCount = active && active.id && active.id.indexOf('st-count-')===0;
+        if(!isTypingCount && document.getElementById('stocktake-content')) renderActiveStocktake();
+      } else if(document.getElementById('stocktake-content')){
+        // Session was committed or discarded from another device
+        stocktakeSession = null;
+        showToast('This stocktake was committed or discarded elsewhere','info',4000);
+        renderStocktakeInline();
+      }
+    } else if(currentTab==='stocktake' || document.getElementById('stocktake-inline')){
+      renderStocktakeInline();
+    }
   });
   db.ref('bizpos/suppliers').on('value',s=>{
     STATE.suppliers=s.val()?Object.values(s.val()):[];
@@ -3370,12 +3391,30 @@ function renderStocktakeInline(){
     return;
   }
 
-  // No active session — show start button + history
+  // A count is "in progress" the moment anyone, on any device, has started counting a
+  // location — it stays open until someone commits or discards it. No forced open/close.
+  const sessions = STATE.stocktakeSessions||{};
+  const locCard = (loc, label, icon)=>{
+    const sess = sessions[loc];
+    if(sess){
+      const n = Object.keys(sess.counts||{}).length;
+      return `<div>
+        <button class="btn btn-primary" onclick="resumeStocktakeInline('${loc}')" style="padding:14px;font-size:13px;text-align:left;line-height:1.5;width:100%">
+          ${icon} ${label}<br><span style="font-size:11px;font-weight:400;opacity:.9">In progress — ${n} counted · started by ${sess.startedBy||'—'}</span>
+        </button>
+        ${isManager?`<div style="text-align:center;margin-top:4px"><a href="javascript:void(0)" onclick="discardStocktakeSession('${loc}')" style="font-size:11px;color:var(--text3)">Discard this count</a></div>`:''}
+      </div>`;
+    }
+    if(!isManager) return '<div></div>';
+    return `<button class="btn btn-secondary" onclick="beginStocktakeInline('${loc}')" style="padding:14px;font-size:13px">${icon} ${label}<br><span style="font-size:11px;font-weight:400">+ New Count</span></button>`;
+  };
+
   const reports = [...(STATE.stocktakeReports||[])].sort((a,b)=>b.committedAt>a.committedAt?1:-1);
   el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="font-size:16px;font-weight:700">Stocktake</div>
-      ${isManager ? '<button class="btn btn-primary" onclick="startStocktakeInline()" style="padding:8px 14px;font-size:12px">+ New Count</button>' : ''}
+    <div style="font-size:16px;font-weight:700;margin-bottom:10px">Stocktake</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      ${locCard('shop','Shop Floor','🏪')}
+      ${locCard('warehouse','Warehouse','🏭')}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
       <button class="btn btn-secondary" onclick="printStocktakeSheet('shop')" style="font-size:12px;padding:8px">🖨️ Shop Floor Sheet</button>
@@ -3397,24 +3436,25 @@ function renderStocktakeInline(){
     }`;
 }
 
-function startStocktakeInline(){
-  // Show location picker
-  const el = document.getElementById('stocktake-inline');
-  if(!el) return;
-  el.innerHTML = `
-    <div style="font-size:16px;font-weight:700;margin-bottom:16px">Choose Location</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-      <button class="btn btn-primary" onclick="beginStocktakeInline('shop')" style="padding:20px;font-size:14px">🏪<br>Shop Floor</button>
-      <button class="btn btn-secondary" onclick="beginStocktakeInline('warehouse')" style="padding:20px;font-size:14px">🏭<br>Warehouse</button>
-    </div>
-    <button class="btn btn-secondary btn-full" onclick="renderStocktakeInline()">Cancel</button>`;
-}
-
-function beginStocktakeInline(loc){
-  stocktakeSession = { location: loc, counts: {}, startedAt: new Date().toISOString() };
+function resumeStocktakeInline(loc){
+  const sess = (STATE.stocktakeSessions||{})[loc];
+  if(!sess) return beginStocktakeInline(loc);
+  stocktakeSession = { location: loc, counts: sess.counts||{}, startedAt: sess.startedAt, startedBy: sess.startedBy };
   const el = document.getElementById('stocktake-inline');
   if(el) el.innerHTML = '<div id="stocktake-content"></div>';
-  // Small delay to ensure DOM is ready
+  setTimeout(renderActiveStocktake, 50);
+}
+
+async function beginStocktakeInline(loc){
+  // Claim the location — if someone else just started it, resume theirs instead of overwriting
+  const claim = await db.ref('bizpos/stocktakeSession/'+loc).transaction(cur=>{
+    if(cur) return; // already exists — abort, we'll resume it below
+    return { location:loc, counts:{}, startedAt:new Date().toISOString(), startedBy:currentUser.name };
+  });
+  const sess = claim.snapshot.val();
+  stocktakeSession = { location: loc, counts: (sess&&sess.counts)||{}, startedAt: sess&&sess.startedAt, startedBy: sess&&sess.startedBy };
+  const el = document.getElementById('stocktake-inline');
+  if(el) el.innerHTML = '<div id="stocktake-content"></div>';
   setTimeout(renderActiveStocktake, 50);
 }
 
@@ -3651,22 +3691,31 @@ function renderActiveStocktake(){
     + '<div style="font-size:22px;font-weight:800;margin-top:2px">'+totalCounted+' / '+allProds.length+' counted</div>'
     + '</div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">'
-    + '<button class="btn btn-secondary" onclick="cancelStocktakeInline()" style="font-size:12px">✕ Cancel</button>'
+    + '<button class="btn btn-secondary" onclick="cancelStocktakeInline()" style="font-size:12px">← Exit (progress saved)</button>'
     + '<button class="btn btn-success" onclick="commitStocktake()" style="font-size:12px">✓ Commit Count</button>'
     + '</div>'
     + '<div id="st-product-list">'+sectionsHTML+'</div>';
 }
 
+const _stCountSyncTimers = {};
 function updateSTCount(productId, val){
+  if(!stocktakeSession) return;
+  const loc = stocktakeSession.location;
   if(val===''||val===null){
     delete stocktakeSession.counts[productId];
   } else {
     stocktakeSession.counts[productId] = parseInt(val)||0;
   }
+  // Sync to the shared session (debounced) so the count survives closing the app
+  // and is visible to any other device counting the same location.
+  clearTimeout(_stCountSyncTimers[productId]);
+  _stCountSyncTimers[productId] = setTimeout(()=>{
+    const ref = db.ref('bizpos/stocktakeSession/'+loc+'/counts/'+productId);
+    if(stocktakeSession.counts[productId]===undefined) ref.remove(); else ref.set(stocktakeSession.counts[productId]);
+  }, 500);
   // Update the diff display inline
   const p = STATE.products.find(x=>x.id===productId);
   if(!p) return;
-  const loc = stocktakeSession.location;
   const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
   const hasCounted = stocktakeSession.counts[productId] !== undefined;
   const diff = hasCounted ? (stocktakeSession.counts[productId] - expected) : null;
@@ -3690,13 +3739,23 @@ function updateSTCount(productId, val){
 }
 
 function cancelStocktake(){
-  if(!confirm('Cancel this stocktake? Your counts will be lost.')) return;
+  // Just leaves the count screen — counts already entered are saved to the shared
+  // session and stay right where they are, ready to resume any time, on any device.
   stocktakeSession = null;
   renderStocktakeInline();
 }
 
 function cancelStocktakeInline(){
   cancelStocktake();
+}
+
+async function discardStocktakeSession(loc){
+  const sess = (STATE.stocktakeSessions||{})[loc];
+  const n = sess ? Object.keys(sess.counts||{}).length : 0;
+  if(!confirm('Discard the in-progress '+(loc==='warehouse'?'warehouse':'shop floor')+' count'+(n?' ('+n+' items counted)':'')+'? This cannot be undone.')) return;
+  await db.ref('bizpos/stocktakeSession/'+loc).remove();
+  if(stocktakeSession && stocktakeSession.location===loc) stocktakeSession = null;
+  renderStocktakeInline();
 }
 
 async function commitStocktake(){
@@ -3708,14 +3767,30 @@ async function commitStocktake(){
   stocktakeSession._committing = true;
 
   const loc = stocktakeSession.location;
+
+  // Claim the shared session so two devices can't both commit the same count
+  const claim = await db.ref('bizpos/stocktakeSession/'+loc).transaction(cur=>{
+    if(!cur || cur.committing) return; // missing, or already being committed elsewhere — abort
+    cur.committing = true;
+    return cur;
+  });
+  if(!claim.committed){
+    showToast('This stocktake is already being committed elsewhere','error');
+    stocktakeSession._committing = false;
+    return;
+  }
+  // Use the latest synced counts in case another device added some just before we claimed it
+  const claimedSess = claim.snapshot.val();
+  const counts = (claimedSess && claimedSess.counts) || stocktakeSession.counts;
+
   const updates = {};
   const variances = [];
   let gainValue = 0, lossValue = 0, totalCounted = 0;
 
   const allItems = [];
   STATE.products.filter(p=>p.active!==false).forEach(p => {
-    if(stocktakeSession.counts[p.id] === undefined) return;
-    const newQty = stocktakeSession.counts[p.id];
+    if(counts[p.id] === undefined) return;
+    const newQty = counts[p.id];
     const expected = loc==='warehouse' ? (p.qtyWh||0) : (p.qty||0);
     const diff = newQty - expected;
     totalCounted += newQty;
@@ -3762,6 +3837,7 @@ async function commitStocktake(){
 
   try{
     await db.ref().update(updates);
+    await db.ref('bizpos/stocktakeSession/'+loc).remove();
     stocktakeSession = null;
     document.getElementById('btn-start-stocktake').style.display = '';
     showToast('Stocktake committed — '+variances.length+' variances','success',5000);
@@ -3777,6 +3853,7 @@ async function commitStocktake(){
     showToast('Error committing stocktake','error');
     console.error(e);
     stocktakeSession._committing = false;
+    db.ref('bizpos/stocktakeSession/'+loc+'/committing').set(false).catch(()=>{});
   }
 }
 
