@@ -2996,45 +2996,55 @@ function setGRVLoc(i, loc){
 async function commitGRV(poId){
   const po = (STATE.purchaseOrders||[]).find(p=>p.id===poId);
   if(!po) return;
-  const updates = {};
+  const btn = document.querySelector('#modal-grv .btn-success');
+  if(btn && btn.disabled) return; // stop double-tap
+  if(btn) btn.disabled = true;
+
+  // Claim this PO first — if it's already been received (by this tap or another device), abort
+  const claim = await db.ref('bizpos/purchaseOrders/'+poId+'/status').transaction(cur=>{
+    if(cur==='received') return; // already received — abort
+    return 'received';
+  });
+  if(!claim.committed){
+    showToast('This PO was already received','error');
+    document.getElementById('modal-grv')?.remove();
+    return;
+  }
+
   const lines = po.lines||po.items||[];
-  lines.forEach((l,i) => {
+  for(let i=0;i<lines.length;i++){
+    const l = lines[i];
     const receivedQty = parseInt(document.getElementById('grv-qty-'+i).value)||0;
-    if(receivedQty <= 0) return;
+    if(receivedQty <= 0) continue;
     const loc = (window._grvLocs||[])[i] || 'shop';
+    const field = loc==='warehouse' ? 'qtyWh' : 'qty';
     // Find existing product or create new one
     let prod = STATE.products.find(p => p.name && p.name.toLowerCase()===l.productName.toLowerCase());
     if(prod){
-      if(loc==='warehouse'){
-        updates['bizpos/products/'+prod.id+'/qtyWh'] = (prod.qtyWh||0) + receivedQty;
-      } else {
-        updates['bizpos/products/'+prod.id+'/qty'] = (prod.qty||0) + receivedQty;
-      }
-      updates['bizpos/products/'+prod.id+'/updatedAt'] = new Date().toISOString();
+      await db.ref('bizpos/products/'+prod.id+'/'+field).transaction(cur=>(cur||0)+receivedQty);
+      await db.ref('bizpos/products/'+prod.id+'/updatedAt').set(new Date().toISOString());
     } else {
       // Auto-create product
       const newId = uid();
-      updates['bizpos/products/'+newId] = {
+      await db.ref('bizpos/products/'+newId).set({
         id:newId, name:l.productName, price:l.unitCost||0, cost:l.unitCost||0,
         qty: loc==='shop' ? receivedQty : 0,
         qtyWh: loc==='warehouse' ? receivedQty : 0,
         category:'Uncategorised', active:true, reorderAt:5,
         createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(),
-      };
+      });
     }
-  });
+  }
 
   // Log expense for stock purchase
   const expId = uid();
+  const updates = {};
   updates['bizpos/expenses/'+expId] = {
     id:expId, desc:'Stock purchase — '+po.supplierName+' ('+po.poNumber+')',
     amount:po.total||0, category:'Stock purchase', payMethod:po.paymentTerms||'cash',
     date:new Date().toISOString().slice(0,10), status:'paid',
     createdAt:new Date().toISOString(), createdBy:currentUser.name, poId:po.id
   };
-
-  // Mark PO as received
-  updates['bizpos/purchaseOrders/'+poId+'/status'] = 'received';
   updates['bizpos/purchaseOrders/'+poId+'/receivedAt'] = new Date().toISOString();
   updates['bizpos/purchaseOrders/'+poId+'/receivedBy'] = currentUser.name;
 
@@ -3042,7 +3052,7 @@ async function commitGRV(poId){
     await db.ref().update(updates);
     document.getElementById('modal-grv').remove();
     showToast('Stock received! Products updated.','success',4000);
-  }catch(e){ showToast('Error receiving stock','error'); console.error(e); }
+  }catch(e){ showToast('Error receiving stock','error'); console.error(e); if(btn) btn.disabled=false; }
 }
 
 // ── SUPPLIER & PRODUCT SEARCH FOR PO ──
@@ -3681,9 +3691,11 @@ function cancelStocktakeInline(){
 
 async function commitStocktake(){
   if(!stocktakeSession) return;
+  if(stocktakeSession._committing) return; // stop double-tap from committing twice
   const counted = Object.keys(stocktakeSession.counts).length;
   if(!counted){ showToast('Count at least one product first','error'); return; }
   if(!confirm('Commit this stocktake? Stock quantities will be updated.')) return;
+  stocktakeSession._committing = true;
 
   const loc = stocktakeSession.location;
   const updates = {};
@@ -3754,6 +3766,7 @@ async function commitStocktake(){
   }catch(e){
     showToast('Error committing stocktake','error');
     console.error(e);
+    stocktakeSession._committing = false;
   }
 }
 
@@ -5032,6 +5045,7 @@ function setTransferDir(dir){
 }
 
 async function commitTransfer(productId, btn){
+  if(btn.disabled) return; // stop double-tap from double-transferring
   const overlay = btn.closest('.modal-overlay');
   const dir = overlay._dir || 's2w';
   const qty = parseInt(document.getElementById('tr-qty').value)||0;
@@ -5042,39 +5056,40 @@ async function commitTransfer(productId, btn){
   const p = STATE.products.find(x=>x.id===productId);
   if(!p) return;
 
-  const fromQty = dir==='s2w' ? (p.qty||0) : (p.qtyWh||0);
-  if(qty > fromQty){
-    err.textContent = 'Only '+ fromQty +' available in '+(dir==='s2w'?'shop floor':'warehouse');
-    return;
-  }
+  const fromField = dir==='s2w' ? 'qty' : 'qtyWh';
+  const toField   = dir==='s2w' ? 'qtyWh' : 'qty';
 
-  const updates = {};
-  if(dir==='s2w'){
-    updates['bizpos/products/'+productId+'/qty']   = (p.qty||0) - qty;
-    updates['bizpos/products/'+productId+'/qtyWh'] = (p.qtyWh||0) + qty;
-  } else {
-    updates['bizpos/products/'+productId+'/qtyWh'] = (p.qtyWh||0) - qty;
-    updates['bizpos/products/'+productId+'/qty']   = (p.qty||0) + qty;
-  }
-  updates['bizpos/products/'+productId+'/updatedAt'] = new Date().toISOString();
-
-  // Log transfer record
-  const trId = uid();
-  updates['bizpos/transfers/'+trId] = {
-    id:trId, productId, productName:p.name, qty,
-    from: dir==='s2w'?'shop':'warehouse',
-    to:   dir==='s2w'?'warehouse':'shop',
-    date: new Date().toISOString().slice(0,10),
-    createdAt: new Date().toISOString(),
-    createdBy: currentUser.name
-  };
-
+  btn.disabled = true;
   try{
-    await db.ref().update(updates);
+    // Atomic: deduct only if enough stock is actually there right now (not what our screen last showed)
+    const fromRes = await db.ref('bizpos/products/'+productId+'/'+fromField).transaction(cur=>{
+      const cur0 = cur||0;
+      if(qty > cur0) return; // abort transaction — insufficient stock
+      return cur0 - qty;
+    });
+    if(!fromRes.committed){
+      err.textContent = 'Only '+(fromRes.snapshot.val()||0)+' available in '+(dir==='s2w'?'shop floor':'warehouse')+' — refresh and try again';
+      btn.disabled = false;
+      return;
+    }
+    await db.ref('bizpos/products/'+productId+'/'+toField).transaction(cur=>(cur||0)+qty);
+    await db.ref('bizpos/products/'+productId+'/updatedAt').set(new Date().toISOString());
+
+    // Log transfer record
+    const trId = uid();
+    await db.ref('bizpos/transfers/'+trId).set({
+      id:trId, productId, productName:p.name, qty,
+      from: dir==='s2w'?'shop':'warehouse',
+      to:   dir==='s2w'?'warehouse':'shop',
+      date: new Date().toISOString().slice(0,10),
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser.name
+    });
+
     overlay.remove();
     showToast(qty+' x '+p.name+' transferred to '+(dir==='s2w'?'warehouse':'shop floor'),'success',4000);
     renderStockList();
-  }catch(e){ showToast('Error','error'); }
+  }catch(e){ showToast('Error','error'); btn.disabled = false; }
 }
 
 function openTransferHistory(){
@@ -5108,29 +5123,38 @@ async function undoTransfer(transferId){
   const p = STATE.products.find(x=>x.id===t.productId);
   if(!p){ showToast('Product no longer exists','error'); return; }
 
-  // Reverse: move qty back from the 'to' location to the 'from' location
+  // Claim the undo first — if another tap/device already claimed it, this aborts (no double-undo)
+  const claim = await db.ref('bizpos/transfers/'+transferId+'/undone').transaction(cur=>{
+    if(cur) return; // already undone — abort
+    return true;
+  });
+  if(!claim.committed) return;
+
+  // Reverse: move qty back from the 'to' location to the 'from' location, atomically
   const toField   = t.to==='warehouse'   ? 'qtyWh' : 'qty';
   const fromField = t.from==='warehouse' ? 'qtyWh' : 'qty';
-  const toQty = p[toField]||0;
-  if(t.qty > toQty){
-    showToast('Cannot undo — only '+toQty+' left in '+(t.to==='warehouse'?'warehouse':'shop floor')+' now','error');
+
+  const toRes = await db.ref('bizpos/products/'+t.productId+'/'+toField).transaction(cur=>{
+    const cur0 = cur||0;
+    if(t.qty > cur0) return; // abort — not enough stock left to reverse
+    return cur0 - t.qty;
+  });
+  if(!toRes.committed){
+    // Release the claim since we couldn't actually undo it
+    await db.ref('bizpos/transfers/'+transferId+'/undone').set(false);
+    showToast('Cannot undo — only '+(toRes.snapshot.val()||0)+' left in '+(t.to==='warehouse'?'warehouse':'shop floor')+' now','error');
     return;
   }
+  await db.ref('bizpos/products/'+t.productId+'/'+fromField).transaction(cur=>(cur||0)+t.qty);
+  await db.ref('bizpos/products/'+t.productId+'/updatedAt').set(new Date().toISOString());
+  await db.ref('bizpos/transfers/'+transferId).update({
+    undoneAt: new Date().toISOString(),
+    undoneBy: currentUser.name
+  });
 
-  const updates = {};
-  updates['bizpos/products/'+t.productId+'/'+toField]   = toQty - t.qty;
-  updates['bizpos/products/'+t.productId+'/'+fromField] = (p[fromField]||0) + t.qty;
-  updates['bizpos/products/'+t.productId+'/updatedAt']  = new Date().toISOString();
-  updates['bizpos/transfers/'+transferId+'/undone']     = true;
-  updates['bizpos/transfers/'+transferId+'/undoneAt']   = new Date().toISOString();
-  updates['bizpos/transfers/'+transferId+'/undoneBy']   = currentUser.name;
-
-  try{
-    await db.ref().update(updates);
-    showToast('Transfer undone — '+t.qty+' x '+t.productName+' moved back','success',4000);
-    document.getElementById('transfer-history-overlay')?.remove();
-    openTransferHistory();
-  }catch(e){ showToast('Error undoing transfer','error'); }
+  showToast('Transfer undone — '+t.qty+' x '+t.productName+' moved back','success',4000);
+  document.getElementById('transfer-history-overlay')?.remove();
+  openTransferHistory();
 }
 
 function openEditProductFull(id){
