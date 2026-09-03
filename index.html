@@ -492,6 +492,21 @@ function txIncrement(ref, delta){
   return ref.transaction(cur=>Math.round(((cur||0)+delta)*100)/100);
 }
 
+// Atomically apply a petty cash movement (balance + history entry) so two devices
+// logging cash in/out at the same time can't silently overwrite each other's entry.
+async function applyPettyCashMovement(delta, meta){
+  delta = Math.round(delta*100)/100;
+  let appliedEntry = null;
+  await db.ref('bizpos/pettyCash').transaction(cur=>{
+    const pc = cur || {balance:0, history:[]};
+    const oldBalance = pc.balance||0;
+    const newBalance = Math.round((oldBalance+delta)*100)/100;
+    appliedEntry = Object.assign({id:uid(), date:new Date().toISOString(), delta, newBalance, oldBalance}, meta);
+    return {balance:newBalance, history:(pc.history||[]).concat([appliedEntry])};
+  });
+  return appliedEntry;
+}
+
 async function updateDailySummary(dateStr, d){
   const base = 'bizpos/dailySummaries/'+dateStr+'/';
   const ops = [];
@@ -1461,7 +1476,7 @@ function renderCashup(){
         <div class="totals-row"><span style="font-weight:700">To Bank</span><span id="cu-tobank-disp" style="font-weight:800;color:var(--accent)">—</span></div>
         <div class="totals-row"><span style="color:var(--text3)">Petty Cash Balance</span><span style="font-weight:700">${fmt(pc.balance)}</span></div>
       </div>
-      <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="saveCashup()">✓ Commit Cash Up</button>
+      <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="saveCashup(this)">✓ Commit Cash Up</button>
     </div>
 
     <div class="card" style="border:2px solid #2D9E35;margin-bottom:12px">
@@ -1618,7 +1633,11 @@ function updateCashupCalc(){
   if(bEl)bEl.textContent=fmt(toBank);
 }
 
-async function saveCashup(){
+let _savingCashup = false;
+async function saveCashup(btn){
+  if(_savingCashup) return; // stop double-tap from double-banking the cashup
+  _savingCashup = true;
+  if(btn) btn.disabled = true;
   const today=localDateStr();
   const ts=STATE.sales.filter(s=>!s.voided&&localDateStr(s.date)===today);
   const totalSales=ts.reduce((a,s)=>a+s.total,0);
@@ -1643,16 +1662,10 @@ async function saveCashup(){
     committedAt:new Date().toISOString()
   };
 
-  // Update petty cash
-  const pc=STATE.pettyCash||{balance:0,history:[]};
-  const newBalance=(pc.balance||0)+toBank;
-  const pcEntry={id:uid(),date:new Date().toISOString(),delta:toBank,newBalance,oldBalance:pc.balance||0,reason:'Cashup banked — '+today,type:'cashup'};
-  const newHistory=[...(pc.history||[]),pcEntry];
-
   try{
     await Promise.all([
       db.ref('bizpos/cashups/'+cashup.id).set(cashup),
-      db.ref('bizpos/pettyCash').set({balance:newBalance,history:newHistory}),
+      applyPettyCashMovement(toBank, {reason:'Cashup banked — '+today, type:'cashup'}),
     ]);
     tillExpenses=[];
     // Capture staff notes before clearing
@@ -1663,7 +1676,12 @@ async function saveCashup(){
     renderCashup();
     // Send daily email report
     setTimeout(()=>{ try{ sendDailyEmail(cashup); }catch(e){ console.warn('Email failed:',e); } }, 1000);
-  }catch(e){showToast('Error saving cashup','error');console.error(e);}
+  }catch(e){
+    showToast('Error saving cashup','error');console.error(e);
+  }finally{
+    _savingCashup = false;
+    if(btn) btn.disabled = false;
+  }
 }
 
 
@@ -2596,6 +2614,7 @@ function openAddExpense(){
 }
 
 async function saveExpense(btn){
+  if(btn.disabled) return; // stop double-tap from logging the expense twice
   const desc = (document.getElementById('exp-desc').value||'').trim();
   const amount = parseFloat(document.getElementById('exp-amount').value)||0;
   const category = document.getElementById('exp-cat').value;
@@ -2605,21 +2624,19 @@ async function saveExpense(btn){
   if(!desc){ showToast('Enter a description','error'); return; }
   if(!amount){ showToast('Enter an amount','error'); return; }
   const exp = {id:uid(),desc,amount,category,payMethod,date,notes,status:'paid',createdAt:new Date().toISOString(),createdBy:currentUser.name};
-  
+
+  btn.disabled = true;
   // If petty cash, deduct from balance
   if(payMethod === 'petty_cash'){
-    const pc = STATE.pettyCash || {balance:0,history:[]};
-    const newBalance = (pc.balance||0) - amount;
-    const entry = {id:uid(),date:new Date().toISOString(),delta:-amount,newBalance,oldBalance:pc.balance||0,reason:desc,type:'expense',category};
     try{
       await Promise.all([
         db.ref('bizpos/expenses/'+exp.id).set(exp),
-        db.ref('bizpos/pettyCash').set({balance:newBalance,history:[...(pc.history||[]),entry]}),
+        applyPettyCashMovement(-amount, {reason:desc, type:'expense', category}),
       ]);
-    }catch(e){ showToast('Error saving','error'); return; }
+    }catch(e){ showToast('Error saving','error'); btn.disabled=false; return; }
   } else {
     try{ await db.ref('bizpos/expenses/'+exp.id).set(exp); }
-    catch(e){ showToast('Error saving','error'); return; }
+    catch(e){ showToast('Error saving','error'); btn.disabled=false; return; }
   }
   btn.closest('.modal-overlay').remove();
   showToast(desc+' — '+fmt(amount)+' saved','success');
@@ -2643,17 +2660,16 @@ function openPettyCashIn(){
 }
 
 async function savePettyCashIn(btn){
+  if(btn.disabled) return; // stop double-tap from adding it twice
   const amount = parseFloat(document.getElementById('pc-in-amount').value)||0;
   const reason = (document.getElementById('pc-in-reason').value||'Cash added').trim();
   if(!amount){ showToast('Enter an amount','error'); return; }
-  const pc = STATE.pettyCash || {balance:0,history:[]};
-  const newBalance = (pc.balance||0) + amount;
-  const entry = {id:uid(),date:new Date().toISOString(),delta:amount,newBalance,oldBalance:pc.balance||0,reason,type:'in'};
+  btn.disabled = true;
   try{
-    await db.ref('bizpos/pettyCash').set({balance:newBalance,history:[...(pc.history||[]),entry]});
+    await applyPettyCashMovement(amount, {reason, type:'in'});
     btn.closest('.modal-overlay').remove();
     showToast(fmt(amount)+' added to petty cash','success');
-  }catch(e){ showToast('Error','error'); }
+  }catch(e){ showToast('Error','error'); btn.disabled=false; }
 }
 
 function openPettyCashOut(){
@@ -2674,22 +2690,21 @@ function openPettyCashOut(){
 }
 
 async function savePettyCashOut(btn){
+  if(btn.disabled) return; // stop double-tap from paying it out twice
   const amount = parseFloat(document.getElementById('pc-out-amount').value)||0;
   const reason = (document.getElementById('pc-out-reason').value||'').trim();
   if(!amount){ showToast('Enter an amount','error'); return; }
   if(!reason){ showToast('Enter a reason','error'); return; }
-  const pc = STATE.pettyCash || {balance:0,history:[]};
-  const newBalance = (pc.balance||0) - amount;
-  const entry = {id:uid(),date:new Date().toISOString(),delta:-amount,newBalance,oldBalance:pc.balance||0,reason,type:'expense',category:'Petty cash'};
   const exp = {id:uid(),desc:reason,amount,category:'Petty cash',payMethod:'petty_cash',date:new Date().toISOString().slice(0,10),status:'paid',createdAt:new Date().toISOString(),createdBy:currentUser.name};
+  btn.disabled = true;
   try{
     await Promise.all([
       db.ref('bizpos/expenses/'+exp.id).set(exp),
-      db.ref('bizpos/pettyCash').set({balance:newBalance,history:[...(pc.history||[]),entry]}),
+      applyPettyCashMovement(-amount, {reason, type:'expense', category:'Petty cash'}),
     ]);
     btn.closest('.modal-overlay').remove();
     showToast(fmt(amount)+' paid out','success');
-  }catch(e){ showToast('Error','error'); }
+  }catch(e){ showToast('Error','error'); btn.disabled=false; }
 }
 
 
