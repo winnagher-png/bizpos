@@ -1219,6 +1219,7 @@ function openAddProduct(){
 }
 
 async function saveNewProduct(btn){
+  if(btn.disabled) return; // stop double-tap from creating duplicate products
   const name    = (document.getElementById('ap-name').value||'').trim();
   const price   = parseFloat(document.getElementById('ap-price').value)||0;
   const cost    = parseFloat(document.getElementById('ap-cost').value)||0;
@@ -1228,6 +1229,15 @@ async function saveNewProduct(btn){
   const reorder = parseInt(document.getElementById('ap-reorder').value)||0;
   if(!name){ showToast('Enter a product name','error'); return; }
   if(!price){ showToast('Enter a selling price','error'); return; }
+
+  const existing = STATE.products.find(p => p.active!==false && p.name && p.name.toLowerCase()===name.toLowerCase());
+  if(existing){
+    if(!confirm('"'+existing.name+'" already exists (Shop: '+(existing.qty||0)+', Warehouse: '+(existing.qtyWh||0)+'). Add it again as a duplicate anyway?')){
+      return;
+    }
+  }
+
+  btn.disabled = true;
   const prod = {
     id:uid(), name, price, cost, qty, qtyWh,
     category: cat.toUpperCase(),
@@ -1239,7 +1249,7 @@ async function saveNewProduct(btn){
     await db.ref('bizpos/products/'+prod.id).set(prod);
     btn.closest('.modal-overlay').remove();
     showToast(name+' added','success');
-  }catch(e){ showToast('Error saving product','error'); }
+  }catch(e){ showToast('Error saving product','error'); btn.disabled = false; }
 }
 function openEditProduct(id){
   const p=STATE.products.find(x=>x.id===id);if(!p)return;
