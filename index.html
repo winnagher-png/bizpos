@@ -203,22 +203,12 @@
       <div style="font-size:18px;font-weight:800">Expenses</div>
       <button class="btn btn-primary" onclick="openAddExpense()" style="padding:8px 14px;font-size:12px">+ Add</button>
     </div>
-    <div class="card">
-      <div class="section-title">Petty Cash Balance</div>
-      <div style="font-size:32px;font-weight:800;color:var(--accent);text-align:center;padding:8px 0" id="pc-balance-display">R0.00</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-        <button class="btn btn-secondary" onclick="openPettyCashIn()" style="font-size:12px">+ Add Cash</button>
-        <button class="btn btn-secondary" onclick="openPettyCashOut()" style="font-size:12px">− Pay Out</button>
-      </div>
-    </div>
-    <div class="section-title">Recent Petty Cash Movements</div>
-    <div id="pc-history-list"></div>
-    <div class="section-title" style="margin-top:16px">Expenses</div>
+    <div class="section-title">Expenses</div>
     <div style="display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px" id="exp-filter-tabs">
       <button class="btn btn-primary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('all',this)">All</button>
+      <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('cash',this)">Cash</button>
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('card',this)">Card</button>
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('eft',this)">EFT</button>
-      <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('petty_cash',this)">Petty Cash</button>
       <button class="btn btn-secondary" style="font-size:11px;padding:6px 12px;white-space:nowrap" onclick="filterExpenses('debit_order',this)">Debit Orders</button>
     </div>
     <div id="expenses-list"></div>
@@ -439,7 +429,7 @@ firebase.initializeApp({
 const db = firebase.database();
 
 // ── STATE ──
-const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], pettyCash:{balance:0,history:[]}, purchaseOrders:[], suppliers:[], stocktakeReports:[], stocktakeSessions:{}, writeoffs:[], rollTasks:[], transfers:[], connected:false };
+const STATE = { products:[], sales:[], cashups:[], expenses:[], members:[], staff:[], purchaseOrders:[], suppliers:[], stocktakeReports:[], stocktakeSessions:{}, writeoffs:[], rollTasks:[], transfers:[], connected:false };
 
 // ── STAFF PINS ──
 const STAFF_PINS = [
@@ -490,21 +480,6 @@ async function getNextReceiptNumber(dateStr){
 
 function txIncrement(ref, delta){
   return ref.transaction(cur=>Math.round(((cur||0)+delta)*100)/100);
-}
-
-// Atomically apply a petty cash movement (balance + history entry) so two devices
-// logging cash in/out at the same time can't silently overwrite each other's entry.
-async function applyPettyCashMovement(delta, meta){
-  delta = Math.round(delta*100)/100;
-  let appliedEntry = null;
-  await db.ref('bizpos/pettyCash').transaction(cur=>{
-    const pc = cur || {balance:0, history:[]};
-    const oldBalance = pc.balance||0;
-    const newBalance = Math.round((oldBalance+delta)*100)/100;
-    appliedEntry = Object.assign({id:uid(), date:new Date().toISOString(), delta, newBalance, oldBalance}, meta);
-    return {balance:newBalance, history:(pc.history||[]).concat([appliedEntry])};
-  });
-  return appliedEntry;
 }
 
 async function updateDailySummary(dateStr, d){
@@ -560,11 +535,6 @@ function startListeners(){
   db.ref('bizpos/expenses').on('value',s=>{
     STATE.expenses=s.val()?Object.values(s.val()):[];
     if(currentTab==='expenses')renderExpenses();
-  });
-  db.ref('bizpos/pettyCash').on('value',s=>{
-    STATE.pettyCash=s.val()||{balance:0,history:[]};
-    if(currentTab==='expenses')renderPettyCash();
-    if(currentTab==='cashup')renderCashup();
   });
   db.ref('bizpos/members').on('value',s=>{
     STATE.members=s.val()?Object.values(s.val()):[];
@@ -847,7 +817,7 @@ function switchTab(tab){
   if(tab==='reports')renderReports();
   if(tab==='stock')renderStockList();
   if(tab==='sales')renderSalesTab();
-  if(tab==='expenses'){renderExpenses();renderPettyCash();}
+  if(tab==='expenses'){renderExpenses();}
   if(tab==='po')renderPOList();
   if(tab==='stocktake')renderStocktakeContent();
   if(tab==='members')renderMembersList();
@@ -1425,7 +1395,6 @@ function renderCashup(){
   const cash=ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
   const card=ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
   const eft=ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
-  const pc=STATE.pettyCash||{balance:0};
   const expTotal=tillExpenses.reduce((a,e)=>a+e.amount,0);
   const toBank=Math.max(0,cash-expTotal);
   const variance=(cash+card+eft)-tot;
@@ -1474,7 +1443,6 @@ function renderCashup(){
         <div class="totals-row"><span style="color:var(--text3)">Till expenses</span><span style="color:var(--red)">${fmt(expTotal)}</span></div>
         <div class="totals-row"><span style="color:var(--text3)">Variance</span><span id="cu-variance-disp" style="font-weight:700">—</span></div>
         <div class="totals-row"><span style="font-weight:700">To Bank</span><span id="cu-tobank-disp" style="font-weight:800;color:var(--accent)">—</span></div>
-        <div class="totals-row"><span style="color:var(--text3)">Petty Cash Balance</span><span style="font-weight:700">${fmt(pc.balance)}</span></div>
       </div>
       <button class="btn btn-primary btn-full" style="margin-top:16px" onclick="saveCashup(this)">✓ Commit Cash Up</button>
     </div>
@@ -1485,7 +1453,7 @@ function renderCashup(){
 
       <div style="font-size:11px;font-weight:800;color:#1A1A1A;text-transform:uppercase;margin-bottom:6px">💸 Expenses Logged?</div>
       ${[
-        {icon:'💵',label:'Petty cash payments (wages, airtime, consumables)',tab:'expenses'},
+        {icon:'💵',label:'Cash payments (wages, airtime, consumables)',tab:'expenses'},
         {icon:'💳',label:'Card purchases & swipes',tab:'expenses'},
         {icon:'🏦',label:'EFT transfers made today',tab:'expenses'},
         {icon:'📦',label:'Stock received — GRV done?',tab:'po'},
@@ -1663,10 +1631,7 @@ async function saveCashup(btn){
   };
 
   try{
-    await Promise.all([
-      db.ref('bizpos/cashups/'+cashup.id).set(cashup),
-      applyPettyCashMovement(toBank, {reason:'Cashup banked — '+today, type:'cashup'}),
-    ]);
+    await db.ref('bizpos/cashups/'+cashup.id).set(cashup);
     tillExpenses=[];
     // Capture staff notes before clearing
     const staffNotes = (document.getElementById('staff-notes-tomorrow')||{}).value||'';
@@ -2260,7 +2225,6 @@ function sendDailyEmail(cashup){
     const cash = ts.filter(s=>s.paymentMethod==='cash').reduce((a,s)=>a+s.total,0);
     const card = ts.filter(s=>s.paymentMethod==='card').reduce((a,s)=>a+s.total,0);
     const eft  = ts.filter(s=>s.paymentMethod==='eft').reduce((a,s)=>a+s.total,0);
-    const pc   = STATE.pettyCash||{balance:0};
 
     // Top sellers
     const prodTotals={};
@@ -2273,7 +2237,6 @@ function sendDailyEmail(cashup){
     // Today's expenses
     const todayExp = STATE.expenses.filter(e=>e.date===today);
     const cardExp  = todayExp.filter(e=>e.payMethod==='card'||e.payMethod==='eft'||e.payMethod==='debit_order');
-    const pcExp    = todayExp.filter(e=>e.payMethod==='petty_cash');
 
     // Staff shifts today
     const shifts = STATE.staff.map(s=>{
@@ -2316,19 +2279,10 @@ function sendDailyEmail(cashup){
       body += "\n";
     }
 
-    body += "--- PETTY CASH ---\n";
-    body += "Balance: "+fmt(pc.balance)+"\n\n";
-
     if(cardExp.length){
       body += "--- CARD/EFT EXPENSES ---\n";
       cardExp.forEach(e=>{ body+="  "+e.desc+": "+fmt(e.amount)+" ["+e.payMethod+"]\n"; });
       body += "Total: "+fmt(cardExp.reduce((a,e)=>a+e.amount,0))+"\n\n";
-    }
-
-    if(pcExp.length){
-      body += "--- PETTY CASH EXPENSES ---\n";
-      pcExp.forEach(e=>{ body+="  "+e.desc+": "+fmt(e.amount)+"\n"; });
-      body += "Total: "+fmt(pcExp.reduce((a,e)=>a+e.amount,0))+"\n\n";
     }
 
     // ── STAFF HOURS PAYROLL ──
@@ -2362,20 +2316,6 @@ function sendDailyEmail(cashup){
     }
     body += "\n";
 
-    // ── PETTY CASH FULL REPORT ──
-    body += "--- PETTY CASH REPORT ---\n";
-    body += "Closing balance: "+fmt(pc.balance)+"\n";
-    const todayPCMoves = (pc.history||[]).filter(h=>h.date&&localDateStr(h.date)===today);
-    if(todayPCMoves.length){
-      body += "Movements today:\n";
-      todayPCMoves.forEach(h=>{
-        const sign = h.delta>=0 ? "+" : "";
-        body += "  "+sign+"R"+Math.abs(h.delta).toFixed(2)+" — "+(h.reason||h.type||"")+"\n";
-      });
-    } else {
-      body += "No petty cash movements today\n";
-    }
-    body += "\n";
 
     // ── STOCKTAKE REPORT (if done today) ──
     const todayST = (STATE.stocktakeReports||[]).filter(r=>r.committedAt&&localDateStr(r.committedAt)===today);
@@ -2550,27 +2490,6 @@ function renderExpenses(){
   }).join('');
 }
 
-function renderPettyCash(){
-  const pc = STATE.pettyCash || {balance:0,history:[]};
-  const balEl = document.getElementById('pc-balance-display');
-  if(balEl) balEl.textContent = fmt(pc.balance);
-  const histEl = document.getElementById('pc-history-list');
-  if(!histEl) return;
-  const history = [...(pc.history||[])].reverse().slice(0,10);
-  if(!history.length){ histEl.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center;padding:12px">No movements yet</div>'; return; }
-  histEl.innerHTML = history.map(h => {
-    const isPos = h.delta >= 0;
-    return `<div class="list-item" style="padding:10px 12px">
-      <div style="font-size:20px">${isPos?'📥':'📤'}</div>
-      <div class="list-item-body">
-        <div class="list-item-title" style="font-size:13px">${h.reason||h.type||'Movement'}</div>
-        <div class="list-item-sub">${h.date?h.date.slice(0,10):''} · Balance: ${fmt(h.newBalance)}</div>
-      </div>
-      <div style="font-weight:800;color:${isPos?'var(--green)':'var(--red)'}">${isPos?'+':''}${fmt(h.delta)}</div>
-    </div>`;
-  }).join('');
-}
-
 function filterExpenses(filter, btn){
   expenseFilter = filter;
   document.querySelectorAll('#exp-filter-tabs button').forEach(b=>b.className='btn btn-secondary');
@@ -2596,7 +2515,6 @@ function openAddExpense(){
     <select class="input" id="exp-method" style="margin-top:4px">
       <option value="card">Card</option>
       <option value="eft">EFT</option>
-      <option value="petty_cash">Petty Cash</option>
       <option value="debit_order">Debit Order</option>
       <option value="cash">Cash</option>
     </select>
@@ -2626,85 +2544,10 @@ async function saveExpense(btn){
   const exp = {id:uid(),desc,amount,category,payMethod,date,notes,status:'paid',createdAt:new Date().toISOString(),createdBy:currentUser.name};
 
   btn.disabled = true;
-  // If petty cash, deduct from balance
-  if(payMethod === 'petty_cash'){
-    try{
-      await Promise.all([
-        db.ref('bizpos/expenses/'+exp.id).set(exp),
-        applyPettyCashMovement(-amount, {reason:desc, type:'expense', category}),
-      ]);
-    }catch(e){ showToast('Error saving','error'); btn.disabled=false; return; }
-  } else {
-    try{ await db.ref('bizpos/expenses/'+exp.id).set(exp); }
-    catch(e){ showToast('Error saving','error'); btn.disabled=false; return; }
-  }
+  try{ await db.ref('bizpos/expenses/'+exp.id).set(exp); }
+  catch(e){ showToast('Error saving','error'); btn.disabled=false; return; }
   btn.closest('.modal-overlay').remove();
   showToast(desc+' — '+fmt(amount)+' saved','success');
-}
-
-function openPettyCashIn(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal">
-    <div class="modal-title">Add Cash to Petty Cash</div>
-    <label>Amount (R) *</label>
-    <input type="number" class="input" id="pc-in-amount" placeholder="0.00" inputmode="decimal">
-    <label>Reason</label>
-    <input type="text" class="input" id="pc-in-reason" placeholder="e.g. Cash from banking">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
-      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn btn-primary" onclick="savePettyCashIn(this)">Add</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-}
-
-async function savePettyCashIn(btn){
-  if(btn.disabled) return; // stop double-tap from adding it twice
-  const amount = parseFloat(document.getElementById('pc-in-amount').value)||0;
-  const reason = (document.getElementById('pc-in-reason').value||'Cash added').trim();
-  if(!amount){ showToast('Enter an amount','error'); return; }
-  btn.disabled = true;
-  try{
-    await applyPettyCashMovement(amount, {reason, type:'in'});
-    btn.closest('.modal-overlay').remove();
-    showToast(fmt(amount)+' added to petty cash','success');
-  }catch(e){ showToast('Error','error'); btn.disabled=false; }
-}
-
-function openPettyCashOut(){
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal">
-    <div class="modal-title">Pay Out from Petty Cash</div>
-    <label>Amount (R) *</label>
-    <input type="number" class="input" id="pc-out-amount" placeholder="0.00" inputmode="decimal">
-    <label>Reason *</label>
-    <input type="text" class="input" id="pc-out-reason" placeholder="e.g. Charne wages">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px">
-      <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn btn-primary" onclick="savePettyCashOut(this)">Pay Out</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-}
-
-async function savePettyCashOut(btn){
-  if(btn.disabled) return; // stop double-tap from paying it out twice
-  const amount = parseFloat(document.getElementById('pc-out-amount').value)||0;
-  const reason = (document.getElementById('pc-out-reason').value||'').trim();
-  if(!amount){ showToast('Enter an amount','error'); return; }
-  if(!reason){ showToast('Enter a reason','error'); return; }
-  const exp = {id:uid(),desc:reason,amount,category:'Petty cash',payMethod:'petty_cash',date:new Date().toISOString().slice(0,10),status:'paid',createdAt:new Date().toISOString(),createdBy:currentUser.name};
-  btn.disabled = true;
-  try{
-    await Promise.all([
-      db.ref('bizpos/expenses/'+exp.id).set(exp),
-      applyPettyCashMovement(-amount, {reason, type:'expense', category:'Petty cash'}),
-    ]);
-    btn.closest('.modal-overlay').remove();
-    showToast(fmt(amount)+' paid out','success');
-  }catch(e){ showToast('Error','error'); btn.disabled=false; }
 }
 
 
